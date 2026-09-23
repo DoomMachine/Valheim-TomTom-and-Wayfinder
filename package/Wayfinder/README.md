@@ -28,7 +28,7 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an empty spot | a waypoint there |
-| one of your own pins | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is) |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any ordinary pin counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
 | a waypoint marker | the waypoint is removed |
 
 Queue up several and they are visited in order. Plain clicks keep Valheim's normal behaviour, and
@@ -41,7 +41,17 @@ vanilla right-click-delete works on waypoint markers too.
 - the **active target** with its distance, **Skip this one** and **Clear all**
 - the **queue**, each entry with **Go** (make it active) and **X** (delete)
 
+## Install
+
+Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
+`BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.0.0]`. TomTom and Wayfinder exclude each
+other: install one.
+
 ## Console
+
+Valheim's console is off unless you turn it on — the `-console` launch option, or the game's own
+console setting; then **F5** opens it.
 
 ```
 waypoint list              the queue, with names and distances
@@ -82,7 +92,7 @@ workarounds outside it:
 ## Keys
 
 `ToggleWindowKey` defaults to **F11**. That is also Valheim's own **screenshot** key, so each press
-also saves a picture to `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\screenshots`. If you'd rather
+also saves a picture to Valheim's screenshots folder (on Windows, `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\screenshots`). If you'd rather
 not, **F4** is free; **F3** is too, except that the game hides the HUD on Ctrl+F3.
 
 ## Configuration
@@ -105,3 +115,8 @@ not, **F4** is free; **F3** is too, except that the game hides the HUD on Ctrl+F
 
 Saved queues: `BepInEx/config/DoomMachine.Wayfinder/waypoints_<worldUID>.txt`, one per world — kept
 apart from TomTom's, so coordinates entered in TomTom never carry over into Wayfinder.
+
+---
+
+MIT licensed — the LICENSE file in this package is the full text. Source, issues and newer releases:
+https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder

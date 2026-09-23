@@ -29,7 +29,16 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>$(WaypointerRoot)build\$(EditionName)\</OutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <DebugType>portable</DebugType>
+    <!--
+      Never let a .pdb path into the shipped DLL. The PE debug directory records the ABSOLUTE path of the
+      symbol file, so a Debug build publishes the build machine's account name - caught on 2026-09-23,
+      when the release candidates carried C:\Users\<the author's real name>\...\obj\Debug\TomTom.pdb while
+      the mods are published under a pseudonym. Optimize unconditionally as well, so a Debug build and a
+      Release build produce the same assembly and there is no wrong configuration left to ship by accident.
+    -->
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
 
     <!--
@@ -102,6 +111,8 @@
     </ItemGroup>
     <RemoveDir Directories="$(StageDir)" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(StageDir)" />
+    <!-- The licence travels with the package: a downloaded zip is the only thing most users ever see. -->
+    <Copy SourceFiles="$(WaypointerRoot)LICENSE" DestinationFolder="$(StageDir)" />
     <Copy SourceFiles="@(PackageAssets)" DestinationFolder="$(StageDir)" />
     <ZipDirectory SourceDirectory="$(StageDir)" DestinationFile="$(DistDir)$(PackageName)-$(Version).zip" Overwrite="true" />
     <Message Importance="high" Text="Packaged $(PackageName) $(Version) -> $(DistDir)$(PackageName)-$(Version).zip" />

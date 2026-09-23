@@ -8,7 +8,7 @@ One code base, two Valheim plugins by **DoomMachine**:
 | `waypoint <x> <y>` console command | yes | **no** (refused) |
 | Numeric coordinates shown anywhere | yes | **no** — names and distances only |
 | Waypoints placed on the world map | yes | yes |
-| Following one of your own map pins | yes | yes |
+| Following a pin already on your map | yes | yes |
 | Marking where you stand (`Add my position`, `waypoint here`) | yes | yes |
 | Arrow, map markers, queue, arrival, persistence | yes | yes |
 | BepInEx GUID | `DoomMachine.TomTom` | `DoomMachine.Wayfinder` |
@@ -91,7 +91,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 48 parser tests
+./run-tests.sh                                                         # 41 parser tests
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -135,8 +135,9 @@ Run it after every Valheim update.
   plugins depend only on the shipped DLLs.
 - Input is taken over by making `TextInput.IsVisible` report `true` while the window is open. That one
   flag is what `Player.TakeInput` and `GameCamera.UpdateMouseCapture` consult, so it releases the cursor
-  and blocks movement, hotbar, Use and inventory keys together — the same approach ConfigurationManager
-  and MeasurementTracker take.
+  and blocks movement, the hotbar and Use together — the same approach ConfigurationManager and
+  MeasurementTracker take. It does not cover everything: Tab still opens the inventory and the mouse
+  wheel still zooms the camera while the window is open.
 - Valheim's pin hit-tests (`GetClosestPin`, `HavePinInRange`) skip `save: false` pins, so the mod finds its
   own markers by walking `m_pins` itself, including for the vanilla right-click-delete gesture.
 - The local player is destroyed and recreated on every death while the map survives, so nothing is reset

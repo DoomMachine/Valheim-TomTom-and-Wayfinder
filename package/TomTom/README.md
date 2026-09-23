@@ -63,12 +63,22 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an empty spot | a waypoint there |
-| one of your own pins | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is) |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any ordinary pin counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
 | a waypoint marker | the waypoint is removed |
 
 Plain clicks keep Valheim's normal behaviour. Vanilla right-click-delete works on waypoint markers too.
 
+## Install
+
+Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
+`BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.0.0]`. TomTom and Wayfinder exclude each
+other: install one.
+
 ## Console
+
+Valheim's console is off unless you turn it on — the `-console` launch option, or the game's own
+console setting; then **F5** opens it.
 
 ```
 waypoint 1234 -567 Silver vein     add a waypoint
@@ -98,10 +108,10 @@ keeps its normal flags and keeps syncing as usual.
 ## Keys
 
 `ToggleWindowKey` defaults to **F11**. That is also Valheim's own **screenshot** key, so each press
-also saves a picture to `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\screenshots`. If you'd rather
-not, **F4** is free; **F3** is too, except that the game hides the HUD on Ctrl+F3. Everything else is
-taken by the game (F2 connect panel, F5 console, F9 gamepad layout) or, in the original install, by
-other mods (F1 ConfigurationManager, F6/F8/F10 PlantEasily, F7 MobTracker).
+also saves a picture to Valheim's screenshots folder (on Windows, `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\screenshots`). If you'd rather
+not, **F4** is free; **F3** is too, except that the game hides the HUD on Ctrl+F3. The rest are taken
+by the game: F2 connect panel, F5 console, F9 gamepad layout. Other mods you have installed may hold
+keys of their own.
 
 ## Configuration
 
@@ -123,3 +133,8 @@ other mods (F1 ConfigurationManager, F6/F8/F10 PlantEasily, F7 MobTracker).
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
 
 Saved queues: `BepInEx/config/DoomMachine.TomTom/waypoints_<worldUID>.txt`, one per world.
+
+---
+
+MIT licensed — the LICENSE file in this package is the full text. Source, issues and newer releases:
+https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder
