@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    TomTom - the full edition: coordinates (typed, pasted or via the console) plus waypoints placed on
+    the world map. Built from the shared source in ..\src; everything common lives in ..\Plugin.props.
+  -->
+
+  <PropertyGroup>
+    <EditionName>TomTom</EditionName>
+    <OtherEditionName>Wayfinder</OtherEditionName>
+    <Description>TomTom-style waypoints for Valheim: enter or paste coordinates, or place waypoints on the world map, then follow an on-screen arrow.</Description>
+
+    <!-- TomTom is the edition installed into the game by default. Disable with -p:DeployToGame=false -->
+    <DeployToGame Condition="'$(DeployToGame)' == ''">true</DeployToGame>
+  </PropertyGroup>
+
+  <Import Project="..\Plugin.props" />
+
+</Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Wayfinder - the immersion edition. Waypoints come only from the world map (a click on it, or one of
+    the player's own markers) or from the spot the player is standing on. There is no way to enter
+    coordinates, and no numeric coordinates are ever shown - a readout would let a map click be steered
+    onto a looked-up location - so nothing can be looked up outside the game and navigated to.
+
+    Both coordinate files are removed twice over: the WAYFINDER symbol compiles out every path that
+    uses them, and ExcludedSource keeps the files out of the build entirely. preflight.ps1 -Edition
+    Wayfinder verifies the result against the compiled assembly.
+  -->
+
+  <PropertyGroup>
+    <EditionName>Wayfinder</EditionName>
+    <OtherEditionName>TomTom</OtherEditionName>
+    <Description>Immersive waypoints for Valheim: place a waypoint on the world map or follow one of your own markers - no coordinate entry.</Description>
+    <DefineConstants>$(DefineConstants);WAYFINDER</DefineConstants>
+    <ExcludedSource>CoordinateParser.cs;CoordinateFormat.cs</ExcludedSource>
+
+    <!-- Built and packaged, but not installed unless asked: -p:DeployToGame=true -->
+    <DeployToGame Condition="'$(DeployToGame)' == ''">false</DeployToGame>
+  </PropertyGroup>
+
+  <Import Project="..\Plugin.props" />
+
+</Project>

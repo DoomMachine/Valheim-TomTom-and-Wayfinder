@@ -1,0 +1,126 @@
+<Project>
+
+  <!--
+    Build settings shared by both editions of the plugin.
+
+    TomTom/TomTom.csproj and Wayfinder/Wayfinder.csproj each set EditionName (and Wayfinder sets the
+    WAYFINDER symbol) and then import this file, so the two plugins are always built from the same
+    source, the same references and the same packaging steps. What differs between them lives in
+    src/Edition.cs and behind #if WAYFINDER.
+
+    Every build produces an installable package under dist/:
+        dist/DoomMachine-<Edition>-<Version>/       (folder)
+        dist/DoomMachine-<Edition>-<Version>.zip    (same thing, zipped)
+    and, when DeployToGame is true, copies that package into BepInEx/plugins/DoomMachine-<Edition>/.
+  -->
+
+  <PropertyGroup>
+    <WaypointerRoot>$(MSBuildThisFileDirectory)</WaypointerRoot>
+
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>$(EditionName)</AssemblyName>
+    <RootNamespace>Waypointer</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>DoomMachine</Authors>
+    <Company>DoomMachine</Company>
+    <Product>$(EditionName)</Product>
+
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(WaypointerRoot)build\$(EditionName)\</OutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DebugType>portable</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!--
+      MSB3277 fires because Unity's assemblies bind against different System.* versions than the
+      netstandard2.1 reference pack. Expected for every Unity mod and harmless here: none of those
+      assemblies ship with the plugin (every Reference is Private=false) and the game resolves them
+      from its own Managed folder at runtime.
+    -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+
+    <!-- The game folder. Override if the install moves:  dotnet build -p:ValheimDir="D:\Games\Valheim" -->
+    <ValheimDir Condition="'$(ValheimDir)' == ''">E:\SteamLibrary\steamapps\common\Valheim</ValheimDir>
+    <ValheimManaged>$(ValheimDir)\valheim_Data\Managed</ValheimManaged>
+    <BepInExCore>$(ValheimDir)\BepInEx\core</BepInExCore>
+
+    <PackageName>DoomMachine-$(EditionName)</PackageName>
+    <PackageSourceDir>$(WaypointerRoot)package\$(EditionName)\</PackageSourceDir>
+    <DistDir>$(WaypointerRoot)dist\</DistDir>
+    <StageDir>$(DistDir)$(PackageName)-$(Version)\</StageDir>
+    <DeployDir>$(ValheimDir)\BepInEx\plugins\$(PackageName)\</DeployDir>
+    <SiblingDeployDir>$(ValheimDir)\BepInEx\plugins\DoomMachine-$(OtherEditionName)\</SiblingDeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(WaypointerRoot)src\**\*.cs" />
+    <!--
+      An edition can leave source files out entirely through ExcludedSource, a ;-separated list of file
+      names in src\ (Wayfinder drops the coordinate parser and the coordinate formatter). The paths are
+      rebuilt from the same root as the Include above so they match it exactly.
+    -->
+    <_WaypointerExcludedSource Include="$(ExcludedSource)" Condition="'$(ExcludedSource)' != ''" />
+    <Compile Remove="@(_WaypointerExcludedSource->'$(WaypointerRoot)src\%(Identity)')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=false everywhere: these assemblies belong to the game and must never be copied. -->
+    <Reference Include="assembly_valheim">          <HintPath>$(ValheimManaged)\assembly_valheim.dll</HintPath>          <Private>false</Private></Reference>
+    <Reference Include="assembly_utils">            <HintPath>$(ValheimManaged)\assembly_utils.dll</HintPath>            <Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils">         <HintPath>$(ValheimManaged)\assembly_guiutils.dll</HintPath>         <Private>false</Private></Reference>
+    <Reference Include="gui_framework">             <HintPath>$(ValheimManaged)\gui_framework.dll</HintPath>             <Private>false</Private></Reference>
+    <Reference Include="Splatform">                 <HintPath>$(ValheimManaged)\Splatform.dll</HintPath>                 <Private>false</Private></Reference>
+    <Reference Include="UnityEngine">               <HintPath>$(ValheimManaged)\UnityEngine.dll</HintPath>               <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule">    <HintPath>$(ValheimManaged)\UnityEngine.CoreModule.dll</HintPath>    <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule">   <HintPath>$(ValheimManaged)\UnityEngine.IMGUIModule.dll</HintPath>   <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI">            <HintPath>$(ValheimManaged)\UnityEngine.UI.dll</HintPath>            <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule">      <HintPath>$(ValheimManaged)\UnityEngine.UIModule.dll</HintPath>      <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ValheimManaged)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(ValheimManaged)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem">         <HintPath>$(ValheimManaged)\Unity.InputSystem.dll</HintPath>         <Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro">         <HintPath>$(ValheimManaged)\Unity.TextMeshPro.dll</HintPath>         <Private>false</Private></Reference>
+    <Reference Include="BepInEx">                   <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>                      <Private>false</Private></Reference>
+    <Reference Include="0Harmony">                  <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>                     <Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!--
+    A clone on another machine will not have the game at the default path above. Say so once, instead of
+    failing with a wall of unresolved references for every Unity and Valheim assembly.
+  -->
+  <Target Name="CheckValheimDir" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ValheimManaged)')"
+           Text="Valheim&apos;s assemblies were not found at $(ValheimManaged). Build with -p:ValheimDir=&quot;X:\path\to\Valheim&quot; (the folder that holds valheim.exe)." />
+    <Error Condition="!Exists('$(BepInExCore)')"
+           Text="BepInEx was not found at $(BepInExCore). Install the BepInEx pack into the game folder first, or point -p:ValheimDir at an install that has it." />
+  </Target>
+
+  <!-- Assemble the installable package: the DLL plus manifest.json, icon.png and README.md. -->
+  <Target Name="PackagePlugin" AfterTargets="Build">
+    <ItemGroup>
+      <PackageAssets Include="$(PackageSourceDir)*.*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(StageDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(StageDir)" />
+    <Copy SourceFiles="@(PackageAssets)" DestinationFolder="$(StageDir)" />
+    <ZipDirectory SourceDirectory="$(StageDir)" DestinationFile="$(DistDir)$(PackageName)-$(Version).zip" Overwrite="true" />
+    <Message Importance="high" Text="Packaged $(PackageName) $(Version) -> $(DistDir)$(PackageName)-$(Version).zip" />
+  </Target>
+
+  <!-- Install the package into the game. Off for an edition unless its csproj or the command line turns it on. -->
+  <Target Name="DeployPlugin" AfterTargets="PackagePlugin" Condition="'$(DeployToGame)' == 'true'">
+    <ItemGroup>
+      <StagedFiles Include="$(StageDir)*.*" />
+    </ItemGroup>
+    <MakeDir Directories="$(DeployDir)" />
+    <Copy SourceFiles="@(StagedFiles)" DestinationFolder="$(DeployDir)" ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed $(PackageName) to $(DeployDir)" />
+    <!--
+      The editions are mutually exclusive (BepInIncompatibility), so BepInEx would load only one of
+      them. Say so rather than silently removing the other one - it may be there on purpose.
+    -->
+    <Warning Condition="Exists('$(SiblingDeployDir)')"
+             Text="DoomMachine-$(OtherEditionName) is also installed in BepInEx/plugins. The two editions exclude each other, so BepInEx will load only one of them - remove $(SiblingDeployDir) to switch cleanly to $(EditionName)." />
+  </Target>
+
+</Project>

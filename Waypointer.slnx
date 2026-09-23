@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/Waypointer.Tests.csproj" />
+  </Folder>
+  <Project Path="TomTom/TomTom.csproj" />
+  <Project Path="Wayfinder/Wayfinder.csproj" />
+</Solution>

@@ -1,0 +1,12 @@
+# Build output. Everything here is reproducible from source by `dotnet build Waypointer.slnx`.
+build/
+dist/
+obj/
+bin/
+
+# Response file written by the SDK-free fallback compiler (build.sh).
+*.rsp
+
+# Local IDE state.
+.vs/
+*.user

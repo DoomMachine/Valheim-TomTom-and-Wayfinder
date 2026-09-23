@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Runs CoordinateParser (TomTom's parser) and CoordinateFormat outside Unity. Shims.cs supplies the
+    handful of UnityEngine types and the BepInEx config entry they touch, so the real source is
+    compiled and exercised unmodified rather than being copied or reimplemented. Built without the
+    WAYFINDER symbol, i.e. as TomTom - the only edition that has a parser to test.
+
+    Run it with run-tests.sh, or from the tests folder with "dotnet run".
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>Waypointer.Tests</AssemblyName>
+    <RootNamespace>Waypointer</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <BaseOutputPath>..\build\tests\</BaseOutputPath>
+    <OutputPath>..\build\tests\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Shims.cs" />
+    <Compile Include="TestMain.cs" />
+    <Compile Include="..\src\CoordinateParser.cs" />
+    <Compile Include="..\src\CoordinateFormat.cs" />
+  </ItemGroup>
+
+</Project>
