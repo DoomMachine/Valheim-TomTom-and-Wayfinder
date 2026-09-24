@@ -106,6 +106,12 @@ namespace Waypointer
         private static long _loadedWorldUid;
         private static bool _loadedForThisWorld;
 
+        // A failed save is retried after a growing delay instead of every frame (a read-only file or a
+        // full disk would otherwise throw and log 60 times a second), and only the first few failures
+        // are logged. Both are reset whenever the queue moves to another world.
+        private static float _nextSaveAttempt;
+        private static int _saveFailures;
+
         // Speed estimate used for the time-to-arrival readout, smoothed to stop it flickering.
         private static float _lastDistance = -1f;
         private static float _smoothedSpeed;
@@ -122,6 +128,20 @@ namespace Waypointer
         public static bool HasActive
         {
             get { return _queue.Count > 0; }
+        }
+
+        /// <summary>
+        /// True once the queue has been loaded for the world the player is in now. False at the main menu
+        /// and on a loading screen, where the queue still holds the previous world's route.
+        /// </summary>
+        public static bool QueueBelongsToCurrentWorld
+        {
+            get
+            {
+                if (!_loadedForThisWorld) return false;
+                long uid = CurrentWorldUid();
+                return uid != 0L && uid == _loadedWorldUid;
+            }
         }
 
         /// <summary>Metres per second, smoothed. Zero when unknown.</summary>
@@ -282,7 +302,10 @@ namespace Waypointer
 
             if (player == null || mm == null)
             {
-                // Nothing to do without a player and a map - and deliberately nothing is reset here.
+                // Nothing to do without a player and a map - and deliberately nothing but the ETA
+                // estimate is reset here. That estimate is dropped because the next sample would
+                // otherwise divide the whole gap's change in distance (death spot to bed, or one
+                // world to the next) by half a second and show an arrival time while standing still.
                 //
                 // The local player is destroyed and recreated on every death while the map, and our
                 // markers on it, survive. Forgetting the marker references and reloading the queue at
@@ -292,6 +315,11 @@ namespace Waypointer
                 //
                 // A genuine change of world is detected by world UID in LoadForCurrentWorldIfNeeded,
                 // and any marker that did not survive a map rebuild is recreated by EnsurePins.
+                //
+                // Saving still happens here: SaveIfDirty writes to the world the queue was loaded for,
+                // so a pending change is not held back until the next world is up, or lost on a quit.
+                ResetSpeedEstimate();
+                SaveIfDirty();
                 return;
             }
 
@@ -513,6 +541,29 @@ namespace Waypointer
         /// </summary>
         private const float AdoptRadius = 1f;
 
+        /// <summary>
+        /// Followed pins that are on the map right now; null when there are none. Filled into an array
+        /// rather than a List of PinData, which preflight reserves for the map's own pin list.
+        /// </summary>
+        public static Minimap.PinData[] LiveBorrowedPins(Minimap mm)
+        {
+            int count = 0;
+            for (int i = 0; i < _queue.Count; i++)
+                if (IsLiveBorrowed(mm, _queue[i])) count++;
+            if (count == 0) return null;
+
+            Minimap.PinData[] live = new Minimap.PinData[count];
+            int n = 0;
+            for (int i = 0; i < _queue.Count && n < count; i++)
+                if (IsLiveBorrowed(mm, _queue[i])) live[n++] = _queue[i].Pin;
+            return live;
+        }
+
+        private static bool IsLiveBorrowed(Minimap mm, Waypoint wp)
+        {
+            return wp.Pin != null && !wp.OwnsPin && MinimapAccess.PinIsAlive(mm, wp.Pin);
+        }
+
         /// <summary>Drops every marker we own, e.g. when the plugin unloads.</summary>
         public static void ReleaseAllPins()
         {
@@ -575,8 +626,16 @@ namespace Waypointer
             if (_loadedForThisWorld && _loadedWorldUid == uid) return;
 
             bool worldChanged = _loadedForThisWorld && _loadedWorldUid != uid;
+            if (worldChanged)
+            {
+                // Anything not yet written belongs to the world being left: write it there now, whatever
+                // the retry delay says, before the queue is replaced by the next world's.
+                SaveNow();
+            }
             _loadedWorldUid = uid;
             _loadedForThisWorld = true;
+            _saveFailures = 0;
+            _nextSaveAttempt = 0f;
 
             if (Plugin.PersistWaypoints.Value)
             {
@@ -587,6 +646,7 @@ namespace Waypointer
                 // Different world, nothing saved to restore: just drop the stale route.
                 ReleaseAllPins();
                 _queue.Clear();
+                _dirty = false;   // the pending change belonged to the world just left, and persistence is off
                 ResetSpeedEstimate();
             }
         }
@@ -596,6 +656,7 @@ namespace Waypointer
             // Drop any markers we already own before replacing the queue, so none are orphaned on the map.
             ReleaseAllPins();
             _queue.Clear();
+            _dirty = false;   // the queue now matches the file; the early return inside the try skips the reset below
             string path = SavePath(worldUid);
             try
             {
@@ -615,13 +676,18 @@ namespace Waypointer
                     if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out y)) continue;
                     if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out z)) continue;
 
-                    bool hasElev = parts[3] == "1";
+                    // "NaN" and "Infinity" parse as floats; a position that is not a real place is skipped
+                    // like any other unreadable line (CoordinateParser refuses them for the same reason).
+                    if (!IsFinite(x) || !IsFinite(z)) continue;
+
+                    bool hasElev = parts[3].Trim() == "1";
+                    if (!IsFinite(y)) { y = 0f; hasElev = false; }   // altitude unusable: treat as not given
 
                     bool owns = true;
                     string name = "";
                     if (parts.Length >= 6)
                     {
-                        owns = parts[4] == "1";
+                        owns = parts[4].Trim() != "0";   // only an explicit 0 means "follows a player's pin"
                         name = parts[5];
                     }
                     else if (parts.Length == 5)
@@ -653,10 +719,11 @@ namespace Waypointer
             if (!_dirty) return;
             if (!Plugin.PersistWaypoints.Value) return;
 
-            // The dirty flag is only cleared once the write actually succeeds, so a failure here
-            // (or a world that is not ready yet) means we try again rather than losing the route.
-            long uid = CurrentWorldUid();
-            if (uid == 0L) return;
+            // The queue is written to the world it was loaded for - never to whatever world happens to be
+            // current, which during a world change is already the next one. The dirty flag is only cleared
+            // once the write succeeds; a failed write is retried after a growing delay.
+            if (!_loadedForThisWorld || _loadedWorldUid == 0L) return;
+            if (Time.unscaledTime < _nextSaveAttempt) return;
 
             try
             {
@@ -672,15 +739,48 @@ namespace Waypointer
                         wp.Pos.x, wp.Pos.y, wp.Pos.z,
                         wp.HasElevation ? "1" : "0",
                         wp.Borrowed ? "0" : "1",
-                        wp.Name == null ? "" : wp.Name.Replace("|", " ")));
+                        SanitizeName(wp.Name)));
                 }
-                File.WriteAllText(SavePath(uid), sb.ToString());
+                File.WriteAllText(SavePath(_loadedWorldUid), sb.ToString());
                 _dirty = false;
+                if (_saveFailures > 0)
+                    Plugin.Log.LogInfo("Waypoints saved after " + _saveFailures.ToString(CultureInfo.InvariantCulture)
+                        + " failed attempt(s).");
+                _saveFailures = 0;
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning("Could not save waypoints: " + e.Message);
+                _saveFailures++;
+                _nextSaveAttempt = Time.unscaledTime + Mathf.Min(2f * _saveFailures, 30f);
+                if (_saveFailures <= 3)
+                    Plugin.Log.LogWarning("Could not save waypoints: " + e.Message);
+                else if (_saveFailures == 4)
+                    Plugin.Log.LogWarning("Could not save waypoints: still failing; retrying every few seconds "
+                        + "(at most every 30 s) without further warnings.");
             }
+        }
+
+        /// <summary>
+        /// Saves now if anything changed, ignoring the retry delay - for the moments with no later chance:
+        /// leaving a world and shutting down.
+        /// </summary>
+        public static void SaveNow()
+        {
+            _nextSaveAttempt = 0f;
+            SaveIfDirty();
+            // Both callers are about to replace or drop the queue, so an unsaved change is gone for good.
+            if (_dirty && Plugin.PersistWaypoints.Value && _loadedForThisWorld && _loadedWorldUid != 0L)
+                Plugin.Log.LogWarning("Could not save the waypoints of world "
+                    + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + "; the last change is lost.");
+        }
+
+        private static bool IsFinite(float v) { return !float.IsNaN(v) && !float.IsInfinity(v); }
+
+        /// <summary>One waypoint per line, '|'-separated: a name must not contain either separator.</summary>
+        private static string SanitizeName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            return name.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ');
         }
     }
 }

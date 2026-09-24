@@ -18,6 +18,7 @@ namespace Waypointer
         public float B;            // second axis typed by the player (Y)
         public float Elevation;    // optional third axis             (Z)
         public bool HasElevation;
+        public bool Labelled;      // axes came from x/y/z labels, already in Valheim's meaning
         public string Name;
 
         public ParsedCoord()
@@ -27,8 +28,9 @@ namespace Waypointer
     }
 
     /// <summary>
-    /// Parses free-form coordinate text. Deliberately liberal: accepts commas, spaces, semicolons,
-    /// tabs and newlines, tolerates brackets, and allows an optional per-entry name.
+    /// Parses free-form coordinate text. Deliberately liberal: accepts commas, spaces (including
+    /// no-break, thin and ideographic spaces), semicolons, tabs and newlines, tolerates brackets, and
+    /// allows an optional per-entry name.
     /// </summary>
     public static class CoordinateParser
     {
@@ -48,13 +50,51 @@ namespace Waypointer
         // grouping. Fields the player separated deliberately are written with a space after the comma.
         private static readonly Regex DigitGrouping = new Regex(@"\d,\d{3}(?!\d)");
 
+        // One or two digits that do not continue a longer number, a no-break or thin space, then exactly
+        // three digits: the signature of locale digit grouping ("1 234", "10 500"). A leading group of three
+        // digits would group to 100 000 or more, beyond CoordinateLimit, so "567 100" is two values.
+        private static readonly Regex SpaceGrouping = new Regex("(?<![\\d.])\\d{1,2}[\u00A0\u2007\u2009\u202F]\\d{3}(?!\\d)");
+
+        // Typographic minus signs, hyphens and dashes, full-width (IME) digits and punctuation, a byte-order mark
+        // and a zero-width space look like ordinary coordinates on screen but float.TryParse refuses them,
+        // and a refused first value would become part of the name while the next two numbers silently take
+        // its place. Runs before the digit-grouping check so a full-width comma is judged like an ASCII one.
+        // Deliberately NOT mapped: no-break and thin spaces - locale thousands separators ("1 234"), which
+        // SpaceGrouping refuses and Strip otherwise treats as ordinary spaces.
+        private static string Normalise(string text)
+        {
+            StringBuilder sb = null;
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                char r = c;
+                bool beforeDigit = i + 1 < text.Length && (char.IsDigit(text[i + 1]) || text[i + 1] == '.');
+                if (beforeDigit && (c == '\u2212' || c == '\u2010' || c == '\u2011' || c == '\u2012' || c == '\u2013'
+                    || c == '\u2014' || c == '\u2015' || c == '\uFE63' || c == '\uFF0D')) r = '-';
+                else if (c == '\uFF0B') r = '+';
+                else if (c >= '\uFF10' && c <= '\uFF19') r = (char)('0' + (c - '\uFF10'));
+                else if (c == '\uFF0E') r = '.';
+                else if (c == '\uFF0C') r = ',';
+                else if (c == '\uFF1B') r = ';';
+                else if (c == '\uFF1A') r = ':';
+                else if (c == '\uFF08') r = '(';
+                else if (c == '\uFF09') r = ')';
+                else if (c == '\uFEFF' || c == '\u200B') r = '\0';   // dropped
+                if (r == c) { if (sb != null) sb.Append(c); continue; }
+                if (sb == null) { sb = new StringBuilder(text.Length); sb.Append(text, 0, i); }
+                if (r != '\0') sb.Append(r);
+            }
+            return sb == null ? text : sb.ToString();
+        }
+
         private static string Strip(string text)
         {
             StringBuilder cleaned = new StringBuilder(text.Length);
             for (int i = 0; i < text.Length; i++)
             {
                 char c = text[i];
-                cleaned.Append(Array.IndexOf(Decoration, c) >= 0 ? ' ' : c);
+                // Any Unicode space (no-break, thin, ideographic...) separates fields like a plain one.
+                cleaned.Append((Array.IndexOf(Decoration, c) >= 0 || char.IsWhiteSpace(c)) ? ' ' : c);
             }
             return cleaned.ToString();
         }
@@ -93,7 +133,7 @@ namespace Waypointer
             error = null;
             if (line == null) { error = "empty"; return false; }
 
-            string work = line.Trim();
+            string work = Normalise(line).Trim();
             if (work.Length == 0) { error = "empty"; return false; }
 
             // Digit grouping such as "1,234,567" would otherwise be read as three separate fields and
@@ -101,7 +141,13 @@ namespace Waypointer
             // Deliberate fields written with spaces ("1, 234, 567") do not match this pattern.
             if (DigitGrouping.IsMatch(work))
             {
-                error = "looks like digit grouping (1,234) - remove the grouping and use a dot for decimals";
+                error = "looks like digit grouping (1,234) - remove the grouping, or put a space after the comma if these are separate values; use a dot for decimals";
+                return false;
+            }
+            if (SpaceGrouping.IsMatch(work))
+            {
+                error = "looks like digit grouping (1 234) - remove the space inside the number, "
+                      + "or separate the values with a comma and a space";
                 return false;
             }
 
@@ -189,6 +235,13 @@ namespace Waypointer
                 parsed.B = labZ;
                 parsed.Elevation = labY;
                 parsed.HasElevation = hasY;
+                parsed.Labelled = true;
+            }
+            else if (labelled && hasX && hasY && numbers.Count == 2)
+            {
+                // Only x and y: the two map axes, bound by name so "Y=30 X=-500" is not read backwards.
+                parsed.A = labX;
+                parsed.B = labY;
             }
             else
             {
@@ -278,13 +331,15 @@ namespace Waypointer
         /// With <paramref name="rawValheimOrder"/> the three values are Valheim's own x, y, z, where the
         /// SECOND value is already the altitude:             (A, B, third)
         /// Two values in raw mode are still read as the two horizontal axes, because that is the only
-        /// sensible reading of a pair.
+        /// sensible reading of a pair. Labelled input ("X: 1234 Y: 56 Z: -789") already names Valheim's own
+        /// axes, so it is exempt from the raw remap and lands where its labels say in either mode.
         /// </summary>
         public static Vector3 ToWorld(ParsedCoord pc, bool rawValheimOrder)
         {
             if (pc == null) return Vector3.zero;
 
-            if (rawValheimOrder && pc.HasElevation)
+            // Labelled input already names Valheim axes, so the raw-order switch must not re-map it.
+            if (rawValheimOrder && pc.HasElevation && !pc.Labelled)
                 return new Vector3(pc.A, pc.B, pc.Elevation);
 
             float altitude = pc.HasElevation ? pc.Elevation : 0f;

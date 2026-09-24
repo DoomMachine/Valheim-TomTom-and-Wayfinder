@@ -68,6 +68,14 @@ namespace Waypointer
 
                 string sub = argv[1].ToLowerInvariant();
 
+                // At the main menu or on a loading screen the queue is still the last world's: listing or
+                // changing it there would show or lose a route that belongs somewhere else.
+                if (sub != "gui" && sub != "window" && !WaypointManager.QueueBelongsToCurrentWorld)
+                {
+                    Print(context, "Waypoints can only be changed or listed inside a world.");
+                    return;
+                }
+
                 switch (sub)
                 {
                     case "list":

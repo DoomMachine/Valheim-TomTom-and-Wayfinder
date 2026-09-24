@@ -69,7 +69,7 @@ dotnet build Waypointer.slnx
 ```
 
 Each edition is compiled into `build/<Edition>/` and packaged into
-`dist/DoomMachine-<Edition>-1.0.0/` plus a matching `.zip` (DLL, manifest, icon, README) — the layout a
+`dist/DoomMachine-<Edition>-<version>/` plus a matching `.zip` (DLL, manifest, icon, README) — the layout a
 mod manager or a manual install expects.
 
 **TomTom** is also installed into `BepInEx/plugins/DoomMachine-TomTom/`. **Wayfinder** is not, unless you
@@ -91,7 +91,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 52 parser tests, on .NET and on Mono
+./run-tests.sh                                                         # 71 parser tests, on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -108,7 +108,8 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
 - anything could change or remove a pin the mod did not create (a `PinData` store, a direct edit of the
   map's pin list, a wipe, or `RemovePin` anywhere but `RemoveOwnMarker`)
 - a game, Unity, BepInEx or Harmony type or member the plugin calls no longer exists with the same
-  signature
+  signature, or a Harmony patch no longer names the exact overload it targets
+- the `Chat.HasFocus` postfix loses the `Priority.Last` it needs to run after other mods' postfixes
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
   console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
@@ -140,20 +141,54 @@ Run it after every Valheim update.
   must be built with a Unity no newer than the game's (6000.0.75f1) and re-checked whenever the game
   moves to a new engine version; it would add a binary that neither build path can reproduce, and it
   would change nothing per frame.
-- Private game members (`Minimap.ScreenToWorldPoint`, `m_pins`, `PinInteractRadius`,
-  `HidePinTextInput`, `m_visibleIconTypes`) are reached with `HarmonyLib.AccessTools` reflection, so the
+- Private game members (`Minimap.ScreenToWorldPoint`, `m_pins`, `PinInteractRadius`, `GetClosestPin`,
+  `m_visibleIconTypes`) are reached with `HarmonyLib.AccessTools` reflection, so the
   plugins depend only on the shipped DLLs.
 - Input is taken over by making `TextInput.IsVisible` report `true` while the window is open. That one
   flag is what `Player.TakeInput` and `GameCamera.UpdateMouseCapture` consult, so it releases the cursor
   and blocks movement, the hotbar and Use together — the same approach ConfigurationManager and
-  MeasurementTracker take. It does not cover everything: Tab still opens the inventory and the mouse
-  wheel still zooms the camera while the window is open.
+  MeasurementTracker take. The inventory key, camera zoom and gamepad hotbar check `Chat.HasFocus`
+  instead, so that is forced `true` too (a postfix at `Priority.Last`, because Chatter also sets it), and
+  `ZInput.GetMouseScrollWheel` reads 0, so the wheel only scrolls the list. Console key bindings still fire
+  while the window is open. Clicks on the window are kept from reaching the large map underneath it
+  (`OnMapLeftDown`, `OnMapDblClick` and the map image's `UIInputHandler.OnPointerClick`).
 - Valheim's pin hit-tests (`GetClosestPin`, `HavePinInRange`) skip `save: false` pins, so the mod finds its
-  own markers by walking `m_pins` itself, including for the vanilla right-click-delete gesture.
+  own markers by walking `m_pins` itself. Deletion is intercepted at `Minimap.RemovePin(Vector3, float)`,
+  where the mouse right-click, touch long-press and the gamepad delete button all end up: a waypoint
+  marker within reach wins, so a delete aimed at one can never remove the player's own pin.
+- Waypoints are saved to the world they were loaded for, a pending change is written before the next
+  world's queue replaces it, and a failed write is retried after a growing delay rather than every frame.
 - The local player is destroyed and recreated on every death while the map survives, so nothing is reset
   when the player is briefly missing; a change of world is detected by world UID instead.
 
 ## History
+
+**1.1.0** — fixes and a code review.
+
+- fixed: with a controller, deleting a waypoint marker on the big map deleted the nearest of your own
+  saved pins instead
+- fixed: clicks on the window reached the large map underneath it — a double-click placed a saved,
+  shareable pin, a middle-click pinged everyone, a right-click deleted a pin
+- fixed: Alt-click followed pings, shouts, other players' markers and event markers
+- fixed: Tab opened the inventory and the mouse wheel zoomed the camera while the window was open;
+  Esc and a controller's B now close it
+- fixed: the arrow showed while sleeping, in cutscenes and over the pause menu, inventory and traders
+- fixed: a failed save was retried, and logged, every frame; a quit while the next world loaded could write
+  one world's route into the other's file
+- fixed: `waypoint` commands at the main menu changed the previous world's list
+- fixed (TomTom): a pasted typographic minus, dash or hyphen, full-width digits or no-break spaces silently moved the
+  waypoint; `Y=30 X=-500` was read in written order rather than by label; labelled input was remapped in
+  raw-order mode
+- smaller fixes: an Alt-double-click, the arrow's first moments at a new waypoint, the arrival-time
+  estimate right after a respawn, hand-edited route files
+- about 1 KB less garbage per frame while navigating and about 28 KB less while the window is open
+- preflight checks the local-only guarantee by value, guards the player's own pins, and resolves every game
+  member against the shipped assemblies (25 → 39 checks); tests also run on the game's own mscorlib
+- removed public members nothing in the mod used: `Plugin.Instance`, `Waypoint.Id`,
+  `WaypointManager.MarkDirty`, `WaypointWindow.SetStatus` and `ForceClose`, and the
+  `Minimap_RemovePinUnderPointer_Patch` class (its job is now done by `Minimap_RemovePin_Patch`)
+- the window no longer opens on top of the pause menu
+- behaviour otherwise unchanged; the config file needs no changes
 
 **1.0.0 — first release of TomTom and Wayfinder.** Both grew out of a single plugin called *Waypointer*,
 built under an earlier GUID and played live for several sessions but never released. They keep

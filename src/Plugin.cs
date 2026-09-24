@@ -108,9 +108,14 @@ namespace Waypointer
             Type[] patchClasses = new Type[]
             {
                 typeof(TextInput_IsVisible_Patch),          // cursor release + input blocking
+                typeof(Chat_HasFocus_Patch),                // inventory key, camera zoom, gamepad hotbar
+                typeof(ZInput_GetMouseScrollWheel_Patch),   // wheel does not zoom the camera behind the window
                 typeof(PlayerController_TakeInput_Patch),   // movement blocking
                 typeof(Minimap_OnMapLeftClick_Patch),       // place / promote / clear from the map
-                typeof(Minimap_RemovePinUnderPointer_Patch),// vanilla right-click delete
+                typeof(Minimap_OnMapDblClick_Patch),        // no vanilla pin from a double click on the window / with the modifier
+                typeof(Minimap_OnMapLeftDown_Patch),        // no map drag from a press on the window
+                typeof(UIInputHandler_OnPointerClick_Patch),// no ping or pin delete from a click on the window
+                typeof(Minimap_RemovePin_Patch),            // vanilla delete: right click, long press, gamepad
                 typeof(Terminal_InitTerminal_Patch)         // console command
             };
 
@@ -204,19 +209,38 @@ namespace Waypointer
             // an unhandled exception would surface as a Unity error every single frame.
             try
             {
+                bool consoleVisible = Console.IsVisible();
+
                 // Never steal keys while the player is typing into chat, the console or a text field.
                 if (!IsTypingElsewhere())
                 {
-                    if (IsHotkeyAvailable(ToggleWindowKey.Value) && ZInput.GetKeyDown(ToggleWindowKey.Value, false))
+                    // Escape and the gamepad's B close the window: Menu.Update cannot open the pause menu
+                    // while TextInput.IsVisible is true, so without this Escape does nothing at all. Not
+                    // while the console is (or was, last frame) open - Console.Update closes itself on the
+                    // same press, and after "waypoint window" that press is meant for the console only.
+                    if (WaypointWindow.IsOpen && !consoleVisible && !_consoleWasVisible
+                        && (ZInput.GetKeyDown(KeyCode.Escape, false) || ZInput.GetButtonDown("JoyButtonB")))
+                    {
+                        // Consume B so a map underneath does not close with it (InventoryGui does the same),
+                        // and pause controls briefly as Menu.Hide does, since B is also Jump on a gamepad.
+                        ZInput.ResetButtonStatus("JoyButtonB");
+                        if (ZInput.IsGamepadActive()) PlayerController.SetTakeInputDelay(0.1f);
+                        WaypointWindow.Close();
+                    }
+                    // Not opened over the pause menu: Menu.Update closes it on the same Escape that closes our
+                    // window, so one press would close both and unpause. Closing is always allowed.
+                    else if (IsHotkeyAvailable(ToggleWindowKey.Value) && ZInput.GetKeyDown(ToggleWindowKey.Value, false)
+                             && (WaypointWindow.IsOpen || !Menu.IsVisible()))
                         WaypointWindow.Toggle();
 
                     if (IsHotkeyAvailable(SkipWaypointKey.Value) && ZInput.GetKeyDown(SkipWaypointKey.Value, false)
-                        && WaypointManager.HasActive)
+                        && WaypointManager.HasActive && WaypointManager.QueueBelongsToCurrentWorld)
                     {
                         WaypointManager.SkipActive();
                     }
                 }
 
+                _consoleWasVisible = consoleVisible;
                 WaypointManager.Tick();
                 WaypointWindow.UpdateCursorState();
             }
@@ -301,6 +325,10 @@ namespace Waypointer
             }
         }
 
+        // Console visibility as sampled by the previous Update. Unity does not order our Update against
+        // Console.Update, so on the Escape frame the console may already have closed itself.
+        private static bool _consoleWasVisible;
+
         private static int _updateErrors;
         private static int _guiErrors;
         private const int MaxLoggedErrors = 3;
@@ -323,7 +351,7 @@ namespace Waypointer
             try
             {
                 WaypointWindow.Close();
-                WaypointManager.SaveIfDirty();
+                WaypointManager.SaveNow();   // last chance: ignores any retry delay
                 WaypointManager.ReleaseAllPins();
                 ArrowHud.InvalidateTextures();
                 if (_harmony != null) _harmony.UnpatchSelf();

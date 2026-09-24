@@ -55,6 +55,34 @@ namespace Waypointer
             ExpectFail("999999, 1");
             ExpectFail("1, NaN");
 
+            // Typographic minus/dash and full-width (IME) input must not shift the axes.
+            Expect("\u22121234, 567, 30", -1234f, 567f, true, 30f, "");
+            Expect("Camp: \u22121234, 567, 30", -1234f, 567f, true, 30f, "Camp");
+            Expect("1234, \u2013567", 1234f, -567f, false, 0f, "");
+            Expect("\u20141234, 567, 30", -1234f, 567f, true, 30f, "");   // em dash
+            Expect("\u20101234, 567", -1234f, 567f, false, 0f, "");        // hyphen
+            Expect("1234, \u2011567", 1234f, -567f, false, 0f, "");        // non-breaking hyphen
+            Expect("x 1234 y 30 z \u2212567", 1234f, -567f, true, 30f, "");
+            Expect("\uFF11\uFF12\uFF13\uFF14\uFF0C-567", 1234f, -567f, false, 0f, "");
+            Expect("Camp\uFF1A\u22121234, 567, 30", -1234f, 567f, true, 30f, "Camp");
+            Expect("Camp \u2013 North: 1234, -567", 1234f, -567f, false, 0f, "Camp \u2013 North");
+            ExpectFail("\uFF11\uFF0C\uFF12\uFF13\uFF14\uFF0C\uFF15\uFF16\uFF17");
+
+            // No-break, thin and ideographic spaces separate fields like a plain space...
+            Expect("1234\u00A0-567", 1234f, -567f, false, 0f, "");
+            Expect("1234,\u00A0-567", 1234f, -567f, false, 0f, "");
+            Expect("1234\u00A0-567\u00A0100", 1234f, -567f, true, 100f, "");
+            Expect("1234\u3000-567", 1234f, -567f, false, 0f, "");
+            Expect("1234\u2009-567", 1234f, -567f, false, 0f, "");
+            Expect("100\u00A0200", 100f, 200f, false, 0f, "");
+            // ...but one used as locale digit grouping ("1 234") is refused, not read as two fields.
+            ExpectFail("1\u00A0234, -567, 30");
+            ExpectFail("10\u202F500, 200");
+
+            // x and y without z are the two map axes, bound by name whatever order they are written in.
+            Expect("y=-567 x=1234", 1234f, -567f, false, 0f, "");
+            Expect("Y: 30, X: -500 Camp", -500f, 30f, false, 0f, "Camp");
+
             // Behaviour that already holds and is worth pinning down.
             ExpectFail("500,300");                       // comma + exactly three digits reads as grouping
             Expect("Camp: 123, 456", 123f, 456f, false, 0f, "Camp");
@@ -104,6 +132,12 @@ namespace Waypointer
             Vector3 raw2 = CoordinateParser.ToWorld(pc, true);
             Check("raw mapping, no elevation",
                   Near(raw2.x, 100f) && Near(raw2.y, 0f) && Near(raw2.z, 200f), "got " + raw2);
+
+            // Labelled input already names Valheim's axes, so raw order must not re-map it
+            CoordinateParser.TryParseOne("X: 1234 Y: 56 Z: -789", out pc, out err);
+            Vector3 rawLab = CoordinateParser.ToWorld(pc, true);
+            Check("raw mapping, labelled",
+                  Near(rawLab.x, 1234f) && Near(rawLab.y, 56f) && Near(rawLab.z, -789f), "got " + rawLab);
 
             // Formatting round trip
             Plugin.RawValheimOrder.Value = false;

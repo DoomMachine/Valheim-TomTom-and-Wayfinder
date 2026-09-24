@@ -57,6 +57,16 @@ namespace Waypointer
 
         public static bool IsOpen { get { return _open; } }
 
+        // Frame in which the window last closed. The key that closed it (Escape, gamepad B) is still
+        // "down this frame" for any game gate that runs after us, so the gates stay shut until it ends.
+        private static int _closedFrame = -1;
+
+        /// <summary>True while open, and for the rest of the frame in which the window closed.</summary>
+        public static bool BlocksGameInput
+        {
+            get { return _open || _closedFrame == Time.frameCount; }
+        }
+
         /// <summary>True while one of our text fields owns the keyboard, so hotkeys must stand down.</summary>
         public static bool TextFieldHasFocus { get { return _open && _textFieldFocused; } }
 
@@ -75,6 +85,7 @@ namespace Waypointer
         {
             if (!_open) return;
             _open = false;
+            _closedFrame = Time.frameCount;
             _textFieldFocused = false;
             _pending.Clear();
         }

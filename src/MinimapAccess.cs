@@ -16,6 +16,7 @@ namespace Waypointer
     {
         private static bool _initialised;
         private static Func<Minimap, Vector3, Vector3> _screenToWorld;
+        private static Func<Minimap, Vector3, float, bool, Minimap.PinData> _closestPin;
         private static FieldInfo _pinsField;
         private static FieldInfo _visibleIconTypesField;
         private static MethodInfo _pinInteractRadiusGetter;
@@ -32,6 +33,14 @@ namespace Waypointer
                     _screenToWorld = AccessTools.MethodDelegate<Func<Minimap, Vector3, Vector3>>(stw);
             }
             catch (Exception e) { Plugin.Log.LogWarning("ScreenToWorldPoint unavailable: " + e.Message); }
+
+            try
+            {
+                MethodInfo gcp = AccessTools.Method(typeof(Minimap), "GetClosestPin", new Type[] { typeof(Vector3), typeof(float), typeof(bool) });
+                if (gcp != null)
+                    _closestPin = AccessTools.MethodDelegate<Func<Minimap, Vector3, float, bool, Minimap.PinData>>(gcp);
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("GetClosestPin unavailable: " + e.Message); }
 
             _pinsField = AccessTools.Field(typeof(Minimap), "m_pins");
             if (_pinsField == null) Plugin.Log.LogWarning("Minimap.m_pins not found.");
@@ -147,30 +156,41 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// Nearest pin to a world position, measured on the horizontal plane.
+        /// Nearest pin that one of our waypoints is using, so our own markers win the gesture, measured on
+        /// the horizontal plane.
         ///
         /// This walks m_pins directly rather than using Valheim's own GetClosestPin, because that
         /// helper begins its loop with `if (!pin.m_save) continue;` - verified in IL. Our waypoint
         /// markers are deliberately created with save:false so they never end up in the player's saved
         /// map data, which makes them invisible to every vanilla hit test, including the one behind
-        /// GetClosestPinToCursor and the right-click delete gesture.
+        /// GetClosestPinToCursor and the delete gestures.
         /// </summary>
-        internal static Minimap.PinData GetClosestPinToWorldPos(Minimap mm, Vector3 world, float radius)
+        internal static Minimap.PinData GetClosestWaypointPin(Minimap mm, Vector3 world, float radius)
         {
             return FindClosest(mm, world, radius, false);
         }
 
-        /// <summary>Nearest pin that one of our waypoints is using, so our own markers win the gesture.</summary>
-        internal static Minimap.PinData GetClosestWaypointPin(Minimap mm, Vector3 world, float radius)
+        /// <summary>
+        /// The pin Minimap.RemovePin(pos, radius) is about to delete: Valheim's own GetClosestPin with
+        /// mustBeVisible, exactly as RemovePin calls it. Never one of our markers (save:false).
+        /// </summary>
+        internal static Minimap.PinData GetVanillaClosestPin(Minimap mm, Vector3 world, float radius)
         {
-            return FindClosest(mm, world, radius, true);
+            if (mm == null || _closestPin == null) return null;
+            try { return _closestPin(mm, world, radius, true); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("GetClosestPin failed: " + e.Message);
+                return null;
+            }
         }
 
         /// <summary>
         /// Nearest pin a borrowed waypoint may attach itself to: not already used by any waypoint (which
         /// also rules out our own stand-in marker sitting on the same spot) and not a transient pin.
         /// Deliberately NOT filtered on m_save: some vanilla markers a player might follow, such as the
-        /// bed spawn point, are save:false too.
+        /// bed spawn point, are save:false too. Used both to re-adopt a followed pin (EnsurePins) and to
+        /// pick the pin an Alt-click promotes.
         /// </summary>
         internal static Minimap.PinData GetClosestAdoptablePin(Minimap mm, Vector3 world, float radius)
         {
@@ -203,7 +223,16 @@ namespace Waypointer
                 || type == Minimap.PinType.EventArea;
         }
 
-        private static Minimap.PinData FindClosest(Minimap mm, Vector3 world, float radius, bool waypointsOnly)
+        /// <summary>
+        /// The nearest waypoint marker the mod itself placed (not a pin of the player's that a waypoint
+        /// follows) within radius, or null. Deletion uses it: a marker of ours always wins over anything else.
+        /// </summary>
+        internal static Minimap.PinData GetClosestOwnedWaypointPin(Minimap mm, Vector3 world, float radius)
+        {
+            return FindClosest(mm, world, radius, true);
+        }
+
+        private static Minimap.PinData FindClosest(Minimap mm, Vector3 world, float radius, bool ownedOnly)
         {
             List<Minimap.PinData> pins = GetPins(mm);
             Minimap.PinData best = null;
@@ -212,7 +241,8 @@ namespace Waypointer
             {
                 Minimap.PinData p = pins[i];
                 if (p == null) continue;
-                if (waypointsOnly && WaypointManager.FindByPin(p) == null) continue;
+                Waypoint w = WaypointManager.FindByPin(p);
+                if (w == null || (ownedOnly && !w.OwnsPin)) continue;
 
                 float dx = p.m_pos.x - world.x;
                 float dz = p.m_pos.z - world.z;
@@ -224,21 +254,6 @@ namespace Waypointer
                 }
             }
             return best;
-        }
-
-        /// <summary>
-        /// Mirrors the housekeeping Valheim does at the start of its own delete gesture, for the case
-        /// where we handle that gesture ourselves and skip the original method.
-        /// </summary>
-        internal static void HidePinTextInput(Minimap mm)
-        {
-            if (mm == null) return;
-            try
-            {
-                MethodInfo mi = AccessTools.Method(typeof(Minimap), "HidePinTextInput", new Type[] { typeof(bool) });
-                if (mi != null) mi.Invoke(mm, new object[] { false });
-            }
-            catch { /* cosmetic only - never let this break the delete */ }
         }
     }
 }

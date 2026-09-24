@@ -23,6 +23,9 @@ namespace Waypointer
         /// <summary>Last heading that was far enough away to be meaningful, on the horizontal plane.</summary>
         private static Vector3 _lastDirection;
 
+        /// <summary>The waypoint _lastDirection was measured towards; a heading never outlives its target.</summary>
+        private static Waypoint _lastDirectionOwner;
+
         // Arrow outline in normalised texture space, y pointing up, as a kite with a notched tail.
         private static readonly float[] PolyX = new float[] { 0.50f, 0.97f, 0.50f, 0.03f };
         private static readonly float[] PolyY = new float[] { 0.97f, 0.04f, 0.33f, 0.04f };
@@ -45,6 +48,12 @@ namespace Waypointer
             Waypoint wp = WaypointManager.Active;
             Player player = Player.m_localPlayer;
             if (wp == null || player == null) return;
+
+            if (!ReferenceEquals(wp, _lastDirectionOwner))
+            {
+                _lastDirectionOwner = wp;
+                _lastDirection = Vector3.zero;
+            }
 
             Vector3 playerPos = player.transform.position;
 
@@ -139,7 +148,12 @@ namespace Waypointer
             try
             {
                 if (Hud.IsUserHidden()) return false;
-                if (player.IsDead() || player.InIntro() || player.IsTeleporting()) return false;
+                // InCutscene covers the intro, sleeping, cinematics and the cutscene animation - the test
+                // Hud.Update itself uses to hide the whole HUD.
+                if (player.IsDead() || player.InCutscene() || player.IsTeleporting()) return false;
+                // The arrow is IMGUI and draws above the game's own canvas, so it is hidden while a
+                // full-screen panel is open rather than painted over it.
+                if (Menu.IsVisible() || InventoryGui.IsVisible() || StoreGui.IsVisible()) return false;
                 if (Plugin.HideArrowWhenMapOpen.Value && Minimap.instance != null
                     && Minimap.instance.m_mode == Minimap.MapMode.Large) return false;
             }
@@ -190,7 +204,6 @@ namespace Waypointer
                 _lastDirection = toTarget;
             }
 
-            if (toTarget.sqrMagnitude < 0.0001f) return false;
             toTarget.Normalize();
 
             float angle = Vector3.Angle(forward, toTarget);

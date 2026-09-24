@@ -9,6 +9,7 @@
 #   6. Wayfinder contains no coordinate-entry code or coordinate readout at all; TomTom still does
 #   7. every assembly the plugin references can be resolved from the game folder
 #   8. every game, Unity, BepInEx and Harmony type and member the plugin uses resolves with its exact signature
+#   9. the Chat.HasFocus postfix still runs last (Chatter's postfix overwrites the result and loads later)
 #
 # A rename in a Valheim update shows up here as a failure instead of as a broken feature in-game.
 #
@@ -29,7 +30,7 @@ if ($Plugin -eq "") { $Plugin = Join-Path $ValheimDir "BepInEx\plugins\DoomMachi
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.0.0"
+$expectedVersion = "1.1.0"
 
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 
@@ -104,7 +105,11 @@ foreach ($t in $plug.GetTypes()) {
             $failures++
             continue
         }
-        $hit = $gt.Methods | Where-Object { $_.Name -eq $methodName }
+        # With an argument-type list, match the overload too (RemovePin has two).
+        $want = $null
+        if ($args.Count -ge 3) { $want = (@($args[2].Value | ForEach-Object { $_.Value.FullName }) -join ",") }
+        $hit = $gt.Methods | Where-Object { $_.Name -eq $methodName -and
+            ($want -eq $null -or (@($_.Parameters | ForEach-Object { $_.ParameterType.FullName }) -join ",") -eq $want) }
         if (-not $hit) {
             Write-Output ("  FAIL  {0}: {1}.{2} not found" -f $t.Name, $typeName, $methodName)
             $failures++
@@ -128,7 +133,7 @@ Write-Output "== private members reached by reflection =="
 # IL pattern can drift from MinimapAccess without this section saying so.
 $reflectedTypes = @{
     'Minimap.ScreenToWorldPoint'    = 'UnityEngine.Vector3'
-    'Minimap.HidePinTextInput'      = 'System.Void'
+    'Minimap.GetClosestPin'         = 'Minimap/PinData'
     'Minimap.m_pins'                = 'System.Collections.Generic.List`1<Minimap/PinData>'
     'Minimap.m_visibleIconTypes'    = 'System.Boolean[]'
     'Minimap.PinInteractRadius'     = 'System.Single'
@@ -479,6 +484,20 @@ if ($Edition -eq "Wayfinder") {
         $failures++
     }
 }
+
+Write-Output ""
+Write-Output "== patch ordering =="
+# Chatter's Chat.HasFocus postfix assigns __result outright and loads after this plugin, so at equal
+# priority it would run later and undo ours. Chat_HasFocus_Patch.Postfix must stay Priority.Last (0).
+$checks++
+$hf = $plug.GetType("Waypointer.Chat_HasFocus_Patch")
+$pf = $null
+if ($hf) { $pf = $hf.Methods | Where-Object { $_.Name -eq "Postfix" } | Select-Object -First 1 }
+$prio = $null
+if ($pf) { foreach ($ca in $pf.CustomAttributes) { if ($ca.AttributeType.Name -eq "HarmonyPriority") { $prio = [int]$ca.ConstructorArguments[0].Value } } }
+if (-not $pf) { Write-Output "  FAIL  Waypointer.Chat_HasFocus_Patch.Postfix not found"; $failures++ }
+elseif ($prio -eq 0) { Write-Output "  ok    Chat_HasFocus_Patch.Postfix runs last (HarmonyPriority 0 = Priority.Last)" }
+else { Write-Output ("  FAIL  Chat_HasFocus_Patch.Postfix priority is '{0}', expected 0 (Priority.Last)" -f $prio); $failures++ }
 
 Write-Output ""
 Write-Output "== game types and members the plugin uses =="

@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.0.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.1.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map or are standing on, so nothing can be looked up outside the game
@@ -28,11 +28,15 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an empty spot | a waypoint there |
-| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any pin within reach counts, including one shared to you through a Cartography Table |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any pin within reach counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
 | a waypoint marker | the waypoint is removed |
 
-Queue up several and they are visited in order. Plain clicks keep Valheim's normal behaviour, and
-vanilla right-click-delete works on waypoint markers too.
+Queue up several and they are visited in order. Plain clicks keep Valheim's normal behaviour, and an
+Alt-double-click places a single waypoint.
+Right-click delete — and the controller's delete button on the big map — works on waypoint
+markers too. When a waypoint marker is within reach, the waypoint is what gets removed, never one of
+your own pins; deleting one of your own pins that a waypoint follows drops that waypoint as well.
+Clicks on the window itself never reach the map underneath it.
 
 If you have hidden the waypoint marker's icon type with the map's icon filter, adding a waypoint shows it
 again: the game re-enables an icon type whenever a pin of that type is added. Pick a different
@@ -45,11 +49,15 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 - the **active target** with its distance, **Skip this one** and **Clear all**
 - the **queue**, each entry with **Go** (make it active) and **X** (delete)
 
+While it's open, the game ignores your keyboard: Tab doesn't open the inventory and the mouse wheel
+scrolls the list instead of zooming the camera. Key bindings you made with the console's `bind` command
+still run. **Esc** — or **B** on a controller — closes it. The window needs a keyboard and mouse.
+
 ## Install
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.0.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.1.0]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -69,12 +77,15 @@ waypoint gui               toggle the window
 
 `waypoint 1234 -567` is refused — Wayfinder has no coordinate entry.
 
+These commands work only inside a world.
+
 ## The arrow
 
 Points toward the active waypoint relative to where the camera looks, coloured **green** when you're
 heading straight at it, **yellow** off to the side and **red** facing away, with the name, distance and
-an estimated time of arrival underneath. It hides with the HUD, while the big map is open, and when
-you're dead or teleporting.
+an estimated time of arrival underneath. It hides with the HUD, while you sleep or watch a cutscene,
+while the pause menu, the inventory or a trader is open, while the big map is open, and when you're dead
+or teleporting.
 
 ## Multiplayer
 
