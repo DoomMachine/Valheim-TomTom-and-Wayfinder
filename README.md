@@ -110,6 +110,10 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
 - a game, Unity, BepInEx or Harmony type or member the plugin calls no longer exists with the same
   signature, or a Harmony patch no longer names the exact overload it targets
 - the `Chat.HasFocus` postfix loses the `Priority.Last` it needs to run after other mods' postfixes
+- the route save could swap in a file that has not been flushed to disk — the one step of the crash-safe
+  save no test can observe: `SafeFile.WriteAllText` must write the new text, call `FileStream.Flush(true)`
+  unconditionally, and only then `File.Move` it into place; the save must go through it, and nothing else in
+  the plugin may open a file for writing (whether the drive honours the flush is beyond any check)
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
   console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is

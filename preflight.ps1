@@ -10,6 +10,7 @@
 #   7. every assembly the plugin references can be resolved from the game folder
 #   8. every game, Unity, BepInEx and Harmony type and member the plugin uses resolves with its exact signature
 #   9. the Chat.HasFocus postfix still runs last (Chatter's postfix overwrites the result and loads later)
+#  10. routes are saved only through SafeFile.WriteAllText, which flushes the new file to disk before swapping it in
 #
 # A rename in a Valheim update shows up here as a failure instead of as a broken feature in-game.
 #
@@ -498,6 +499,102 @@ if ($pf) { foreach ($ca in $pf.CustomAttributes) { if ($ca.AttributeType.Name -e
 if (-not $pf) { Write-Output "  FAIL  Waypointer.Chat_HasFocus_Patch.Postfix not found"; $failures++ }
 elseif ($prio -eq 0) { Write-Output "  ok    Chat_HasFocus_Patch.Postfix runs last (HarmonyPriority 0 = Priority.Last)" }
 else { Write-Output ("  FAIL  Chat_HasFocus_Patch.Postfix priority is '{0}', expected 0 (Priority.Last)" -f $prio); $failures++ }
+
+Write-Output ""
+Write-Output "== crash-safe route save =="
+# A route file is replaced by writing <file>.new, flushing it to disk and then renaming it into place
+# (SafeFile.WriteAllText). The flush is the one step no test can see: without it the swap still looks atomic,
+# but after a power cut the renamed file can be empty or partly written, because the rename can reach the disk
+# before the text does. So, in SafeFile.WriteAllText:
+#   - the one FileStream it opens is flushed with FileStream.Flush(true) (flushToDisk), a literal true
+#   - the flush comes after every write to that stream and always runs once the stream is open (no branch in
+#     between)
+#   - no File.Move runs between opening the stream and flushing it, and at least one follows the flush (the
+#     swap). The File.Move that renames a leftover copy back into place comes before the stream is opened.
+# And, so that this cannot pass while the save takes another path: WaypointManager.SaveIfDirty calls
+# SafeFile.WriteAllText, and nothing else in the plugin opens a file for writing (File or FileInfo
+# Write*/Append*/Create*/Open/OpenWrite/Replace/Copy*, or a new FileStream, StreamWriter or BinaryWriter). A
+# FileStream opened anywhere else fails even for reading, so that a person looks. This reads the IL in code
+# order - a tripwire, not a proof - and whether the drive honours the flush is beyond any check.
+function Get-LocalIndex($i) {
+    # The local variable an ldloc/stloc reads or writes, or -1.
+    $n = $i.OpCode.Name
+    if ($n -match '^(ld|st)loc\.([0-3])$') { return [int]$Matches[2] }
+    if ($n -eq "ldloc" -or $n -eq "ldloc.s" -or $n -eq "stloc" -or $n -eq "stloc.s") { return $i.Operand.Index }
+    return -1
+}
+$checks++
+$writers = @()
+$saveUsesIt = $false
+foreach ($t in $plug.GetTypes()) {
+    foreach ($m in $t.Methods) {
+        if (-not $m.HasBody) { continue }
+        $inSafeWrite = ($t.FullName -eq "Waypointer.SafeFile" -and $m.Name -eq "WriteAllText")
+        foreach ($i in $m.Body.Instructions) {
+            $op = $i.Operand
+            if (-not ($op -is [Mono.Cecil.MethodReference])) { continue }
+            $dt = $op.DeclaringType.FullName
+            if ($t.FullName -eq "Waypointer.WaypointManager" -and $m.Name -eq "SaveIfDirty" -and $i.OpCode.Name -eq "call" -and $dt -eq "Waypointer.SafeFile" -and $op.Name -eq "WriteAllText") { $saveUsesIt = $true }
+            $fileApi = ($dt -eq "System.IO.File" -or $dt -eq "System.IO.FileInfo")
+            $opensFile = ($fileApi -and ($op.Name -match '^(Write|Append|Create|Open|Replace|Copy)') -and ($op.Name -notmatch '^Open(Read|Text)$'))
+            $newWriter = (($dt -eq "System.IO.FileStream" -or $dt -eq "System.IO.StreamWriter" -or $dt -eq "System.IO.BinaryWriter") -and $op.Name -eq ".ctor")
+            if (($opensFile -or $newWriter) -and -not $inSafeWrite) { $writers += ("{0}.{1} uses {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
+        }
+    }
+}
+if ($saveUsesIt -and $writers.Count -eq 0) {
+    Write-Output "  ok    routes are saved only through SafeFile.WriteAllText (WaypointManager.SaveIfDirty calls it; nothing else opens a file for writing)"
+} else {
+    if (-not $saveUsesIt) { Write-Output "  FAIL  WaypointManager.SaveIfDirty does not call SafeFile.WriteAllText" }
+    foreach ($w in $writers) { Write-Output "  FAIL  a file is opened for writing outside SafeFile.WriteAllText: $w" }
+    $failures++
+}
+
+$checks++
+$sf = $plug.GetType("Waypointer.SafeFile")
+$sw = $null
+if ($sf) { $sw = $sf.Methods | Where-Object { $_.Name -eq "WriteAllText" -and $_.HasBody } | Select-Object -First 1 }
+$why = $null
+if (-not $sw) { $why = "Waypointer.SafeFile.WriteAllText not found" }
+else {
+    $ins = @($sw.Body.Instructions)
+    $opened = @(); $flushes = @(); $writes = @(); $moves = @()
+    for ($k = 0; $k -lt $ins.Count; $k++) {
+        $op = $ins[$k].Operand
+        if (-not ($op -is [Mono.Cecil.MethodReference])) { continue }
+        $dt = $op.DeclaringType.FullName
+        $stream = ($dt -eq "System.IO.FileStream" -or $dt -eq "System.IO.Stream")
+        if ($ins[$k].OpCode.Name -eq "newobj" -and $dt -eq "System.IO.FileStream") { $opened += $k }
+        elseif ($stream -and $op.Name -eq "Flush") { $flushes += $k }
+        elseif ($stream -and $op.Name -like "Write*") { $writes += $k }
+        elseif ($dt -eq "System.IO.File" -and $op.Name -eq "Move") { $moves += $k }
+    }
+    if ($opened.Count -ne 1) { $why = "SafeFile.WriteAllText opens {0} FileStreams, expected exactly one" -f $opened.Count }
+    else {
+        $at = $opened[0]
+        $iFlush = -1
+        foreach ($k in $flushes) {
+            $f = $ins[$k].Operand
+            if ($k -gt $at -and $f.DeclaringType.FullName -eq "System.IO.FileStream" -and $f.Parameters.Count -eq 1 -and $f.Parameters[0].ParameterType.FullName -eq "System.Boolean") { $iFlush = $k; break }
+        }
+        $stored = Get-LocalIndex ($ins[$at + 1])
+        $src = $null
+        if ($iFlush -ge 0) { $src = Get-ArgumentSources $ins $iFlush }
+        $branches = @()
+        if ($iFlush -ge 0) { for ($k = $at + 1; $k -lt $iFlush; $k++) { if ("$($ins[$k].OpCode.FlowControl)" -match '^(Branch|Cond_Branch|Return|Throw)$') { $branches += $k } } }
+        if ($iFlush -lt 0) { $why = "the new file is never flushed to disk: no FileStream.Flush(bool) after the stream is opened" }
+        elseif ($null -eq $src) { $why = "cannot tell what FileStream.Flush is called on and with (the evaluation stack does not add up)" }
+        elseif ($ins[$src[1]].OpCode.Name -ne "ldc.i4.1") { $why = "FileStream.Flush is passed '{0}', expected a literal true (flushToDisk)" -f $ins[$src[1]].OpCode.Name }
+        elseif ($ins[$at + 1].OpCode.Name -notlike "st*" -or $stored -lt 0 -or $ins[$src[0]].OpCode.Name -notlike "ld*" -or (Get-LocalIndex ($ins[$src[0]])) -ne $stored) { $why = "the stream that is flushed is not the one opened for the new file" }
+        elseif (@($moves | Where-Object { $_ -gt $at -and $_ -lt $iFlush }).Count -gt 0) { $why = "a File.Move runs after the new file is opened and before it is flushed to disk" }
+        elseif (@($writes | Where-Object { $_ -gt $iFlush }).Count -gt 0) { $why = "text is written to the stream after it is flushed to disk" }
+        elseif (@($writes | Where-Object { $_ -gt $at -and $_ -lt $iFlush }).Count -eq 0) { $why = "nothing is written to the stream before it is flushed" }
+        elseif ($branches.Count -gt 0) { $why = "the flush does not always run: '{0}' lies between opening the stream and flushing it" -f $ins[$branches[0]].OpCode.Name }
+        elseif (@($moves | Where-Object { $_ -gt $iFlush }).Count -eq 0) { $why = "no File.Move follows the flush, so the flushed file is never swapped in" }
+    }
+}
+if ($null -eq $why) { Write-Output "  ok    SafeFile.WriteAllText flushes the new file to disk (FileStream.Flush(true)) before any File.Move swaps it in" }
+else { Write-Output "  FAIL  $why"; $failures++ }
 
 Write-Output ""
 Write-Output "== game types and members the plugin uses =="
