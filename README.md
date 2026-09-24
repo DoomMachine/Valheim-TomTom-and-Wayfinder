@@ -91,7 +91,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 41 parser tests
+./run-tests.sh                                                         # 52 parser tests, on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -101,13 +101,18 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
 - its `BepInPlugin` identity or its incompatibility with the other edition is wrong
 - any Harmony patch target, or any private game member reached by reflection, has disappeared from the
   shipped game assemblies (the first thing a Valheim update breaks)
-- anything could create a **shareable** map marker — markers must be `save: false`, which keeps them out
-  of the Cartography Table (`Minimap.GetSharedMapData`) and the player profile (`Minimap.GetMapData`),
-  and `AddPin` must have exactly one call site
+- anything could create a **shareable** map marker — markers must be `save: false` with owner 0, passed
+  to `AddPin` and re-asserted after it, which keeps them out of the Cartography Table
+  (`Minimap.GetSharedMapData`) and the player profile (`Minimap.GetMapData`); `AddPin` must be referenced
+  exactly once, from `CreateLocalOnlyPin`, and nothing else may make a pin
+- anything could change or remove a pin the mod did not create (a `PinData` store, a direct edit of the
+  map's pin list, a wipe, or `RemovePin` anywhere but `RemoveOwnMarker`)
+- a game, Unity, BepInEx or Harmony type or member the plugin calls no longer exists with the same
+  signature
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
   console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
-  coordinate format string) — and, conversely, if TomTom is missing any of them, so the check can't
-  pass vacuously
+  coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
+  missing any of them, so the check can't pass vacuously
 - a referenced assembly can't be resolved from the game folder
 
 Run it after every Valheim update.
@@ -115,8 +120,10 @@ Run it after every Valheim update.
 ## Conventions
 
 - **Keep the source to C# 5.** `build.sh` compiles it with the legacy `csc.exe` that ships with Windows,
-  so the plugins can still be built on a machine without the .NET SDK. The projects set
-  `LangVersion=latest`, so dropping that rule is a one-line decision — it just retires the fallback.
+  so the plugins can still be built on a machine without the .NET SDK. The projects set `LangVersion=5`
+  too, so the SDK build and the IDE reject newer syntax as it is typed. One consequence: C# 5 does not
+  cache static method-group delegates, so a delegate passed every frame is cached by hand
+  (`WaypointWindow.DrawWindowFn`).
 - **Every map marker goes through `WaypointManager.CreateLocalOnlyPin`.** It is the single place the
   local-only guarantee lives; preflight enforces it.
 - **A pin the player promotes is never modified.** Only markers the mod creates are forced local-only.
@@ -128,8 +135,11 @@ Run it after every Valheim update.
 
 ## Implementation notes
 
-- The arrow and window are **IMGUI**, and the arrow texture is rasterised at runtime: this was first
-  built with no Unity Editor available, so no AssetBundle could be made.
+- The arrow and window are **IMGUI**, and the arrow texture is rasterised at runtime (once per game
+  launch). An AssetBundle was considered once a Unity Editor was available and turned down. A bundle
+  must be built with a Unity no newer than the game's (6000.0.75f1) and re-checked whenever the game
+  moves to a new engine version; it would add a binary that neither build path can reproduce, and it
+  would change nothing per frame.
 - Private game members (`Minimap.ScreenToWorldPoint`, `m_pins`, `PinInteractRadius`,
   `HidePinTextInput`, `m_visibleIconTypes`) are reached with `HarmonyLib.AccessTools` reflection, so the
   plugins depend only on the shipped DLLs.

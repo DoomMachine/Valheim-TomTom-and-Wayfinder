@@ -24,7 +24,6 @@ namespace Waypointer
         public const string NAME = Edition.Name;
         public const string VERSION = Edition.Version;
 
-        public static Plugin Instance;
         public static ManualLogSource Log;
 
         private Harmony _harmony;
@@ -62,7 +61,6 @@ namespace Waypointer
 
         private void Awake()
         {
-            Instance = this;
             Log = Logger;
 
             // A plugin that throws in Awake is dropped by BepInEx, so config and reflection setup are
@@ -74,7 +72,10 @@ namespace Waypointer
             catch (Exception e)
             {
                 Log.LogError("Configuration failed to bind: " + e);
-                return;   // every feature reads config, so there is nothing safe to do without it
+                // Every feature reads config, so there is nothing safe to do without it. Disabling the
+                // component stops Update and OnGUI, which would otherwise hit the unbound entries every frame.
+                enabled = false;
+                return;
             }
 
             try
@@ -226,7 +227,7 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// A hotkey is available unless it is unbound, or it is a key that produces a character while
+        /// A hotkey is available unless it is unbound, or it is a key that types or edits text while
         /// one of our own text boxes has the keyboard. That way an F-key still closes the window while
         /// it is being typed in, but a hotkey rebound to a letter never fires mid-word.
         /// </summary>
@@ -234,14 +235,14 @@ namespace Waypointer
         {
             if (key == KeyCode.None) return false;
             if (!WaypointWindow.TextFieldHasFocus) return true;
-            return !ProducesCharacter(key);
+            return !IsTextEditingKey(key);
         }
 
-        private static bool ProducesCharacter(KeyCode key)
+        private static bool IsTextEditingKey(KeyCode key)
         {
             if (key >= KeyCode.A && key <= KeyCode.Z) return true;
             if (key >= KeyCode.Alpha0 && key <= KeyCode.Alpha9) return true;
-            if (key >= KeyCode.Keypad0 && key <= KeyCode.KeypadEquals) return true;
+            if (key >= KeyCode.Keypad0 && key <= KeyCode.KeypadEquals) return true;   // includes KeypadEnter
 
             switch (key)
             {
@@ -262,7 +263,6 @@ namespace Waypointer
                 case KeyCode.Backspace:
                 case KeyCode.Delete:
                 case KeyCode.Return:
-                case KeyCode.KeypadEnter:
                 case KeyCode.Tab:
                     return true;
                 default:
@@ -322,7 +322,7 @@ namespace Waypointer
         {
             try
             {
-                WaypointWindow.ForceClose();
+                WaypointWindow.Close();
                 WaypointManager.SaveIfDirty();
                 WaypointManager.ReleaseAllPins();
                 ArrowHud.InvalidateTextures();

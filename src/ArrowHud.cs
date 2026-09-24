@@ -88,16 +88,13 @@ namespace Waypointer
 
             if (Plugin.ShowWaypointName.Value)
             {
-                string name = wp.DisplayName;
-                if (WaypointManager.Queue.Count > 1)
-                    name += string.Format(CultureInfo.InvariantCulture, "  ({0} left)", WaypointManager.Queue.Count);
-                DrawOutlinedLabel(new Rect(x, y, width, 22f), name, Color.white);
+                DrawOutlinedLabel(new Rect(x, y, width, 22f), NameCaption(wp), Color.white);
                 y += 20f;
             }
 
             if (Plugin.ShowDistance.Value)
             {
-                DrawOutlinedLabel(new Rect(x, y, width, 22f), FormatDistance(distance), new Color(0.88f, 0.88f, 0.88f, 1f));
+                DrawOutlinedLabel(new Rect(x, y, width, 22f), DistanceCaption(distance), new Color(0.88f, 0.88f, 0.88f, 1f));
                 y += 20f;
             }
 
@@ -236,6 +233,60 @@ namespace Waypointer
             return cached;
         }
 
+        // Captions are drawn every frame but change far less often; each is rebuilt only when the text
+        // it shows would change, which removes a string.Format (and its boxing) per caption per frame.
+        private static string _nameCaption, _nameSource;
+        private static int _nameCount = -1;
+        private static string _distanceCaption;
+        private static int _distanceKey = int.MinValue;
+        private static string _etaCaption;
+        private static int _etaKey = int.MinValue;
+
+        private static string NameCaption(Waypoint wp)
+        {
+            string name = wp.DisplayName;
+            int count = WaypointManager.Queue.Count;
+            if (count <= 1) return name;
+            if (!ReferenceEquals(name, _nameSource) || count != _nameCount || _nameCaption == null)
+            {
+                _nameSource = name;
+                _nameCount = count;
+                _nameCaption = name + string.Format(CultureInfo.InvariantCulture, "  ({0} left)", count);
+            }
+            return _nameCaption;
+        }
+
+        /// <summary>
+        /// FormatDistance, rebuilt only when the rounded value changes. The rounding key is trusted only
+        /// well away from a rounding boundary; within 1 mm of one (0.1 m for kilometres) the formatter
+        /// decides, so the text is always exactly what FormatDistance would return.
+        /// </summary>
+        private static string DistanceCaption(float metres)
+        {
+            if (!(metres > 0f && metres < 1000000f)) return FormatDistance(metres);
+
+            int key;
+            if (metres >= 1000f)
+            {
+                double hundredths = (double)(metres / 1000f) * 100.0;
+                if (Math.Abs(hundredths - Math.Floor(hundredths) - 0.5) < 0.01) return FormatDistance(metres);
+                key = -1 - (int)Math.Floor(hundredths + 0.5);
+            }
+            else
+            {
+                double m = metres;
+                if (Math.Abs(m - Math.Floor(m) - 0.5) < 0.001) return FormatDistance(metres);
+                key = (int)Math.Floor(m + 0.5);
+            }
+
+            if (key != _distanceKey || _distanceCaption == null)
+            {
+                _distanceKey = key;
+                _distanceCaption = FormatDistance(metres);
+            }
+            return _distanceCaption;
+        }
+
         private static string FormatDistance(float metres)
         {
             if (metres >= 1000f)
@@ -251,11 +302,15 @@ namespace Waypointer
             if (seconds <= 0f || seconds > 3600f) return null;
 
             int total = Mathf.RoundToInt(seconds);
+            if (total == _etaKey && _etaCaption != null) return _etaCaption;
+
             int minutes = total / 60;
             int secs = total % 60;
-            if (minutes > 0)
-                return string.Format(CultureInfo.InvariantCulture, "~{0}m {1:00}s", minutes, secs);
-            return string.Format(CultureInfo.InvariantCulture, "~{0}s", secs);
+            _etaKey = total;
+            _etaCaption = minutes > 0
+                ? string.Format(CultureInfo.InvariantCulture, "~{0}m {1:00}s", minutes, secs)
+                : string.Format(CultureInfo.InvariantCulture, "~{0}s", secs);
+            return _etaCaption;
         }
 
         // ------------------------------------------------------------------ texture

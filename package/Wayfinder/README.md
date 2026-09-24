@@ -28,11 +28,15 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an empty spot | a waypoint there |
-| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any ordinary pin counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any pin within reach counts, including one shared to you through a Cartography Table |
 | a waypoint marker | the waypoint is removed |
 
 Queue up several and they are visited in order. Plain clicks keep Valheim's normal behaviour, and
 vanilla right-click-delete works on waypoint markers too.
+
+If you have hidden the waypoint marker's icon type with the map's icon filter, adding a waypoint shows it
+again: the game re-enables an icon type whenever a pin of that type is added. Pick a different
+`PinType` in the config if you keep that icon hidden.
 
 ## The window
 

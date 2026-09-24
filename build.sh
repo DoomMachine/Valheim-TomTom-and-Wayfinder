@@ -47,7 +47,7 @@ build_edition() {
     for r in BepInEx 0Harmony ; do
       if [ -f "$BE/$r.dll" ]; then echo "-r:\"$BE/$r.dll\""; fi
     done
-    # Every source file is passed; CoordinateParser.cs compiles to nothing under WAYFINDER.
+    # Every source file is passed; CoordinateParser.cs and CoordinateFormat.cs compile to nothing under WAYFINDER.
     for f in "$HERE"/src/*.cs; do echo "\"$(cygpath -w "$f")\""; done
   } > "$rsp"
 

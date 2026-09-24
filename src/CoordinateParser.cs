@@ -86,7 +86,7 @@ namespace Waypointer
             return result;
         }
 
-        /// <summary>Parses a single entry such as "123, 456", "(123 456 -20)" or "Camp: 123,456".</summary>
+        /// <summary>Parses a single entry such as "123, 456", "(123 456 -20)" or "Camp: 123, 456".</summary>
         public static bool TryParseOne(string line, out ParsedCoord result, out string error)
         {
             result = null;
@@ -105,7 +105,7 @@ namespace Waypointer
                 return false;
             }
 
-            // "Name: 1, 2" - a label before a colon. The label may itself be numeric ("42: 123,456"),
+            // "Name: 1, 2" - a label before a colon. The label may itself be numeric ("42: 123, 456"),
             // so the test is whether what follows still holds a usable coordinate pair.
             string leadingName = null;
             int colon = work.IndexOf(':');

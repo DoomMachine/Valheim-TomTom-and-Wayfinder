@@ -59,7 +59,7 @@ namespace Waypointer
             _lastClickTime = Time.time;
             _lastClickWorld = world;
 
-            float radius = MinimapAccess.PinInteractRadius(minimap, 12f);
+            float radius = MinimapAccess.PinInteractRadius(minimap, MinimapAccess.FallbackPinInteractRadius);
 
             // Our own markers must win the gesture, and they can only be found by walking m_pins:
             // Valheim's hit tests skip pins with save:false, which ours deliberately are.
@@ -69,7 +69,7 @@ namespace Waypointer
                 // Clicking a marker that is already a waypoint clears it. If the marker was the
                 // player's own, only the waypoint goes away - the marker stays on the map.
                 WaypointManager.Remove(WaypointManager.FindByPin(pin));
-                Notify("Waypoint removed");
+                WaypointManager.Notify("Waypoint removed");
                 return true;
             }
 
@@ -77,23 +77,17 @@ namespace Waypointer
             if (pin != null)
             {
                 WaypointManager.AddFromPin(pin);
-                Notify("Waypoint set: " + (string.IsNullOrEmpty(pin.m_name) ? "marker" : GameText.Localize(pin.m_name)));
+                WaypointManager.Notify("Waypoint set: " + (string.IsNullOrEmpty(pin.m_name) ? "marker" : GameText.Localize(pin.m_name)));
                 return true;
             }
 
             Waypoint added = WaypointManager.Add(world, "", false);
 #if WAYFINDER
-            Notify("Waypoint added");   // no coordinates: a readout would let clicks be steered
+            WaypointManager.Notify("Waypoint added");   // no coordinates: a readout would let clicks be steered
 #else
-            Notify("Waypoint added at " + CoordinateFormat.Format(added.Pos, false));
+            WaypointManager.Notify("Waypoint added at " + CoordinateFormat.Format(added.Pos, false));
 #endif
             return true;
-        }
-
-        private static void Notify(string text)
-        {
-            if (MessageHud.instance != null)
-                MessageHud.instance.ShowMessage(MessageHud.MessageType.TopLeft, text, 0, null, false, false);
         }
     }
 
@@ -118,7 +112,7 @@ namespace Waypointer
                 if (!MinimapAccess.TryScreenToWorld(__instance, ZInput.pointerPosition, out world))
                     return true;
 
-                float radius = MinimapAccess.PinInteractRadius(__instance, 12f);
+                float radius = MinimapAccess.PinInteractRadius(__instance, MinimapAccess.FallbackPinInteractRadius);
                 Minimap.PinData pin = MinimapAccess.GetClosestWaypointPin(__instance, world, radius);
                 if (pin == null) return true;
 
@@ -132,13 +126,13 @@ namespace Waypointer
                     // player's own map data. Handle it here and skip the original entirely.
                     MinimapAccess.HidePinTextInput(__instance);
                     WaypointManager.Remove(wp);
-                    Notify("Waypoint removed");
+                    WaypointManager.Notify("Waypoint removed");
                     return false;
                 }
 
                 // The marker belongs to the player. Let vanilla delete it, and just drop our waypoint.
                 WaypointManager.ForgetByPin(pin);
-                Notify("Waypoint removed");
+                WaypointManager.Notify("Waypoint removed");
                 return true;
             }
             catch (Exception e)
@@ -146,12 +140,6 @@ namespace Waypointer
                 Plugin.Log.LogWarning("RemovePinUnderPointer prefix failed: " + e.Message);
                 return true;
             }
-        }
-
-        private static void Notify(string text)
-        {
-            if (MessageHud.instance != null)
-                MessageHud.instance.ShowMessage(MessageHud.MessageType.TopLeft, text, 0, null, false, false);
         }
     }
 
@@ -175,9 +163,10 @@ namespace Waypointer
     /// Reports that a text field is active while our window is open.
     ///
     /// PlayerController.TakeInput only covers movement and look. Valheim gates a lot of other input
-    /// (inventory, placement, the console bind dispatcher) on TextInput.IsVisible instead, which is why
-    /// both ConfigurationManager and MeasurementTracker - the two IMGUI mods already installed here -
-    /// patch exactly this pair. Following the same pattern keeps us consistent with them.
+    /// (building placement, the map, the pause menu, opening chat, the cursor lock) on
+    /// TextInput.IsVisible instead, which is why IMGUI mods such as ConfigurationManager patch exactly
+    /// this pair. Following the same pattern keeps us consistent with them. The inventory key and camera
+    /// zoom check Chat.HasFocus instead, and console key binds check neither (see the known gaps).
     /// </summary>
     [HarmonyPatch(typeof(TextInput), "IsVisible")]
     public static class TextInput_IsVisible_Patch

@@ -10,7 +10,6 @@ namespace Waypointer
     /// <summary>A single navigation target.</summary>
     public class Waypoint
     {
-        public int Id;
         public string Name;
 
         /// <summary>World position: (x = east/west, y = altitude, z = north/south).</summary>
@@ -20,8 +19,10 @@ namespace Waypointer
         public bool HasElevation;
 
         /// <summary>
-        /// Persisted intent: true when the waypoint follows one of the player's own map pins rather than
-        /// having a marker of its own. The player's pin is never modified or removed by the mod.
+        /// Persisted intent: true when the waypoint follows a pin that was already on the map (the
+        /// player's own, one shared through a Cartography Table, or a vanilla marker such as the bed
+        /// spawn point) rather than having a marker of its own. That pin is never modified or removed
+        /// by the mod.
         /// Never changes after creation - see OwnsPin for what is on the map right now.
         /// </summary>
         public bool Borrowed;
@@ -50,6 +51,33 @@ namespace Waypointer
         /// </summary>
         public bool Armed;
 
+#if !WAYFINDER
+        // The coordinate text is read every frame (arrow caption, window rows) but only changes when the
+        // position or the axis-order setting does, so it is built once instead of on every frame.
+        private string _coordText;
+        private Vector3 _coordTextPos;
+        private bool _coordTextElevation;
+        private bool _coordTextRaw;
+
+        /// <summary>CoordinateFormat.Format(Pos, HasElevation), cached. TomTom only - Wayfinder shows no coordinates.</summary>
+        public string CoordText
+        {
+            get
+            {
+                bool raw = Plugin.RawValheimOrder != null && Plugin.RawValheimOrder.Value;
+                if (_coordText == null || raw != _coordTextRaw || HasElevation != _coordTextElevation
+                    || Pos.x != _coordTextPos.x || Pos.y != _coordTextPos.y || Pos.z != _coordTextPos.z)
+                {
+                    _coordText = CoordinateFormat.Format(Pos, HasElevation);
+                    _coordTextPos = Pos;
+                    _coordTextElevation = HasElevation;
+                    _coordTextRaw = raw;
+                }
+                return _coordText;
+            }
+        }
+#endif
+
         public string DisplayName
         {
             get
@@ -61,7 +89,7 @@ namespace Waypointer
                 string label = Plugin.PinLabel != null ? Plugin.PinLabel.Value : null;
                 return string.IsNullOrEmpty(label) ? "Waypoint" : label;
 #else
-                return CoordinateFormat.Format(Pos, HasElevation);
+                return CoordText;
 #endif
             }
         }
@@ -74,7 +102,6 @@ namespace Waypointer
     public static class WaypointManager
     {
         private static readonly List<Waypoint> _queue = new List<Waypoint>();
-        private static int _nextId = 1;
         private static bool _dirty;
         private static long _loadedWorldUid;
         private static bool _loadedForThisWorld;
@@ -106,7 +133,6 @@ namespace Waypointer
         public static Waypoint Add(Vector3 pos, string name, bool hasElevation)
         {
             Waypoint wp = new Waypoint();
-            wp.Id = _nextId++;
             wp.Name = name == null ? "" : name.Trim();
             wp.Pos = pos;
             wp.HasElevation = hasElevation;
@@ -118,12 +144,13 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// Promotes a marker the player already placed into a waypoint, without taking ownership of it.
+        /// Promotes a pin already on the map into a waypoint, without taking ownership of it. It may be
+        /// the player's own, one shared through a Cartography Table, or a vanilla marker such as the bed
+        /// spawn point.
         ///
-        /// The pin is deliberately NOT modified - in particular its m_save flag is left alone. It is the
-        /// player's own pin: they created it, it already saves and already syncs through the Cartography
-        /// Table, and navigating to it must not quietly change that. Only markers this mod creates are
-        /// forced local-only; see CreateLocalOnlyPin.
+        /// The pin is deliberately NOT modified - in particular its m_save flag is left alone. Whether it
+        /// saves and whether it is shared are the game's business, and navigating to it must not quietly
+        /// change that. Only markers this mod creates are forced local-only; see CreateLocalOnlyPin.
         /// </summary>
         public static Waypoint AddFromPin(Minimap.PinData pin)
         {
@@ -133,7 +160,6 @@ namespace Waypointer
             if (existing != null) return existing;
 
             Waypoint wp = new Waypoint();
-            wp.Id = _nextId++;
             wp.Name = string.IsNullOrEmpty(pin.m_name) ? "" : pin.m_name;
             wp.Pos = pin.m_pos;
             wp.HasElevation = Mathf.Abs(pin.m_pos.y) > 0.01f;
@@ -209,7 +235,7 @@ namespace Waypointer
 
         public static void Clear()
         {
-            for (int i = 0; i < _queue.Count; i++) ReleasePin(_queue[i]);
+            ReleaseAllPins();
             _queue.Clear();
             _dirty = true;
             ResetSpeedEstimate();
@@ -326,11 +352,14 @@ namespace Waypointer
             Plugin.Log.LogInfo("Reached waypoint " + wp.DisplayName);
 
             Waypoint next = Active;
-            if (next != null && MessageHud.instance != null)
-            {
-                MessageHud.instance.ShowMessage(MessageHud.MessageType.TopLeft,
-                    "Next waypoint: " + next.DisplayName, 0, null, false, false);
-            }
+            if (next != null) Notify("Next waypoint: " + next.DisplayName);
+        }
+
+        /// <summary>Shows a short message in the top-left corner of the HUD, if the HUD exists.</summary>
+        internal static void Notify(string text)
+        {
+            if (MessageHud.instance != null)
+                MessageHud.instance.ShowMessage(MessageHud.MessageType.TopLeft, text, 0, null, false, false);
         }
 
         /// <summary>
@@ -386,6 +415,10 @@ namespace Waypointer
 
             // Minimap.Start has to have run before AddPin is safe to call.
             if (!MinimapAccess.CanAddPins(mm)) return;
+
+            // Without the pin list a live marker cannot be told from a stale one, so every pass would add
+            // another marker and orphan the last. No markers at all is the safe way to degrade.
+            if (MinimapAccess.TryGetPins(mm) == null) return;
 
             Minimap.PinType type = Plugin.PinTypeSetting.Value;
 
@@ -552,7 +585,7 @@ namespace Waypointer
             else if (worldChanged)
             {
                 // Different world, nothing saved to restore: just drop the stale route.
-                for (int i = 0; i < _queue.Count; i++) ReleasePin(_queue[i]);
+                ReleaseAllPins();
                 _queue.Clear();
                 ResetSpeedEstimate();
             }
@@ -561,7 +594,7 @@ namespace Waypointer
         private static void Load(long worldUid)
         {
             // Drop any markers we already own before replacing the queue, so none are orphaned on the map.
-            for (int i = 0; i < _queue.Count; i++) ReleasePin(_queue[i]);
+            ReleaseAllPins();
             _queue.Clear();
             string path = SavePath(worldUid);
             try
@@ -571,7 +604,7 @@ namespace Waypointer
                 for (int i = 0; i < lines.Length; i++)
                 {
                     string line = lines[i].Trim();
-                    if (line.Length == 0 || line.StartsWith("#")) continue;
+                    if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
 
                     // x|altitude|z|hasElevation|ownsMarker|name   (older files omit ownsMarker)
                     string[] parts = line.Split('|');
@@ -597,7 +630,6 @@ namespace Waypointer
                     }
 
                     Waypoint wp = new Waypoint();
-                    wp.Id = _nextId++;
                     wp.Name = name;
                     wp.Pos = new Vector3(x, y, z);
                     wp.HasElevation = hasElev;
@@ -649,11 +681,6 @@ namespace Waypointer
             {
                 Plugin.Log.LogWarning("Could not save waypoints: " + e.Message);
             }
-        }
-
-        public static void MarkDirty()
-        {
-            _dirty = true;
         }
     }
 }

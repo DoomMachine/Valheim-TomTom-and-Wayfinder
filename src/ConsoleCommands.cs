@@ -9,7 +9,7 @@ namespace Waypointer
 {
     /// <summary>
     /// Registers the "waypoint" console command. Terminal.InitTerminal is where Valheim builds its
-    /// command table, and several other installed mods hook the same place, so a postfix is safe.
+    /// command table, and other mods commonly hook the same place to add commands, so a postfix is safe.
     /// </summary>
     [HarmonyPatch(typeof(Terminal), "InitTerminal")]
     public static class Terminal_InitTerminal_Patch
@@ -100,7 +100,7 @@ namespace Waypointer
                         return;
 
                     case "closest":
-                        AddClosest(context);
+                        ActivateClosest(context);
                         return;
 
                     case "remove":
@@ -166,7 +166,7 @@ namespace Waypointer
 #endif
         }
 
-        private static void AddClosest(Terminal context)
+        private static void ActivateClosest(Terminal context)
         {
             Player player = Player.m_localPlayer;
             if (player == null) { Print(context, "No player."); return; }

@@ -16,7 +16,6 @@ namespace Waypointer
     {
         private static bool _initialised;
         private static Func<Minimap, Vector3, Vector3> _screenToWorld;
-        private static Func<Minimap, Minimap.PinData> _closestPinToCursor;
         private static FieldInfo _pinsField;
         private static FieldInfo _visibleIconTypesField;
         private static MethodInfo _pinInteractRadiusGetter;
@@ -34,18 +33,11 @@ namespace Waypointer
             }
             catch (Exception e) { Plugin.Log.LogWarning("ScreenToWorldPoint unavailable: " + e.Message); }
 
-            try
-            {
-                MethodInfo cpc = AccessTools.Method(typeof(Minimap), "GetClosestPinToCursor", new Type[0]);
-                if (cpc != null)
-                    _closestPinToCursor = AccessTools.MethodDelegate<Func<Minimap, Minimap.PinData>>(cpc);
-            }
-            catch (Exception e) { Plugin.Log.LogWarning("GetClosestPinToCursor unavailable: " + e.Message); }
-
             _pinsField = AccessTools.Field(typeof(Minimap), "m_pins");
             if (_pinsField == null) Plugin.Log.LogWarning("Minimap.m_pins not found.");
 
             _visibleIconTypesField = AccessTools.Field(typeof(Minimap), "m_visibleIconTypes");
+            if (_visibleIconTypesField == null) Plugin.Log.LogWarning("Minimap.m_visibleIconTypes not found.");
 
             PropertyInfo pir = AccessTools.Property(typeof(Minimap), "PinInteractRadius");
             if (pir != null) _pinInteractRadiusGetter = pir.GetGetMethod(true);
@@ -68,29 +60,43 @@ namespace Waypointer
             }
         }
 
-        /// <summary>The game's own "which pin is under the cursor" test. Null when it is unavailable or nothing is close.</summary>
-        internal static Minimap.PinData GetClosestPinToCursor(Minimap mm)
-        {
-            if (mm == null || _closestPinToCursor == null) return null;
-            try { return _closestPinToCursor(mm); }
-            catch (Exception e)
-            {
-                Plugin.Log.LogWarning("GetClosestPinToCursor failed: " + e.Message);
-                return null;
-            }
-        }
+        private static readonly List<Minimap.PinData> NoPins = new List<Minimap.PinData>();
+        private static bool _pinsWarned;
 
-        /// <summary>The live list of map pins. Never null - an empty list is returned when unavailable.</summary>
-        internal static List<Minimap.PinData> GetPins(Minimap mm)
+        /// <summary>
+        /// The live list of map pins, or null when this game version no longer exposes it (renamed,
+        /// retyped or unreadable). Callers that would read "not in the list" as "gone" must stop on null.
+        /// </summary>
+        internal static List<Minimap.PinData> TryGetPins(Minimap mm)
         {
-            if (mm == null || _pinsField == null) return new List<Minimap.PinData>();
+            if (mm == null) return null;
             try
             {
-                List<Minimap.PinData> pins = _pinsField.GetValue(mm) as List<Minimap.PinData>;
+                List<Minimap.PinData> pins = _pinsField != null ? _pinsField.GetValue(mm) as List<Minimap.PinData> : null;
                 if (pins != null) return pins;
             }
-            catch (Exception e) { Plugin.Log.LogWarning("m_pins read failed: " + e.Message); }
-            return new List<Minimap.PinData>();
+            catch (Exception e)
+            {
+                if (!_pinsWarned)
+                {
+                    _pinsWarned = true;
+                    Plugin.Log.LogWarning("Minimap.m_pins could not be read (" + e.Message + "): waypoint map markers are disabled.");
+                }
+                return null;
+            }
+            if (!_pinsWarned)
+            {
+                _pinsWarned = true;
+                Plugin.Log.LogWarning("Minimap.m_pins is missing or no longer a List<PinData>: waypoint map markers are disabled.");
+            }
+            return null;
+        }
+
+        /// <summary>The live list of map pins. Never null - a shared empty list (read only) when unavailable.</summary>
+        internal static List<Minimap.PinData> GetPins(Minimap mm)
+        {
+            List<Minimap.PinData> pins = TryGetPins(mm);
+            return pins ?? NoPins;
         }
 
         /// <summary>
@@ -120,6 +126,9 @@ namespace Waypointer
             if (pin == null || mm == null) return false;
             return GetPins(mm).Contains(pin);
         }
+
+        /// <summary>Stand-in for PinInteractRadius when its private getter cannot be reached.</summary>
+        internal const float FallbackPinInteractRadius = 12f;
 
         internal static float PinInteractRadius(Minimap mm, float fallback)
         {

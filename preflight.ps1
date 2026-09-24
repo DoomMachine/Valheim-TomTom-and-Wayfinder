@@ -5,8 +5,10 @@
 #   2. every [HarmonyPatch] target type and method still exists in the shipped game assemblies
 #   3. every private member reached by reflection still exists
 #   4. map markers can only ever be created local-only (never shared through a Cartography Table)
-#   5. Wayfinder contains no coordinate-entry code at all; TomTom still does
-#   6. every assembly the plugin references can be resolved from the game folder
+#   5. a pin the player promotes is never modified or removed - only the mod's own markers are
+#   6. Wayfinder contains no coordinate-entry code or coordinate readout at all; TomTom still does
+#   7. every assembly the plugin references can be resolved from the game folder
+#   8. every game, Unity, BepInEx and Harmony type and member the plugin uses resolves with its exact signature
 #
 # A rename in a Valheim update shows up here as a failure instead of as a broken feature in-game.
 #
@@ -49,7 +51,13 @@ function Find-GameType([string]$name) {
     return $null
 }
 
-$plug = [Mono.Cecil.ModuleDefinition]::ReadModule($Plugin)
+# Read with a resolver so the plugin's references can be resolved against the shipped game (check 8).
+$resolver = New-Object Mono.Cecil.DefaultAssemblyResolver
+$resolver.AddSearchDirectory($managed)
+$resolver.AddSearchDirectory($core)
+$readerParams = New-Object Mono.Cecil.ReaderParameters
+$readerParams.AssemblyResolver = $resolver
+$plug = [Mono.Cecil.ModuleDefinition]::ReadModule($Plugin, $readerParams)
 $failures = 0
 $checks = 0
 
@@ -110,71 +118,273 @@ foreach ($t in $plug.GetTypes()) {
 
 Write-Output ""
 Write-Output "== private members reached by reflection =="
-# (type, member, kind) - keep in step with MinimapAccess.
-$reflected = @(
-    @("Minimap", "ScreenToWorldPoint", "method"),
-    @("Minimap", "GetClosestPinToCursor", "method"),
-    @("Minimap", "HidePinTextInput", "method"),
-    @("Minimap", "m_pins", "field"),
-    @("Minimap", "PinInteractRadius", "property")
-)
-foreach ($r in $reflected) {
-    $checks++
-    $gt = Find-GameType $r[0]
-    if (-not $gt) { Write-Output ("  FAIL  type {0} missing" -f $r[0]); $failures++; continue }
-
-    $found = switch ($r[2]) {
-        "method"   { @($gt.Methods    | Where-Object { $_.Name -eq $r[1] }).Count -gt 0 }
-        "field"    { @($gt.Fields     | Where-Object { $_.Name -eq $r[1] }).Count -gt 0 }
-        "property" { @($gt.Properties | Where-Object { $_.Name -eq $r[1] }).Count -gt 0 }
+# Read from the IL, not listed by hand: AccessTools.X(typeof(T), "name"[, new Type[] { typeof(P) }]) compiles
+# to  ldtoken T; call Type::GetTypeFromHandle; ldstr "name"; [ldtoken P; ...]; call AccessTools::X.
+# Methods are matched on their exact parameter types, as AccessTools.Method(type, name, Type[]) matches them,
+# and every member's type is compared with what MinimapAccess casts it to: a retyped m_pins passes a by-name
+# check but reads back as an empty list, with nothing in the log.
+# $reflectedTypes is the expected type of each member (a method's return type). A member reflected in the
+# plugin but missing here, or listed here but no longer found in the IL, fails - so neither this list nor the
+# IL pattern can drift from MinimapAccess without this section saying so.
+$reflectedTypes = @{
+    'Minimap.ScreenToWorldPoint'    = 'UnityEngine.Vector3'
+    'Minimap.HidePinTextInput'      = 'System.Void'
+    'Minimap.m_pins'                = 'System.Collections.Generic.List`1<Minimap/PinData>'
+    'Minimap.m_visibleIconTypes'    = 'System.Boolean[]'
+    'Minimap.PinInteractRadius'     = 'System.Single'
+}
+$seen = @{}
+$lookups = 0
+$recognised = 0
+foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
+    if (-not $m.HasBody) { continue }
+    $ins = @($m.Body.Instructions)
+    for ($k = 0; $k -lt $ins.Count; $k++) {
+        $o = $ins[$k].Operand
+        if ($o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "HarmonyLib.AccessTools" -and $o.Name -ne "MethodDelegate") { $lookups++ }
+        if ($ins[$k].OpCode.Name -ne "ldstr" -or $k -lt 2) { continue }
+        if ($ins[$k-2].OpCode.Name -ne "ldtoken" -or "$($ins[$k-1].Operand)" -notlike "*Type::GetTypeFromHandle*") { continue }
+        $ptypes = @(); $kind = $null
+        # Stops at the first AccessTools call; 40 covers the legacy compiler's local-variable array setup.
+        for ($j = $k + 1; $j -lt [Math]::Min($ins.Count, $k + 40); $j++) {
+            $pj = $ins[$j].Operand
+            if ($ins[$j].OpCode.Name -eq "ldtoken") { $ptypes += $pj.FullName }
+            if ($pj -is [Mono.Cecil.MethodReference] -and $pj.DeclaringType.FullName -eq "HarmonyLib.AccessTools") { $kind = $pj.Name; break }
+        }
+        if (-not $kind) { continue }
+        $recognised++
+        $checks++
+        $typeName = $ins[$k-2].Operand.FullName
+        $name = "$($ins[$k].Operand)"
+        $key = $typeName + "." + $name
+        $seen[$key] = $true
+        $gt = Find-GameType $typeName
+        if (-not $gt) { Write-Output ("  FAIL  {0}: type {1} missing" -f $t.Name, $typeName); $failures++; continue }
+        $found = $null; $type = $null
+        if ($kind -like "*Field*") {
+            $found = @($gt.Fields | Where-Object { $_.Name -eq $name })[0]
+            if ($found) { $type = $found.FieldType.FullName }
+        } elseif ($kind -like "*Property*") {
+            $found = @($gt.Properties | Where-Object { $_.Name -eq $name })[0]
+            if ($found) { $type = $found.PropertyType.FullName }
+        } elseif ($kind -like "*Method*") {
+            $want = $ptypes -join ","
+            $found = @($gt.Methods | Where-Object { $_.Name -eq $name -and ((@($_.Parameters | ForEach-Object { $_.ParameterType.FullName }) -join ",") -eq $want) })[0]
+            if ($found) { $type = $found.ReturnType.FullName }
+        }
+        if (-not $found) {
+            $sig = if ($kind -like "*Method*") { "(" + ($ptypes -join ", ") + ")" } else { "" }
+            Write-Output ("  FAIL  {0}: AccessTools.{1} finds no {2}{3} in the game" -f $t.Name, $kind, $key, $sig); $failures++; continue
+        }
+        if (-not $reflectedTypes.ContainsKey($key)) { Write-Output ("  FAIL  {0} is reflected but has no expected type in `$reflectedTypes (it is {1})" -f $key, $type); $failures++; continue }
+        if ($reflectedTypes[$key] -ne $type) { Write-Output ("  FAIL  {0} is {1} in the game, the plugin expects {2}" -f $key, $type, $reflectedTypes[$key]); $failures++; continue }
+        Write-Output ("  ok    {0,-30} {1,-8} {2}" -f $key, $kind, $type)
     }
-    if ($found) { Write-Output ("  ok    {0}.{1}" -f $r[0], $r[1]) }
-    else { Write-Output ("  FAIL  {0}.{1} not found" -f $r[0], $r[1]); $failures++ }
+} }
+foreach ($key in @($reflectedTypes.Keys)) {
+    if ($seen.ContainsKey($key)) { continue }
+    $checks++
+    Write-Output ("  FAIL  {0} is in `$reflectedTypes but no AccessTools(typeof(T), ""name"") lookup of it is in the plugin" -f $key)
+    $failures++
+}
+$checks++
+if ($lookups -ne $recognised) {
+    Write-Output ("  FAIL  {0} AccessTools lookups in the plugin, {1} in the typeof(T), ""name"" shape this section checks" -f $lookups, $recognised)
+    $failures++
 }
 
 Write-Output ""
 Write-Output "== multiplayer safety: markers must stay local-only =="
 # Valheim shares pins through Minimap.GetSharedMapData (the Cartography Table) and saves them through
-# Minimap.GetMapData, and both iterate ONLY over pins whose m_save flag is true. So a Waypointer marker
-# is local-only precisely as long as it is created with save:false and never has m_save set to true.
+# Minimap.GetMapData, and both iterate ONLY over pins whose m_save flag is true. A pin whose m_ownerID is
+# not 0 counts as another player's: ResetSharedMapData and AddSharedMapData remove it, and UpdatePins hides
+# it while shared-map fade is off. So a marker is local-only precisely as long as it is created with
+# save:false and ownerID 0 and neither field is ever set to anything else.
 #
-# The plugin funnels all pin creation through one helper, so this checks two things:
-#   - AddPin is called from exactly one place (a second call site means the guarantee has been forked)
-#   - nothing anywhere in the plugin ever stores 'true' into PinData.m_save
-$addPinCalls = 0
-$setsSaveTrue = 0
+# All pin creation goes through WaypointManager.CreateLocalOnlyPin. This checks VALUES, not just presence:
+#   - Minimap.AddPin is referenced exactly once (call, ldftn, anything), by a call in CreateLocalOnlyPin,
+#     and nothing builds a PinData, adds one to a PinData list, or names AddPin / m_save / m_ownerID
+#     in a string (reflection). Renaming CreateLocalOnlyPin means changing it here too.
+#   - that call passes a literal false for save and a literal 0 for ownerID
+#   - after the call, CreateLocalOnlyPin re-asserts m_save = false and m_ownerID = 0 (a missing one fails)
+#   - every store into PinData.m_save or PinData.m_ownerID anywhere stores a literal false / 0
+# A value this cannot read as a literal 0 fails, so that a person looks at it.
+function Test-LiteralZero($ins, [int]$at) {
+    # True when $ins[$at] pushes a literal 0 (false, 0, 0L), looking through a conv.i8.
+    if ($at -lt 0) { return $false }
+    $p = $ins[$at]
+    if ($p.OpCode.Name -eq "conv.i8") { if ($at -lt 1) { return $false }; $p = $ins[$at - 1] }
+    $n = $p.OpCode.Name
+    if ($n -eq "ldc.i4.0") { return $true }
+    if ($n -eq "ldc.i4.s" -or $n -eq "ldc.i4" -or $n -eq "ldc.i8") { return ([long]"$($p.Operand)" -eq 0) }
+    return $false
+}
+function Get-ArgumentSources($ins, [int]$callAt) {
+    # Replays the evaluation stack over the code before a call and returns, for each value the call
+    # consumes (the instance first), the index of the instruction that pushed it; $null if it does not add
+    # up. A branch or return starts a new statement (compiled C# has an empty stack there); a branch
+    # INSIDE the argument list (a ?: operand) leaves too few values, so it returns $null and the check fails.
+    $stack = New-Object System.Collections.ArrayList
+    for ($k = 0; $k -lt $callAt; $k++) {
+        $i = $ins[$k]; $pop = "$($i.OpCode.StackBehaviourPop)"; $push = "$($i.OpCode.StackBehaviourPush)"
+        $flow = "$($i.OpCode.FlowControl)"
+        if ($flow -eq "Branch" -or $flow -eq "Cond_Branch" -or $flow -eq "Return" -or $flow -eq "Throw") { $stack.Clear(); continue }
+        $nPop = 0
+        if ($pop -eq "Varpop") { $nPop = $i.Operand.Parameters.Count; if ($i.Operand.HasThis -and $i.OpCode.Name -ne "newobj") { $nPop++ } }
+        elseif ($pop -ne "Pop0") { $nPop = @($pop -split "_").Count }
+        if ($nPop -gt $stack.Count) { return $null }
+        $src = $k
+        if ($i.OpCode.Name -eq "conv.i8") { $src = $stack[$stack.Count - 1] }     # a widened literal is still that literal
+        if ($nPop -gt 0) { $stack.RemoveRange($stack.Count - $nPop, $nPop) }
+        $nPush = 1
+        if ($push -eq "Push0") { $nPush = 0 }
+        elseif ($push -eq "Push1_push1") { $nPush = 2 }
+        elseif ($push -eq "Varpush" -and $i.Operand.ReturnType.FullName -eq "System.Void") { $nPush = 0 }
+        for ($j = 0; $j -lt $nPush; $j++) { [void]$stack.Add($src) }
+    }
+    $c = $ins[$callAt].Operand; $n = $c.Parameters.Count; if ($c.HasThis) { $n++ }
+    if ($stack.Count -lt $n) { return $null }
+    return ,@($stack.GetRange($stack.Count - $n, $n))
+}
+
+$addPinRefs = @()
+$badStores = @()
+$bypass = @()
 foreach ($t in $plug.GetTypes()) {
     foreach ($m in $t.Methods) {
         if (-not $m.HasBody) { continue }
-        $prev = $null
-        foreach ($i in $m.Body.Instructions) {
-            $op = "$($i.Operand)"
-            if ($i.OpCode.Name -like "call*" -and $op -like "*Minimap::AddPin*") {
-                $addPinCalls++
-                Write-Output ("  note  AddPin called from {0}.{1}" -f $t.Name, $m.Name)
+        $ins = @($m.Body.Instructions)
+        for ($k = 0; $k -lt $ins.Count; $k++) {
+            $i = $ins[$k]; $op = $i.Operand
+            if ($op -is [Mono.Cecil.MethodReference] -and $op.Name -eq "AddPin" -and $op.DeclaringType.FullName -eq "Minimap") {
+                $addPinRefs += ,@($t, $m, $ins, $k)
+                Write-Output ("  note  Minimap.AddPin referenced from {0}.{1} ({2})" -f $t.Name, $m.Name, $i.OpCode.Name)
             }
-            if ($i.OpCode.Name -eq "stfld" -and $op -like "*PinData::m_save*") {
-                $checks++
-                if ($prev -ne $null -and $prev.OpCode.Name -eq "ldc.i4.1") {
-                    Write-Output ("  FAIL  {0}.{1} sets PinData.m_save = TRUE - markers would be shared!" -f $t.Name, $m.Name)
-                    $setsSaveTrue++
-                    $failures++
-                } else {
-                    Write-Output ("  ok    {0}.{1} sets PinData.m_save = false" -f $t.Name, $m.Name)
-                }
+            # Other ways to make a pin without that call: build a PinData, put one into a PinData list
+            # (MinimapAccess.GetPins hands out the live m_pins), or reach AddPin / the flags by name.
+            if ($i.OpCode.Name -eq "newobj" -and "$op" -like "*Minimap/PinData::.ctor*") { $bypass += ("{0}.{1}: new PinData" -f $t.Name, $m.Name) }
+            if ($i.OpCode.Name -like "call*" -and "$op" -match 'List`1<Minimap/PinData>::(Add|Insert|AddRange|InsertRange)\(') { $bypass += ("{0}.{1}: adds to a PinData list" -f $t.Name, $m.Name) }
+            if ($i.OpCode.Name -eq "ldstr" -and @("AddPin", "m_save", "m_ownerID") -contains "$op") { $bypass += ("{0}.{1}: names '{2}' in a string (reflection)" -f $t.Name, $m.Name, $op) }
+            if ($i.OpCode.Name -eq "stfld" -and ("$op" -like "*Minimap/PinData::m_save" -or "$op" -like "*Minimap/PinData::m_ownerID")) {
+                if (-not (Test-LiteralZero $ins ($k - 1))) { $badStores += ("{0}.{1} -> PinData.{2}" -f $t.Name, $m.Name, $op.Name) }
             }
-            $prev = $i
         }
     }
 }
 
 $checks++
-if ($addPinCalls -eq 1) {
-    Write-Output "  ok    exactly one AddPin call site (the local-only helper)"
+if ($badStores.Count -eq 0) {
+    Write-Output "  ok    every store into PinData.m_save / m_ownerID is a literal false / 0"
 } else {
-    Write-Output ("  FAIL  expected exactly 1 AddPin call site, found {0} - review each for save:false" -f $addPinCalls)
+    Write-Output "  FAIL  a store into PinData.m_save / m_ownerID is not a literal false / 0 - markers could be shared:"
+    $badStores | ForEach-Object { Write-Output ("          " + $_) }
     $failures++
 }
+
+$checks++
+$site = $null
+if ($addPinRefs.Count -eq 1 -and $addPinRefs[0][1].Name -eq "CreateLocalOnlyPin" -and $addPinRefs[0][2][$addPinRefs[0][3]].OpCode.Name -like "call*") {
+    $site = $addPinRefs[0]
+}
+if ($site -and $bypass.Count -eq 0) {
+    Write-Output "  ok    exactly one AddPin call site, in CreateLocalOnlyPin, and no other way to make a pin"
+} else {
+    Write-Output ("  FAIL  expected one AddPin call, in CreateLocalOnlyPin, and nothing else making pins; found {0} AddPin reference(s)" -f $addPinRefs.Count)
+    $bypass | ForEach-Object { Write-Output ("          " + $_) }
+    $failures++
+}
+
+$checks++
+$argOk = $false
+if ($site) {
+    $ins = $site[2]; $at = $site[3]
+    $src = Get-ArgumentSources $ins $at
+    # A member reference carries no parameter names; take them from the game's own AddPin.
+    $nArgs = $ins[$at].Operand.Parameters.Count
+    $def = @((Find-GameType "Minimap").Methods | Where-Object { $_.Name -eq "AddPin" -and $_.Parameters.Count -eq $nArgs })
+    $names = @(); if ($def.Count -eq 1) { $names = @($def[0].Parameters | ForEach-Object { $_.Name }) }
+    $iSave = [array]::IndexOf($names, "save"); $iOwner = [array]::IndexOf($names, "ownerID")
+    if ($src -and $iSave -ge 0 -and $iOwner -ge 0) {
+        $argOk = (Test-LiteralZero $ins $src[$iSave + 1]) -and (Test-LiteralZero $ins $src[$iOwner + 1])
+    }
+}
+if ($argOk) { Write-Output "  ok    CreateLocalOnlyPin calls AddPin with save: false, ownerID: 0" }
+else { Write-Output "  FAIL  CreateLocalOnlyPin does not visibly call AddPin with save: false and ownerID: 0 (or the game renamed those parameters)"; $failures++ }
+
+$checks++
+$saveReset = $false; $ownerReset = $false
+if ($site) {
+    $ins = $site[2]
+    for ($k = $site[3] + 1; $k -lt $ins.Count; $k++) {
+        if ($ins[$k].OpCode.Name -ne "stfld" -or -not (Test-LiteralZero $ins ($k - 1))) { continue }
+        if ("$($ins[$k].Operand)" -like "*Minimap/PinData::m_save") { $saveReset = $true }
+        if ("$($ins[$k].Operand)" -like "*Minimap/PinData::m_ownerID") { $ownerReset = $true }
+    }
+}
+if ($saveReset -and $ownerReset) { Write-Output "  ok    CreateLocalOnlyPin re-asserts m_save = false and m_ownerID = 0 after AddPin" }
+else { Write-Output ("  FAIL  CreateLocalOnlyPin must re-assert both flags after AddPin (m_save = false: {0}, m_ownerID = 0: {1})" -f $saveReset, $ownerReset); $failures++ }
+
+Write-Output ""
+Write-Output "== a pin the player promotes is never modified or deleted =="
+# Only markers this mod created may be changed or removed. Structurally that means: no PinData field is
+# written anywhere except CreateLocalOnlyPin (which only touches the pin AddPin just returned), Minimap's
+# live pin list is never edited directly, Minimap.RemovePin is reached from exactly one place
+# (RemoveOwnMarker), and nothing wipes or rewrites the map's pins wholesale. This cannot see the OwnsPin
+# guards in ReleasePin/EnsurePins - those are logic, and a missing guard still passes here.
+$pinTouches = @()
+$removeSites = @()
+$wipeMethods = @("ClearPins", "ResetSharedMapData", "SetMapData", "AddSharedMapData", "DestroyPinMarker", "OnPinTextEntered")
+foreach ($t in $plug.GetTypes()) {
+    foreach ($m in $t.Methods) {
+        if (-not $m.HasBody) { continue }
+        $where = "{0}.{1}" -f $t.Name, $m.Name
+        $isCreator = ($t.FullName -eq "Waypointer.WaypointManager" -and $m.Name -eq "CreateLocalOnlyPin")
+        foreach ($i in $m.Body.Instructions) {
+            $n = $i.OpCode.Name
+            if ($i.Operand -is [Mono.Cecil.FieldReference] -and $i.Operand.DeclaringType.FullName -eq "Minimap/PinData" -and -not $isCreator) {
+                # ldflda followed by ldfld is a read such as p.m_pos.x; any other use of the address can write.
+                if ($n -eq "stfld" -or ($n -eq "ldflda" -and ($i.Next -eq $null -or $i.Next.OpCode.Name -ne "ldfld"))) {
+                    $pinTouches += ("{0} writes PinData.{1} ({2})" -f $where, $i.Operand.Name, $n)
+                }
+                # Reads are limited to plain values: a handle such as m_uiElement or m_NamePinData changes the
+                # pin on screen without any store to PinData.
+                elseif (@("m_name", "m_pos", "m_type") -notcontains $i.Operand.Name) {
+                    $pinTouches += ("{0} reads PinData.{1} (only m_name, m_pos and m_type may be read)" -f $where, $i.Operand.Name)
+                }
+            }
+            # Most of these are private, so a plugin can only reach them by name through reflection.
+            if ($n -eq "ldstr" -and ($wipeMethods + "RemovePin") -contains "$($i.Operand)") {
+                $pinTouches += ("{0} names Minimap.{1} in a string (reflection)" -f $where, $i.Operand)
+            }
+            if ($i.Operand -is [Mono.Cecil.MethodReference]) {
+                $mr = $i.Operand
+                $dt = $mr.DeclaringType.FullName
+                if ($dt -eq "Minimap" -and $mr.Name -eq "RemovePin") { $removeSites += ("{0} {1}" -f $where, $mr.FullName) }
+                if ($dt -eq "Minimap" -and $wipeMethods -contains $mr.Name) { $pinTouches += ("{0} calls Minimap.{1}" -f $where, $mr.Name) }
+                if ($dt.Contains('List`1<Minimap/PinData>') -and $mr.Name -match '^(Add|AddRange|Insert|InsertRange|Remove|RemoveAt|RemoveAll|RemoveRange|Clear|set_Item|Reverse|Sort)$') {
+                    $pinTouches += ("{0} edits a PinData list directly ({1})" -f $where, $mr.Name)
+                }
+            }
+        }
+    }
+}
+$checks++
+if ($pinTouches.Count -eq 0) {
+    Write-Output "  ok    no pin is written, unlisted or wiped outside CreateLocalOnlyPin"
+} else {
+    Write-Output "  FAIL  the plugin can change or remove a pin it did not create:"
+    $pinTouches | ForEach-Object { Write-Output ("          " + $_) }
+    $failures++
+}
+$checks++
+if ($removeSites.Count -eq 1 -and $removeSites[0] -like "WaypointManager.RemoveOwnMarker *RemovePin(Minimap/PinData)") {
+    Write-Output "  ok    exactly one RemovePin call site (RemoveOwnMarker, our own markers only)"
+} else {
+    Write-Output ("  FAIL  expected exactly 1 RemovePin(PinData) call site, in RemoveOwnMarker; found {0}:" -f $removeSites.Count)
+    $removeSites | ForEach-Object { Write-Output ("          " + $_) }
+    $failures++
+}
+
 
 Write-Output ""
 Write-Output "== coordinate entry and display =="
@@ -188,7 +398,8 @@ $coordMethods = @(
     @("Waypointer.Terminal_InitTerminal_Patch", "AddFromArgs"),     # console: waypoint <x> <y>
     @("Waypointer.WaypointManager", "AddRange"),                     # bulk add of parsed coordinates
     @("Waypointer.WaypointWindow", "DrawInputSection"),              # the coordinate text box
-    @("Waypointer.WaypointWindow", "ApplyInput")                     # its Add / Replace buttons
+    @("Waypointer.WaypointWindow", "ApplyInput"),                    # its Add / Replace buttons
+    @("Waypointer.Waypoint", "get_CoordText")                        # cached coordinate text for display
 )
 $coordConfigKey = "InputIsRawValheimXYZ"
 
@@ -230,6 +441,74 @@ if ($Edition -eq "Wayfinder") {
         Write-Output ("  FAIL  TomTom should have all {0} coordinate entry/display pieces, found {1}" -f $expectedCount, $present.Count)
         $failures++
     }
+}
+
+
+# A coordinate readout has to read a world x or z and turn a number into text in the same method, or turn a
+# whole vector into text. The distance readouts get a scalar from HorizontalDistance and never touch x/z;
+# the save file (SaveIfDirty) is the one sanctioned place. A tripwire, not a proof: a helper handed bare
+# floats that formats them elsewhere is not caught. TomTom is checked the other way round (non-vacuous).
+$numericText = @()
+foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
+    if (-not $m.HasBody) { continue }
+    $readsXZ = $false; $toText = $false; $vecText = $false
+    foreach ($i in $m.Body.Instructions) {
+        $n = $i.OpCode.Name; $op = "$($i.Operand)"
+        if (($n -eq "ldfld" -or $n -eq "ldflda") -and $op -match "UnityEngine\.Vector3::(x|z)$") { $readsXZ = $true }
+        if ($n -eq "box" -and $op -match "^System\.(Single|Double|Decimal|U?Int(16|32|64))$") { $toText = $true }
+        if ($n -like "call*" -and $op -match "System\.(Single|Double|Decimal|Int32|Int64)::ToString|StringBuilder::Append\(System\.(Single|Double|Decimal|Int32|Int64)\)") { $toText = $true }
+        if (($n -eq "box" -and $op -match "^UnityEngine\.Vector[234]$") -or ($n -like "call*" -and $op -match "UnityEngine\.Vector[234]::ToString")) { $vecText = $true }
+    }
+    $w = $t.Name + "." + $m.Name
+    if ($w -ne "WaypointManager.SaveIfDirty" -and ($vecText -or ($readsXZ -and $toText))) { $numericText += $w }
+} }
+$checks++
+if ($Edition -eq "Wayfinder") {
+    if ($numericText.Count -eq 0) {
+        Write-Output "  ok    no method turns a world x/z or a vector into text (save file excepted)"
+    } else {
+        Write-Output "  FAIL  Wayfinder must not show coordinates, but these methods turn a world x/z or a vector into text:"
+        $numericText | ForEach-Object { Write-Output ("          " + $_) }
+        $failures++
+    }
+} else {
+    if ($numericText -contains "CoordinateFormat.Format") {
+        Write-Output ("  ok    the x/z-to-text scan finds TomTom's readout ({0})" -f ($numericText -join ", "))
+    } else {
+        Write-Output "  FAIL  the x/z-to-text scan no longer finds CoordinateFormat.Format in TomTom - the Wayfinder check would be vacuous"
+        $failures++
+    }
+}
+
+Write-Output ""
+Write-Output "== game types and members the plugin uses =="
+# The runtime binds each reference by its exact signature, so a Valheim update that keeps a name but changes
+# its parameters (AddPin once gained a PlatformUserID argument) passes every name check above and then
+# throws MissingMethodException in game. Resolve every reference into the game, Unity, BepInEx and Harmony
+# against the shipped assemblies; framework references (netstandard) are not checked.
+$gameScopes = @("assembly_valheim", "assembly_utils", "assembly_guiutils", "Splatform", "BepInEx", "0Harmony")
+$refs = @()
+foreach ($tr in $plug.GetTypeReferences()) { $refs += ,@($tr, $tr) }
+foreach ($mr in $plug.GetMemberReferences()) { $refs += ,@($mr, $mr.DeclaringType) }
+$resolved = 0
+$unresolved = 0
+foreach ($pair in $refs) {
+    $dt = $pair[1]
+    while ($dt.IsNested) { $dt = $dt.DeclaringType }
+    $scope = $dt.Scope.Name
+    if (-not ($gameScopes -contains $scope -or $scope -like "UnityEngine*")) { continue }
+    $r = $null
+    try { $r = $pair[0].Resolve() } catch { }
+    if ($r -eq $null) {
+        Write-Output ("  FAIL  {0} does not resolve in {1}" -f $pair[0].FullName, $scope)
+        $unresolved++
+    } else { $resolved++ }
+}
+$checks++
+if ($unresolved -eq 0) {
+    Write-Output ("  ok    all {0} type and member references into the game, Unity, BepInEx and Harmony resolve" -f $resolved)
+} else {
+    $failures++
 }
 
 Write-Output ""

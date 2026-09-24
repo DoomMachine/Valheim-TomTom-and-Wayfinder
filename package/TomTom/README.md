@@ -34,7 +34,9 @@ X: 1234  Y: 56  Z: -789
 ```
 
 - Two numbers are required; a third is the elevation.
-- Words after the numbers (or before a colon) become the waypoint's name.
+- Words after the numbers (or before a colon) become the waypoint's name. Words before the numbers also
+  work without a colon, unless the name ends in a number: `Camp 2 1234, -567` is read as x 2, y 1234,
+  elevation −567. Write `Camp 2: 1234, -567` or `1234, -567, Camp 2` instead.
 - One waypoint per line — paste a whole list at once. A line that can't be read is skipped and reported.
 - Use a **dot** for decimals (`12.5`); a comma separates fields. One exception: a comma followed by
   exactly three digits with no space (`1,234`) looks like digit grouping, so the line is refused rather
@@ -63,10 +65,14 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an empty spot | a waypoint there |
-| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any ordinary pin counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any pin within reach counts, including one shared to you through a Cartography Table |
 | a waypoint marker | the waypoint is removed |
 
 Plain clicks keep Valheim's normal behaviour. Vanilla right-click-delete works on waypoint markers too.
+
+If you have hidden the waypoint marker's icon type with the map's icon filter, adding a waypoint shows it
+again: the game re-enables an icon type whenever a pin of that type is added. Pick a different
+`PinType` in the config if you keep that icon hidden.
 
 ## Install
 

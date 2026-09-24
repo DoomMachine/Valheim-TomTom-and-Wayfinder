@@ -30,6 +30,28 @@ namespace Waypointer
 
         private static bool _textFieldFocused;
 
+        // Cached by hand: under C# 5 a method group passed as a delegate allocates a new delegate on every
+        // call, and GUILayout.Window is called on every OnGUI event while the window is open.
+        private static readonly GUI.WindowFunction DrawWindowFn = DrawWindow;
+
+        // Layout options are cached: GUILayout.Width/Height allocate an option, a boxed float and a params
+        // array on every call, and IMGUI only ever reads them (GUILayoutEntry.ApplyOptions).
+#if !WAYFINDER
+        private static readonly GUILayoutOption[] _inputHeight = new GUILayoutOption[] { GUILayout.Height(80f) };
+#endif
+        private static readonly GUILayoutOption[] _listHeight = new GUILayoutOption[] { GUILayout.Height(170f) };
+        private static readonly GUILayoutOption[] _nameWidth = new GUILayoutOption[] { GUILayout.Width(200f) };
+        private static readonly GUILayoutOption[] _infoWidth = new GUILayoutOption[] { GUILayout.Width(120f) };
+        private static readonly GUILayoutOption[] _goWidth = new GUILayoutOption[] { GUILayout.Width(38f) };
+        private static readonly GUILayoutOption[] _removeWidth = new GUILayoutOption[] { GUILayout.Width(26f) };
+
+        // Text that only changes with the queue length or a setting, built once per change, not per pass.
+        private static string _queueHeader;
+        private static int _queueHeaderCount = -1;
+        private static readonly List<string> _rowPrefixes = new List<string>();
+        private static string _modifierHint, _modifierHintBefore, _modifierHintAfter;
+        private static KeyCode _modifierHintKey = KeyCode.None;
+
         private static GUIStyle _headerStyle;
         private static GUIStyle _smallStyle;
 
@@ -52,13 +74,6 @@ namespace Waypointer
         public static void Close()
         {
             if (!_open) return;
-            _open = false;
-            _textFieldFocused = false;
-            _pending.Clear();
-        }
-
-        public static void ForceClose()
-        {
             _open = false;
             _textFieldFocused = false;
             _pending.Clear();
@@ -114,7 +129,7 @@ namespace Waypointer
             if (Player.m_localPlayer == null) return;
 
             EnsureStyles();
-            _rect = GUILayout.Window(Edition.WindowId, _rect, DrawWindow, Edition.Name);
+            _rect = GUILayout.Window(Edition.WindowId, _rect, DrawWindowFn, Edition.Name);
 
             // Keep the window on screen if the resolution changes underneath it.
             _rect.x = Mathf.Clamp(_rect.x, -_rect.width + 60f, Screen.width - 60f);
@@ -184,10 +199,10 @@ namespace Waypointer
         private static void DrawMapGuidance()
         {
             GUILayout.Label("Setting a waypoint", _headerStyle);
-            GUILayout.Label("Open the world map and hold " + Plugin.MapModifierKey.Value + " while you click:\n"
+            GUILayout.Label(ModifierHint("Open the world map and hold ", " while you click:\n"
                 + "  - an empty spot to place a waypoint there\n"
                 + "  - one of your own markers to follow it\n"
-                + "  - a waypoint marker to remove it", _smallStyle);
+                + "  - a waypoint marker to remove it"), _smallStyle);
         }
 #else
         private static void DrawInputSection()
@@ -200,7 +215,7 @@ namespace Waypointer
                   + "A trailing word becomes the name, e.g. 1234, -567, Silver vein";
             GUILayout.Label(hint, _smallStyle);
 
-            _input = GUILayout.TextArea(_input, GUILayout.Height(80f));
+            _input = GUILayout.TextArea(_input, _inputHeight);
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Add to queue")) Defer(ApplyInputAdd);
@@ -287,8 +302,7 @@ namespace Waypointer
 #if WAYFINDER
                 GUILayout.Label("None yet - place one on the world map.", _smallStyle);
 #else
-                GUILayout.Label("None. Add coordinates above, or hold "
-                    + Plugin.MapModifierKey.Value + " and click the world map.", _smallStyle);
+                GUILayout.Label(ModifierHint("None. Add coordinates above, or hold ", " and click the world map."), _smallStyle);
 #endif
                 return;
             }
@@ -303,7 +317,7 @@ namespace Waypointer
 
             GUILayout.Label(active.DisplayName + distanceText);
 #if !WAYFINDER
-            GUILayout.Label(CoordinateFormat.Format(active.Pos, active.HasElevation), _smallStyle);
+            GUILayout.Label(active.CoordText, _smallStyle);
 #endif
 
             GUILayout.BeginHorizontal();
@@ -327,42 +341,70 @@ namespace Waypointer
         private static void DrawQueueSection()
         {
             List<Waypoint> queue = WaypointManager.Queue;
-            GUILayout.Label(string.Format(CultureInfo.InvariantCulture, "Queue ({0})", queue.Count), _headerStyle);
+            if (_queueHeader == null || queue.Count != _queueHeaderCount)
+            {
+                _queueHeaderCount = queue.Count;
+                _queueHeader = string.Format(CultureInfo.InvariantCulture, "Queue ({0})", queue.Count);
+            }
+            GUILayout.Label(_queueHeader, _headerStyle);
 
-            _listScroll = GUILayout.BeginScrollView(_listScroll, GUILayout.Height(170f));
+            _listScroll = GUILayout.BeginScrollView(_listScroll, _listHeight);
 
             for (int i = 0; i < queue.Count; i++)
             {
-                // The waypoint itself is captured, not its row number: the queue can change between the
-                // click and the deferred action running (an arrival removes entry 0), and an index
-                // captured now could by then point at a different waypoint.
                 Waypoint wp = queue[i];
-                Waypoint captured = wp;
-                int index = i;
 
                 GUILayout.BeginHorizontal();
 
-                string prefix = i == 0 ? "> " : string.Format(CultureInfo.InvariantCulture, "{0}. ", i + 1);
-                GUILayout.Label(prefix + wp.DisplayName, GUILayout.Width(200f));
+                GUILayout.Label(RowPrefix(i) + wp.DisplayName, _nameWidth);
 #if WAYFINDER
                 // Distance rather than coordinates: relative, so it can't be matched to a looked-up place.
-                GUILayout.Label(DistanceTo(wp), _smallStyle, GUILayout.Width(120f));
+                GUILayout.Label(DistanceTo(wp), _smallStyle, _infoWidth);
 #else
-                GUILayout.Label(CoordinateFormat.Format(wp.Pos, wp.HasElevation), _smallStyle, GUILayout.Width(120f));
+                GUILayout.Label(wp.CoordText, _smallStyle, _infoWidth);
 #endif
 
-                GUI.enabled = index != 0;
-                if (GUILayout.Button("Go", GUILayout.Width(38f)))
-                    Defer(delegate { Activate(captured); });
+                GUI.enabled = i != 0;
+                if (GUILayout.Button("Go", _goWidth)) Defer(ActivateLater(wp));
                 GUI.enabled = true;
 
-                if (GUILayout.Button("X", GUILayout.Width(26f)))
-                    Defer(delegate { RemoveWaypoint(captured); });
+                if (GUILayout.Button("X", _removeWidth)) Defer(RemoveLater(wp));
 
                 GUILayout.EndHorizontal();
             }
 
             GUILayout.EndScrollView();
+        }
+
+        // The waypoint itself is captured, not its row number: the queue can change between the click and
+        // the deferred action running (an arrival removes entry 0), and an index captured now could by then
+        // point at a different waypoint. The closures are built here, only when a button is clicked -
+        // written inline in the row loop, their capture object is allocated for every row on every pass.
+        private static Action ActivateLater(Waypoint wp) { return delegate { Activate(wp); }; }
+        private static Action RemoveLater(Waypoint wp) { return delegate { RemoveWaypoint(wp); }; }
+
+        /// <summary>"> " for the active row, otherwise "2. ", "3. " ... - built once per row number.</summary>
+        private static string RowPrefix(int i)
+        {
+            if (i == 0) return "> ";
+            while (_rowPrefixes.Count <= i)
+                _rowPrefixes.Add(string.Format(CultureInfo.InvariantCulture, "{0}. ", _rowPrefixes.Count + 1));
+            return _rowPrefixes[i];
+        }
+
+        /// <summary>before + the map modifier key + after, rebuilt only when one of them changes.</summary>
+        private static string ModifierHint(string before, string after)
+        {
+            KeyCode key = Plugin.MapModifierKey.Value;
+            if (_modifierHint == null || key != _modifierHintKey
+                || !ReferenceEquals(before, _modifierHintBefore) || !ReferenceEquals(after, _modifierHintAfter))
+            {
+                _modifierHintKey = key;
+                _modifierHintBefore = before;
+                _modifierHintAfter = after;
+                _modifierHint = before + key + after;
+            }
+            return _modifierHint;
         }
 
 #if WAYFINDER
@@ -385,11 +427,6 @@ namespace Waypointer
         {
             if (WaypointManager.Remove(wp))
                 _status = "Waypoint deleted.";
-        }
-
-        public static void SetStatus(string text)
-        {
-            _status = text;
         }
     }
 }

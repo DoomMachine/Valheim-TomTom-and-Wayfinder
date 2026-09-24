@@ -55,6 +55,15 @@ namespace Waypointer
             ExpectFail("999999, 1");
             ExpectFail("1, NaN");
 
+            // Behaviour that already holds and is worth pinning down.
+            ExpectFail("500,300");                       // comma + exactly three digits reads as grouping
+            Expect("Camp: 123, 456", 123f, 456f, false, 0f, "Camp");
+            Expect("Silver vein 1234 -567 30", 1234f, -567f, true, 30f, "Silver vein");
+            Expect("+1234, +567", 1234f, 567f, false, 0f, "");
+            Expect("1e3, -2E3", 1000f, -2000f, false, 0f, "");
+            Expect("1234\t-567\tCamp", 1234f, -567f, false, 0f, "Camp");
+            Expect("1234, -567, nan", 1234f, -567f, false, 0f, "nan");
+
             // List parsing
             string block = "# a comment\n"
                          + "1234, -567\n"
@@ -74,10 +83,15 @@ namespace Waypointer
                 Check("list[2] name", list[2].Name == "Boss", "got " + list[2].Name);
             }
 
+            // A Windows paste: CRLF line ends, blank and whitespace-only lines.
+            list = CoordinateParser.ParseList("1234, -567\r\n\r\n   \r\n2000 3000 Camp\r\n", out errors);
+            Check("CRLF list", list.Count == 2 && errors.Count == 0 && list[1].Name == "Camp",
+                  "got " + list.Count + "/" + errors.Count);
+
             // Axis mapping: user X,Y + elevation -> Valheim (x, altitude, z)
             ParsedCoord pc;
             string err;
-            CoordinateParser.TryParseOne("100, 200, 35", out pc, out err);
+            Check("parse 100, 200, 35", CoordinateParser.TryParseOne("100, 200, 35", out pc, out err), err);
             Vector3 w = CoordinateParser.ToWorld(pc, false);
             Check("default mapping", Near(w.x, 100f) && Near(w.y, 35f) && Near(w.z, 200f), "got " + w);
 
@@ -86,7 +100,7 @@ namespace Waypointer
             Check("raw mapping", Near(raw.x, 100f) && Near(raw.y, 200f) && Near(raw.z, 35f), "got " + raw);
 
             // Two values in raw mode still mean the two horizontal axes
-            CoordinateParser.TryParseOne("100, 200", out pc, out err);
+            Check("parse 100, 200", CoordinateParser.TryParseOne("100, 200", out pc, out err), err);
             Vector3 raw2 = CoordinateParser.ToWorld(pc, true);
             Check("raw mapping, no elevation",
                   Near(raw2.x, 100f) && Near(raw2.y, 0f) && Near(raw2.z, 200f), "got " + raw2);
@@ -99,6 +113,9 @@ namespace Waypointer
             formatted = CoordinateFormat.Format(new Vector3(100f, 35f, 200f), true);
             Check("format raw", formatted == "100, 35, 200", "got " + formatted);
             Plugin.RawValheimOrder.Value = false;
+            // Two values: the x, z readout shape preflight looks for in CoordinateFormat.
+            formatted = CoordinateFormat.Format(new Vector3(100f, 35f, 200f), false);
+            Check("format 2D", formatted == "100, 200", "got " + formatted);
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
