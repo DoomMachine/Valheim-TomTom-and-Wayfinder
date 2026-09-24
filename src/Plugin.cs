@@ -132,13 +132,13 @@ namespace Waypointer
 
         private void BindConfig()
         {
+            // Deliberately recommends no particular key: the mod cannot know what else is installed.
             ToggleWindowKey = Config.Bind("1 - Keys", "ToggleWindowKey", KeyCode.F11,
-                "Opens and closes the " + NAME + " window. Note that F11 is also Valheim's own screenshot "
-                + "key, so with this default each press also saves a screenshot to the game's "
-                + "screenshots folder. F4 is the one function key nothing else in the original install "
-                + "used; F3 is free too, except that vanilla hides the HUD on Ctrl+F3 "
-                + "(vanilla: F2 connect panel, F5 console, F9 gamepad layout, F11 screenshot; "
-                + "mods: F1 ConfigurationManager, F6/F8/F10 PlantEasily, F7 MobTracker).");
+                "Opens and closes the " + NAME + " window. F11 is also Valheim's own screenshot key, so "
+                + "with this default each press also saves a screenshot to the game's screenshots folder. "
+                + "Vanilla Valheim also uses F2 (connect panel), F5 (console) and F9 (gamepad layout), "
+                + "plus Ctrl+F1 (mouse capture) and Ctrl+F3 (hide HUD). Other mods can hold keys of their "
+                + "own, so choose one that nothing you run already uses.");
             MapModifierKey = Config.Bind("1 - Keys", "MapModifierKey", KeyCode.LeftAlt,
                 "Hold this while left-clicking the world map to add, promote or delete a waypoint. " +
                 "Clicking without it keeps Valheim's normal pin behaviour.");

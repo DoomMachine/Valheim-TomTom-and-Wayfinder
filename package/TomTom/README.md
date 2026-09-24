@@ -108,10 +108,10 @@ keeps its normal flags and keeps syncing as usual.
 ## Keys
 
 `ToggleWindowKey` defaults to **F11**. That is also Valheim's own **screenshot** key, so each press
-also saves a picture to Valheim's screenshots folder (on Windows, `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\screenshots`). If you'd rather
-not, **F4** is free; **F3** is too, except that the game hides the HUD on Ctrl+F3. The rest are taken
-by the game: F2 connect panel, F5 console, F9 gamepad layout. Other mods you have installed may hold
-keys of their own.
+also saves a picture to Valheim's screenshots folder (on Windows, `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim\screenshots`). If you'd rather it
+didn't, rebind it: vanilla Valheim also uses F2 (connect panel), F5 (console) and F9 (gamepad
+layout), plus Ctrl+F1 (mouse capture) and Ctrl+F3 (hide HUD), and other mods can hold keys of
+their own — choose one that nothing you run already uses.
 
 ## Configuration
 
