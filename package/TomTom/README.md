@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.1.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.1.1 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -91,7 +91,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.1.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.1.1]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -155,6 +155,8 @@ their own — choose one that nothing you run already uses.
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
 
 Saved queues: `BepInEx/config/DoomMachine.TomTom/waypoints_<worldUID>.txt`, one per world.
+The file is replaced safely. If a save is interrupted, a `.new` or `.old` copy may be left beside it;
+when the file itself is missing, the next start puts that copy back, and the next save tidies up.
 
 ---
 

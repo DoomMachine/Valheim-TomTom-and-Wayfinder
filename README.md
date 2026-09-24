@@ -48,7 +48,7 @@ Plugin.props             build settings shared by both projects (references, pac
 TomTom/TomTom.csproj     sets EditionName=TomTom, deploys by default
 Wayfinder/Wayfinder.csproj  defines WAYFINDER, excludes both Coordinate*.cs files, packages only
 package/<Edition>/       manifest.json, icon.png and README.md for each package
-tests/                   parser tests (built as TomTom, the only edition with a parser)
+tests/                   parser, formatter and crash-safe save tests (built as TomTom)
 preflight.ps1            checks a compiled plugin against the shipped game assemblies
 build.sh                 SDK-free fallback compiler (C# 5)
 Waypointer.slnx          the solution: both editions and the tests
@@ -91,7 +91,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 71 parser tests, on .NET and on Mono
+./run-tests.sh                                                         # 93 tests (parser and crash-safe save), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -158,10 +158,25 @@ Run it after every Valheim update.
   marker within reach wins, so a delete aimed at one can never remove the player's own pin.
 - Waypoints are saved to the world they were loaded for, a pending change is written before the next
   world's queue replaces it, and a failed write is retried after a growing delay rather than every frame.
+  The route file is replaced crash-safely (`SafeFile`, the pattern of the game's own
+  `FileHelpers.ReplaceOldFile`): the new text goes to `.new` and is flushed to disk, the current file steps
+  aside as `.old`, `.new` takes its name, `.old` goes. Once a route file exists, a crash at any point
+  leaves a complete copy - the file itself, or the `.new`/`.old` it was being swapped with - because `.new`
+  is then only written while that file exists. When the file is missing, the next start renames the copy
+  back rather than rewriting it (and reads it in place if it cannot be moved yet). A stray `.new` beside an
+  intact file is an unfinished save and is ignored. The first save of a world has nothing older to protect.
 - The local player is destroyed and recreated on every death while the map survives, so nothing is reset
   when the player is briefly missing; a change of world is detected by world UID instead.
 
 ## History
+
+**1.1.1** — the route file is saved safely.
+
+- fixed: saving a route overwrote the file in place, so a crash or power cut during the write could leave
+  it empty and lose that world's waypoints. It is now written to a temporary file, flushed to disk and
+  swapped in; once a world has a route file, an interrupted save leaves a complete copy, which the next
+  start renames back into place
+- 19 tests for the crash-safe save and every state an interrupted save can leave, on both runtimes
 
 **1.1.0** — fixes and a code review.
 

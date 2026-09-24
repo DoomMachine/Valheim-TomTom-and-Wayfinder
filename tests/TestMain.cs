@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using UnityEngine;
 
 namespace Waypointer
@@ -151,11 +153,135 @@ namespace Waypointer
             formatted = CoordinateFormat.Format(new Vector3(100f, 35f, 200f), false);
             Check("format 2D", formatted == "100, 200", "got " + formatted);
 
+            SafeFileTests();
+
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
         }
 
         private static bool Near(float a, float b) { return Math.Abs(a - b) < 0.001f; }
+
+        // The route file's crash-safe replace (SafeFile), including every state an interrupted save can leave.
+        private static void SafeFileTests()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "waypointer-safefile-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            bool windows = Environment.OSVersion.Platform == PlatformID.Win32NT;   // file locks are enforced
+            try
+            {
+                string f = Path.Combine(dir, "waypoints_1.txt");
+                string fNew = f + SafeFile.NewSuffix, fOld = f + SafeFile.OldSuffix;
+
+                SafeFile.WriteAllText(f, "first");
+                Check("safe write: new file", Only(f, "first"), Leftovers(f));
+
+                SafeFile.WriteAllText(f, "second");
+                Check("safe write: replaces, no leftovers", Only(f, "second"), Leftovers(f));
+
+                File.WriteAllText(fOld, "stale");
+                File.WriteAllText(fNew, "partial");
+                SafeFile.WriteAllText(f, "third");
+                Check("safe write: clears an earlier save's leftovers", Only(f, "third"), Leftovers(f));
+
+                byte[] raw = File.ReadAllBytes(f);
+                Check("safe write: UTF-8 without BOM", raw.Length == 5 && raw[0] == (byte)'t', "first byte " + (raw.Length > 0 ? raw[0].ToString() : "none"));
+
+                File.SetAttributes(f, FileAttributes.ReadOnly);
+                bool refused = false;
+                try { SafeFile.WriteAllText(f, "fourth"); }
+                catch (UnauthorizedAccessException) { refused = true; }
+                File.SetAttributes(f, FileAttributes.Normal);
+                Check("safe write: a read-only route file is refused and kept", refused && File.ReadAllText(f) == "third" && !File.Exists(fNew), Leftovers(f));
+
+                File.WriteAllText(fOld, "stale");
+                File.SetAttributes(fOld, FileAttributes.ReadOnly);
+                File.WriteAllText(fNew, "partial");
+                File.SetAttributes(fNew, FileAttributes.ReadOnly);
+                SafeFile.WriteAllText(f, "fifth");
+                Check("safe write: read-only leftovers of its own do not block it", Only(f, "fifth"), Leftovers(f));
+
+                // What an interrupted save can leave behind: what is read, and what recovery does.
+                Check("read: the file itself", SafeFile.ReadablePath(f) == f, "got " + SafeFile.ReadablePath(f));
+                File.WriteAllText(fNew, "unfinished");
+                Check("read: a .new beside the file is an unfinished save, ignored", SafeFile.ReadablePath(f) == f && SafeFile.RecoverInterrupted(f) == f && File.ReadAllText(f) == "fifth", Leftovers(f));
+                File.Delete(fNew);
+
+                File.Move(f, fOld);                        // cut short between the two moves:
+                File.WriteAllText(fNew, "complete new");   // .old = the previous text, .new = the new one
+                Check("read: .new when the swap was cut short", SafeFile.ReadablePath(f) == fNew, "got " + SafeFile.ReadablePath(f));
+                string got = SafeFile.RecoverInterrupted(f);
+                Check("recover: renames .new back, rewrites nothing", got == f && File.ReadAllText(f) == "complete new" && !File.Exists(fNew), Leftovers(f));
+                File.Delete(f);
+                Check("read: .old when only it is left", SafeFile.ReadablePath(f) == fOld, "got " + SafeFile.ReadablePath(f));
+                got = SafeFile.RecoverInterrupted(f);
+                Check("recover: renames .old back", got == f && File.ReadAllText(f) == "fifth" && !File.Exists(fOld), Leftovers(f));
+                File.Delete(f);
+                Check("read and recover: nothing saved", SafeFile.ReadablePath(f) == null && SafeFile.RecoverInterrupted(f) == null, Leftovers(f));
+
+                File.WriteAllText(fNew, "complete new");
+                File.WriteAllText(fOld, "old");
+                SafeFile.WriteAllText(f, "after recovery");
+                Check("safe write: after an interrupted swap", Only(f, "after recovery"), Leftovers(f));
+
+                if (windows)
+                {
+                    // A copy held open by another program (a backup or sync tool) is never emptied or removed.
+                    File.Delete(f);
+                    File.WriteAllText(fNew, "only copy");
+                    using (new FileStream(fNew, FileMode.Open, FileAccess.Read, FileShare.None))
+                    {
+                        got = SafeFile.RecoverInterrupted(f);
+                        Check("recover: a locked copy is read where it is", got == fNew && !File.Exists(f), Leftovers(f));
+                        bool threw = false;
+                        try { SafeFile.WriteAllText(f, "would overwrite"); }
+                        catch (IOException) { threw = true; }
+                        catch (UnauthorizedAccessException) { threw = true; }
+                        Check("safe write: refuses while the only copy is locked", threw && !File.Exists(f), Leftovers(f));
+                    }
+                    Check("safe write: the locked only copy survives intact", File.ReadAllText(fNew) == "only copy", Leftovers(f));
+                    SafeFile.WriteAllText(f, "unlocked");
+                    Check("safe write: once released, recovers and writes", Only(f, "unlocked"), Leftovers(f));
+
+                    // The survivor must be moved back, never opened for writing: a reader that allows renames
+                    // (a scanner, a sync tool) still sees the original text afterwards.
+                    File.Delete(f);
+                    File.WriteAllText(fNew, "only copy");
+                    using (FileStream hold = new FileStream(fNew, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        SafeFile.WriteAllText(f, "moved");
+                        byte[] buf = new byte[16];
+                        int n = hold.Read(buf, 0, buf.Length);
+                        Check("safe write: the only copy is moved aside, never truncated",
+                            File.ReadAllText(f) == "moved" && Encoding.UTF8.GetString(buf, 0, n) == "only copy", Leftovers(f));
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Fail("SafeFile tests", e.GetType().Name + ": " + e.Message);
+            }
+            finally
+            {
+                try
+                {
+                    foreach (string x in Directory.GetFiles(dir)) File.SetAttributes(x, FileAttributes.Normal);
+                    Directory.Delete(dir, true);
+                }
+                catch (Exception) { }
+            }
+        }
+
+        private static bool Only(string f, string text)
+        {
+            return File.Exists(f) && File.ReadAllText(f) == text
+                && !File.Exists(f + SafeFile.NewSuffix) && !File.Exists(f + SafeFile.OldSuffix);
+        }
+
+        private static string Leftovers(string f)
+        {
+            return "file=" + (File.Exists(f) ? File.ReadAllText(f) : "(none)")
+                + " new=" + File.Exists(f + SafeFile.NewSuffix) + " old=" + File.Exists(f + SafeFile.OldSuffix);
+        }
 
         private static void Expect(string input, float a, float b, bool hasElev, float elev, string name)
         {

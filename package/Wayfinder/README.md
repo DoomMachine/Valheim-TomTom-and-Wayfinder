@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.1.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.1.1 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map or are standing on, so nothing can be looked up outside the game
@@ -57,7 +57,7 @@ still run. **Esc** — or **B** on a controller — closes it. The window needs 
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.1.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.1.1]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -132,6 +132,8 @@ their own — choose one that nothing you run already uses.
 
 Saved queues: `BepInEx/config/DoomMachine.Wayfinder/waypoints_<worldUID>.txt`, one per world — kept
 apart from TomTom's, so coordinates entered in TomTom never carry over into Wayfinder.
+The file is replaced safely. If a save is interrupted, a `.new` or `.old` copy may be left beside it;
+when the file itself is missing, the next start puts that copy back, and the next save tidies up.
 
 ---
 

@@ -658,10 +658,16 @@ namespace Waypointer
             _queue.Clear();
             _dirty = false;   // the queue now matches the file; the early return inside the try skips the reset below
             string path = SavePath(worldUid);
+            // A save that was cut short leaves a complete copy beside the missing route file. It is renamed
+            // back - never rewritten from memory, which could replace it with an empty list if it could not be
+            // read - and read where it is when it cannot be moved right now.
+            string survivor = SafeFile.ReadablePath(path);
+            string recoveredFrom = survivor != null && survivor != path ? Path.GetFileName(survivor) : null;
+            string readPath = SafeFile.RecoverInterrupted(path);
             try
             {
-                if (!File.Exists(path)) return;
-                string[] lines = File.ReadAllLines(path);
+                if (readPath == null) return;
+                string[] lines = File.ReadAllLines(readPath);
                 for (int i = 0; i < lines.Length; i++)
                 {
                     string line = lines[i].Trim();
@@ -705,13 +711,14 @@ namespace Waypointer
                     wp.OwnsPin = false;
                     _queue.Add(wp);
                 }
-                Plugin.Log.LogInfo(string.Format("Restored {0} waypoint(s) for world {1}", _queue.Count, worldUid));
+                Plugin.Log.LogInfo(string.Format("Restored {0} waypoint(s) for world {1}{2}", _queue.Count, worldUid,
+                    recoveredFrom != null ? " from " + recoveredFrom + ", left by an interrupted save" : ""));
             }
             catch (Exception e)
             {
                 Plugin.Log.LogWarning("Could not read saved waypoints: " + e.Message);
             }
-            _dirty = false;
+            _dirty = false;   // the queue matches what is on disk; nothing is written back
         }
 
         public static void SaveIfDirty()
@@ -741,7 +748,7 @@ namespace Waypointer
                         wp.Borrowed ? "0" : "1",
                         SanitizeName(wp.Name)));
                 }
-                File.WriteAllText(SavePath(_loadedWorldUid), sb.ToString());
+                SafeFile.WriteAllText(SavePath(_loadedWorldUid), sb.ToString());
                 _dirty = false;
                 if (_saveFailures > 0)
                     Plugin.Log.LogInfo("Waypoints saved after " + _saveFailures.ToString(CultureInfo.InvariantCulture)
