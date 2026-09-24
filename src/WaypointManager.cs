@@ -658,7 +658,8 @@ namespace Waypointer
             _queue.Clear();
             _dirty = false;   // the queue now matches the file; the early return inside the try skips the reset below
             string path = SavePath(worldUid);
-            // A save that was cut short leaves a complete copy beside the missing route file. It is renamed
+            // A save that was cut short leaves a copy beside the missing route file - complete, unless it was
+            // that world's first save. It is renamed
             // back - never rewritten from memory, which could replace it with an empty list if it could not be
             // read - and read where it is when it cannot be moved right now.
             string survivor = SafeFile.ReadablePath(path);

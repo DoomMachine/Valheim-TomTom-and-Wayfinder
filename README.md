@@ -91,7 +91,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 93 tests (parser and crash-safe save), on .NET and on Mono
+./run-tests.sh                                                         # 97 tests (parser and crash-safe save), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -160,8 +160,9 @@ Run it after every Valheim update.
   world's queue replaces it, and a failed write is retried after a growing delay rather than every frame.
   The route file is replaced crash-safely (`SafeFile`, the pattern of the game's own
   `FileHelpers.ReplaceOldFile`): the new text goes to `.new` and is flushed to disk, the current file steps
-  aside as `.old`, `.new` takes its name, `.old` goes. Once a route file exists, a crash at any point
-  leaves a complete copy - the file itself, or the `.new`/`.old` it was being swapped with - because `.new`
+  aside as `.old`, `.new` takes its name, `.old` goes. Once a route file exists, a crash or a power cut
+  during a save leaves the previous or the new text complete on disk - in the file itself or in the
+  `.new`/`.old` beside it (after a power cut, provided the drive honours the flush to disk) - because `.new`
   is then only written while that file exists. When the file is missing, the next start renames the copy
   back rather than rewriting it (and reads it in place if it cannot be moved yet). A stray `.new` beside an
   intact file is an unfinished save and is ignored. The first save of a world has nothing older to protect.
@@ -174,8 +175,9 @@ Run it after every Valheim update.
 
 - fixed: saving a route overwrote the file in place, so a crash or power cut during the write could leave
   it empty and lose that world's waypoints. It is now written to a temporary file, flushed to disk and
-  swapped in; once a world has a route file, an interrupted save leaves a complete copy, which the next
-  start renames back into place
+  swapped in; once a world has a route file, an interrupted save leaves the previous or the new list
+  complete on disk (after a power cut, provided the drive honours the flush), and the next start renames
+  it back into place
 - 19 tests for the crash-safe save and every state an interrupted save can leave, on both runtimes
 
 **1.1.0** — fixes and a code review.
@@ -219,6 +221,15 @@ version 1.0.0 because each is a new plugin with its own identity. Changes from W
   character switch, stacking a duplicate on top of your pin
 - Wayfinder shows no coordinates at all (found in review: the map-click readout made coordinate entry
   possible by trial and error)
+
+## Credits
+
+TomTom and Wayfinder were conceived and directed by DoomMachine, who set out what the mods should do, chose
+between the designs and plays TomTom in their own game.
+
+The code, tests and documentation were written by Claude, Anthropic's AI model, working in Claude Code under
+DoomMachine's direction. Commits are authored by DoomMachine; Claude is credited here rather than as a
+co-author.
 
 ## License and naming
 

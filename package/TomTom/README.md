@@ -160,5 +160,7 @@ when the file itself is missing, the next start puts that copy back, and the nex
 
 ---
 
-MIT licensed — the LICENSE file in this package is the full text. Source, issues and newer releases:
+Conceived and directed by DoomMachine, who plays it in their own game; written by Claude, Anthropic's AI
+model, under DoomMachine's direction. MIT licensed — the LICENSE file in this package is the full text. Source, issues and newer
+releases:
 https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder

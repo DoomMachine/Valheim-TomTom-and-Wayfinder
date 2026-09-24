@@ -190,8 +190,12 @@ namespace Waypointer
                 bool refused = false;
                 try { SafeFile.WriteAllText(f, "fourth"); }
                 catch (UnauthorizedAccessException) { refused = true; }
+                string readFrom = SafeFile.RecoverInterrupted(f);
+                bool stillReadOnly = (File.GetAttributes(f) & FileAttributes.ReadOnly) != 0;
                 File.SetAttributes(f, FileAttributes.Normal);
                 Check("safe write: a read-only route file is refused and kept", refused && File.ReadAllText(f) == "third" && !File.Exists(fNew), Leftovers(f));
+                Check("recover: a read-only route file is read as it is and stays read-only", readFrom == f && stillReadOnly,
+                    "read " + readFrom + ", read-only " + stillReadOnly);
 
                 File.WriteAllText(fOld, "stale");
                 File.SetAttributes(fOld, FileAttributes.ReadOnly);
@@ -208,9 +212,13 @@ namespace Waypointer
 
                 File.Move(f, fOld);                        // cut short between the two moves:
                 File.WriteAllText(fNew, "complete new");   // .old = the previous text, .new = the new one
+                DateTime stamp = new DateTime(2001, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+                File.SetLastWriteTimeUtc(fNew, stamp);     // a rename keeps this time stamp; a rewrite would not
                 Check("read: .new when the swap was cut short", SafeFile.ReadablePath(f) == fNew, "got " + SafeFile.ReadablePath(f));
                 string got = SafeFile.RecoverInterrupted(f);
-                Check("recover: renames .new back, rewrites nothing", got == f && File.ReadAllText(f) == "complete new" && !File.Exists(fNew), Leftovers(f));
+                Check("recover: renames .new back, rewrites nothing",
+                    got == f && File.ReadAllText(f) == "complete new" && !File.Exists(fNew) && File.GetLastWriteTimeUtc(f) == stamp,
+                    Leftovers(f) + " written " + File.GetLastWriteTimeUtc(f).ToString("o"));
                 File.Delete(f);
                 Check("read: .old when only it is left", SafeFile.ReadablePath(f) == fOld, "got " + SafeFile.ReadablePath(f));
                 got = SafeFile.RecoverInterrupted(f);
@@ -223,24 +231,66 @@ namespace Waypointer
                 SafeFile.WriteAllText(f, "after recovery");
                 Check("safe write: after an interrupted swap", Only(f, "after recovery"), Leftovers(f));
 
+                // A directory squatting on a name makes that one step fail (checked on Windows, under .NET and Mono),
+                // standing in for a crash, a full disk or another program at exactly that step.
+                // The current file is not touched until the new text is complete: when .new cannot be written,
+                // the route file is still in place.
+                Directory.CreateDirectory(fNew);
+                bool failed = false;
+                try { SafeFile.WriteAllText(f, "not written"); }
+                catch (IOException) { failed = true; }
+                catch (UnauthorizedAccessException) { failed = true; }
+                Directory.Delete(fNew, true);
+                Check("safe write: the current file is not moved until the new text is written", failed && Only(f, "after recovery"), Leftovers(f));
+
+                // A copy left by an interrupted save is renamed back before anything is written - never written
+                // over, never deleted - so when it cannot be renamed the save fails and the copy is untouched.
+                File.Move(f, fNew);
+                Directory.CreateDirectory(f);
+                failed = false;
+                try { SafeFile.WriteAllText(f, "would overwrite"); }
+                catch (IOException) { failed = true; }
+                catch (UnauthorizedAccessException) { failed = true; }
+                Directory.Delete(f, true);
+                Check("safe write: a copy that cannot be renamed back is never written over",
+                    failed && File.Exists(fNew) && File.ReadAllText(fNew) == "after recovery" && !File.Exists(fOld), Leftovers(f));
+
+                // The .new and .old copies are the mod's own: one marked read-only comes back writable.
+                File.SetAttributes(fNew, FileAttributes.ReadOnly);
+                got = SafeFile.RecoverInterrupted(f);
+                bool writable = File.Exists(f) && (File.GetAttributes(f) & FileAttributes.ReadOnly) == 0;
+                if (File.Exists(f)) File.SetAttributes(f, FileAttributes.Normal);
+                Check("recover: a read-only copy is renamed back writable", got == f && writable && !File.Exists(fNew), Leftovers(f));
+                File.Move(f, fOld);
+                File.SetAttributes(fOld, FileAttributes.ReadOnly);
+                bool wrote = true;
+                try { SafeFile.WriteAllText(f, "over read-only"); }
+                catch (UnauthorizedAccessException) { wrote = false; }
+                if (File.Exists(f)) File.SetAttributes(f, FileAttributes.Normal);
+                Check("safe write: a read-only copy left by an interrupted save does not block it", wrote && Only(f, "over read-only"), Leftovers(f));
+
                 if (windows)
                 {
-                    // A copy held open by another program (a backup or sync tool) is never emptied or removed.
+                    // A copy held open exclusively by another program (a backup or sync tool). Windows then refuses
+                    // every rename, write and delete of it, whatever SafeFile does, so these checks cannot show that
+                    // the copy is protected - "a copy that cannot be renamed back is never written over" above and
+                    // the last test below do. They show that recovery reads it where it is, and that a save fails
+                    // (so the caller keeps the change and retries) without creating a route file.
                     File.Delete(f);
                     File.WriteAllText(fNew, "only copy");
+                    bool threw = false;
                     using (new FileStream(fNew, FileMode.Open, FileAccess.Read, FileShare.None))
                     {
                         got = SafeFile.RecoverInterrupted(f);
                         Check("recover: a locked copy is read where it is", got == fNew && !File.Exists(f), Leftovers(f));
-                        bool threw = false;
                         try { SafeFile.WriteAllText(f, "would overwrite"); }
                         catch (IOException) { threw = true; }
                         catch (UnauthorizedAccessException) { threw = true; }
-                        Check("safe write: refuses while the only copy is locked", threw && !File.Exists(f), Leftovers(f));
                     }
-                    Check("safe write: the locked only copy survives intact", File.ReadAllText(fNew) == "only copy", Leftovers(f));
+                    Check("safe write: while another program holds the only copy exclusively, a save fails and creates no route file",
+                        threw && !File.Exists(f) && File.ReadAllText(fNew) == "only copy", Leftovers(f));
                     SafeFile.WriteAllText(f, "unlocked");
-                    Check("safe write: once released, recovers and writes", Only(f, "unlocked"), Leftovers(f));
+                    Check("safe write: once the other program lets go, saving goes through and tidies up", Only(f, "unlocked"), Leftovers(f));
 
                     // The survivor must be moved back, never opened for writing: a reader that allows renames
                     // (a scanner, a sync tool) still sees the original text afterwards.
@@ -248,11 +298,15 @@ namespace Waypointer
                     File.WriteAllText(fNew, "only copy");
                     using (FileStream hold = new FileStream(fNew, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                     {
-                        SafeFile.WriteAllText(f, "moved");
+                        string threwWhat = null;
+                        try { SafeFile.WriteAllText(f, "moved"); }
+                        catch (Exception e) { threwWhat = e.GetType().Name; }
                         byte[] buf = new byte[16];
                         int n = hold.Read(buf, 0, buf.Length);
                         Check("safe write: the only copy is moved aside, never truncated",
-                            File.ReadAllText(f) == "moved" && Encoding.UTF8.GetString(buf, 0, n) == "only copy", Leftovers(f));
+                            threwWhat == null && File.Exists(f) && File.ReadAllText(f) == "moved"
+                                && Encoding.UTF8.GetString(buf, 0, n) == "only copy",
+                            Leftovers(f) + (threwWhat != null ? " threw " + threwWhat : ""));
                     }
                 }
             }

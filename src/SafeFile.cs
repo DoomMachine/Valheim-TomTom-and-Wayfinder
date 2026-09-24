@@ -5,8 +5,9 @@ using System.Text;
 namespace Waypointer
 {
     /// <summary>
-    /// Replaces a small file crash-safely: once the file exists, whenever a crash or a power cut happens, a
-    /// complete copy of either the old or the new text is on disk - the pattern of the game's own
+    /// Replaces a small file crash-safely: once the file exists, if the game crashes during a save - or the
+    /// power fails and the drive honours the flush to disk - a complete copy of either the old or the new text
+    /// is on disk - the pattern of the game's own
     /// FileHelpers.ReplaceOldFile, which saves the player profile. (The first save of a file has nothing older
     /// to protect: a power cut during it can leave a partial path.new.) A copy left by an interrupted save is
     /// only ever renamed back, never rewritten.
