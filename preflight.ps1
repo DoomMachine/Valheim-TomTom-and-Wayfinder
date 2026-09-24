@@ -512,9 +512,10 @@ Write-Output "== crash-safe route save =="
 #   - no File.Move runs between opening the stream and flushing it, and at least one follows the flush (the
 #     swap). The File.Move that renames a leftover copy back into place comes before the stream is opened.
 # And, so that this cannot pass while the save takes another path: WaypointManager.SaveIfDirty calls
-# SafeFile.WriteAllText, and nothing else in the plugin opens a file for writing (File or FileInfo
-# Write*/Append*/Create*/Open/OpenWrite/Replace/Copy*, or a new FileStream, StreamWriter or BinaryWriter). A
-# FileStream opened anywhere else fails even for reading, so that a person looks. This reads the IL in code
+# SafeFile.WriteAllText, and nothing opens a file for writing (File or FileInfo Write*/Append*/Create*/Open/
+# OpenWrite/Replace/Copy*, or a new FileStream, StreamWriter or BinaryWriter) except the one FileStream in
+# SafeFile.WriteAllText - not even the rest of that method, where a plain File.WriteAllText after the swap would
+# pass every check above. A FileStream opened anywhere else fails even for reading, so that a person looks. This reads the IL in code
 # order - a tripwire, not a proof - and whether the drive honours the flush is beyond any check.
 function Get-LocalIndex($i) {
     # The local variable an ldloc/stloc reads or writes, or -1.
@@ -529,7 +530,6 @@ $saveUsesIt = $false
 foreach ($t in $plug.GetTypes()) {
     foreach ($m in $t.Methods) {
         if (-not $m.HasBody) { continue }
-        $inSafeWrite = ($t.FullName -eq "Waypointer.SafeFile" -and $m.Name -eq "WriteAllText")
         foreach ($i in $m.Body.Instructions) {
             $op = $i.Operand
             if (-not ($op -is [Mono.Cecil.MethodReference])) { continue }
@@ -538,15 +538,16 @@ foreach ($t in $plug.GetTypes()) {
             $fileApi = ($dt -eq "System.IO.File" -or $dt -eq "System.IO.FileInfo")
             $opensFile = ($fileApi -and ($op.Name -match '^(Write|Append|Create|Open|Replace|Copy)') -and ($op.Name -notmatch '^Open(Read|Text)$'))
             $newWriter = (($dt -eq "System.IO.FileStream" -or $dt -eq "System.IO.StreamWriter" -or $dt -eq "System.IO.BinaryWriter") -and $op.Name -eq ".ctor")
-            if (($opensFile -or $newWriter) -and -not $inSafeWrite) { $writers += ("{0}.{1} uses {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
+            $theStream = ($t.FullName -eq "Waypointer.SafeFile" -and $m.Name -eq "WriteAllText" -and $newWriter -and $dt -eq "System.IO.FileStream")
+            if (($opensFile -or $newWriter) -and -not $theStream) { $writers += ("{0}.{1} uses {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
         }
     }
 }
 if ($saveUsesIt -and $writers.Count -eq 0) {
-    Write-Output "  ok    routes are saved only through SafeFile.WriteAllText (WaypointManager.SaveIfDirty calls it; nothing else opens a file for writing)"
+    Write-Output "  ok    routes are saved only through SafeFile.WriteAllText (WaypointManager.SaveIfDirty calls it; nothing but its FileStream opens a file for writing)"
 } else {
     if (-not $saveUsesIt) { Write-Output "  FAIL  WaypointManager.SaveIfDirty does not call SafeFile.WriteAllText" }
-    foreach ($w in $writers) { Write-Output "  FAIL  a file is opened for writing outside SafeFile.WriteAllText: $w" }
+    foreach ($w in $writers) { Write-Output "  FAIL  a file is opened for writing other than through SafeFile.WriteAllText's FileStream: $w" }
     $failures++
 }
 
