@@ -218,8 +218,8 @@ namespace Waypointer
 
             bool complete = _allAnswered;
             // Unique places are resolved over every answer first: counting only those in range would take the
-            // one candidate that happens to be near for the real place.
-            SearchRules.ResolveUniqueOnClient(_hits, PlacedIcons());
+            // one candidate that happens to be near for the real place. With answers missing, a lone one is not proof.
+            SearchRules.ResolveUniqueOnClient(_hits, PlacedIcons(), complete);
             SearchRules.KeepWithinRange(_hits, _origin.x, _origin.z, _range);
             if (!complete)
                 Plugin.Log.LogWarning("Location search: the server did not answer every request in time; using what arrived.");

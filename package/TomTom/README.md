@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.2.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.2.1 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -95,7 +95,9 @@ chance. The lists come from Valheim 1.0.16's own data, including the chests in t
   since only chests near you are known. `SkipCheckedChests` turns it off.
 - **Merchants and the Big Rock Clearing exist once per world.** Until someone comes near, the game keeps up to
   ten possible spots, and the first one anybody reaches becomes the real one. Those spots are queued as
-  "(possible)". Once one is fixed, only the real one is queued.
+  "(possible)". Once one is fixed - or only one spot is left - only that one is queued, as the real place. (When
+  you join a game and the server does not answer every request in time, it stays "(possible)" unless a merchant's
+  map icon settles it.)
 - **Loose Mysterious Rocks exist only where the land has been generated**: anywhere someone has been, as the
   host; near you, as a client. Rocks already picked are left out.
 - **It works whether you host or join.** As a client, TomTom asks the server with the same request a Vegvisir
@@ -128,7 +130,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.2.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.2.1]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console

@@ -37,7 +37,7 @@ if ($Plugin -eq "") { $Plugin = Join-Path $ValheimDir "BepInEx\plugins\DoomMachi
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.2.0"
+$expectedVersion = "1.2.1"
 
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 

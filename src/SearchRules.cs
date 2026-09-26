@@ -62,12 +62,14 @@ namespace Waypointer
 
         /// <summary>
         /// Unique locations as seen by the server, which knows which candidate has been placed: once one is
-        /// placed, the game has already discarded the other candidates, and only placed ones are kept here too;
-        /// before that, every candidate is kept and marked Possible.
+        /// placed, the game has already discarded the other candidates, and only placed ones are kept here too.
+        /// Before that, a lone candidate is the only place the location can go, so it counts as the real one (as it
+        /// does on a client); with more than one, every candidate is kept and marked Possible.
         /// </summary>
         public static void ResolveUniqueOnServer(List<SearchHit> hits)
         {
             Dictionary<string, bool> anyPlaced = new Dictionary<string, bool>();
+            Dictionary<string, int> counts = CountUnique(hits);
             for (int i = 0; i < hits.Count; i++)
             {
                 SearchHit h = hits[i];
@@ -81,7 +83,7 @@ namespace Waypointer
                 SearchHit h = hits[i];
                 if (h.IsObject || !SearchCatalog.IsUnique(h.Prefab)) continue;
                 if (anyPlaced[h.Prefab]) { if (!h.Placed) hits.RemoveAt(i); }
-                else h.Possible = true;
+                else if (counts[h.Prefab] > 1) h.Possible = true;
             }
         }
 
@@ -90,18 +92,12 @@ namespace Waypointer
         /// placed the game discards the others, so exactly one answer means the real spot (or the only candidate
         /// left, which becomes the real one); more than one means none is placed yet, and all are Possible. For the
         /// merchants the game also sends a map icon once placed (iconPlacedPositions, by prefab), which decides it.
+        /// When the answers are incomplete (the server did not answer every request in time), a lone answer may be
+        /// one of several candidates, so without an icon every answer is Possible.
         /// </summary>
-        public static void ResolveUniqueOnClient(List<SearchHit> hits, Dictionary<string, float[]> iconPlacedPositions)
+        public static void ResolveUniqueOnClient(List<SearchHit> hits, Dictionary<string, float[]> iconPlacedPositions, bool complete)
         {
-            Dictionary<string, int> counts = new Dictionary<string, int>();
-            for (int i = 0; i < hits.Count; i++)
-            {
-                SearchHit h = hits[i];
-                if (h.IsObject || !SearchCatalog.IsUnique(h.Prefab)) continue;
-                int c;
-                counts.TryGetValue(h.Prefab, out c);
-                counts[h.Prefab] = c + 1;
-            }
+            Dictionary<string, int> counts = CountUnique(hits);
             foreach (KeyValuePair<string, int> kv in counts)
             {
                 float[] icon;
@@ -130,9 +126,24 @@ namespace Waypointer
                 {
                     SearchHit h = hits[i];
                     if (h.IsObject || h.Prefab != kv.Key) continue;
-                    if (kv.Value > 1) h.Possible = true;
+                    if (kv.Value > 1 || !complete) h.Possible = true;
                 }
             }
+        }
+
+        /// <summary>How many location hits each unique location has.</summary>
+        private static Dictionary<string, int> CountUnique(List<SearchHit> hits)
+        {
+            Dictionary<string, int> counts = new Dictionary<string, int>();
+            for (int i = 0; i < hits.Count; i++)
+            {
+                SearchHit h = hits[i];
+                if (h.IsObject || !SearchCatalog.IsUnique(h.Prefab)) continue;
+                int c;
+                counts.TryGetValue(h.Prefab, out c);
+                counts[h.Prefab] = c + 1;
+            }
+            return counts;
         }
 
         /// <summary>

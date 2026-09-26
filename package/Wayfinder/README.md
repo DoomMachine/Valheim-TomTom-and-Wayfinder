@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.2.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.2.1 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
@@ -81,7 +81,8 @@ chance. The lists come from Valheim 1.0.16's own data, including the chests in t
 - **Nothing is said.** There is no message and no count. If nothing that matches is explored within range,
   nothing happens.
 - **Merchants and the Big Rock Clearing exist once per world.** The first of their possible spots anyone reaches
-  becomes the real one. Wayfinder queues them only once they are fixed.
+  becomes the real one. Wayfinder queues them only once they are fixed, or when only one spot is left - and when
+  you join a game, only if the server answered every request in time or a merchant's map icon settles it.
 - **Loose Mysterious Rocks exist only where the land has been generated**, and picked ones are left out.
 - **It works whether you host or join.** As a client, Wayfinder asks the server with the same request a Vegvisir
   makes; the answers never become map pins (see Multiplayer).
@@ -91,7 +92,7 @@ chance. The lists come from Valheim 1.0.16's own data, including the chests in t
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.2.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.2.1]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console

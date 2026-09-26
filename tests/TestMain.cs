@@ -536,34 +536,66 @@ namespace Waypointer
             hits.Add(Hit("Vendor_BlackForest", 100, 0, false));
             hits.Add(Hit("Vendor_BlackForest", 200, 0, true));
             hits.Add(Hit("Hildir_camp", 50, 0, false));
+            hits.Add(Hit("Hildir_camp", 60, 0, false));
             SearchRules.ResolveUniqueOnServer(hits);
             Check("search: server, one candidate placed - only the placed one stays, and it is not 'possible'",
                 CountPrefab(hits, "Vendor_BlackForest") == 1 && hits[0].X == 200 && !hits[0].Possible
-                && CountPrefab(hits, "Hildir_camp") == 1 && hits[1].Possible, "");
+                && CountPrefab(hits, "Hildir_camp") == 2 && hits[1].Possible && hits[2].Possible, "");
+
+            // A lone candidate that is not placed yet is the only place the location can go: the server calls it real,
+            // as a client does for a single answer (1.2.0 marked it 'possible' on a host only).
+            hits.Clear();
+            hits.Add(Hit("BogWitch_Camp", 30, 0, false));
+            hits.Add(Hit("BigRockClearing", 10, 0, false));
+            hits.Add(Hit("BigRockClearing", 20, 0, false));
+            SearchRules.ResolveUniqueOnServer(hits);
+            List<SearchHit> same = new List<SearchHit>();
+            same.Add(Hit("BogWitch_Camp", 30, 0, false));
+            same.Add(Hit("BigRockClearing", 10, 0, false));
+            same.Add(Hit("BigRockClearing", 20, 0, false));
+            SearchRules.ResolveUniqueOnClient(same, null, true);
+            Check("search: server, a lone unplaced candidate is the real place - and host and client agree",
+                hits.Count == 3 && !hits[0].Possible && hits[1].Possible && hits[2].Possible
+                && same.Count == 3 && same[0].Possible == hits[0].Possible && same[1].Possible == hits[1].Possible
+                && same[2].Possible == hits[2].Possible, "");
 
             // --- unique places, on a client
             hits.Clear();
             hits.Add(Hit("BigRockClearing", 10, 0, false));
             hits.Add(Hit("BigRockClearing", 20, 0, false));
             hits.Add(Hit("BogWitch_Camp", 30, 0, false));
-            SearchRules.ResolveUniqueOnClient(hits, null);
+            SearchRules.ResolveUniqueOnClient(hits, null, true);
             Check("search: client, several answers - all possible; a single answer is the real place",
                 hits[0].Possible && hits[1].Possible && !hits[2].Possible, "");
+
+            // Answers cut short by the timeout: the one answer that arrived may be one of several candidates.
+            hits.Clear();
+            hits.Add(Hit("BogWitch_Camp", 30, 0, false));
+            hits.Add(Hit("Ruin1", 40, 0, false));
+            SearchRules.ResolveUniqueOnClient(hits, null, false);
+            Check("search: client, answers incomplete - a lone answer stays 'possible' (other places unaffected)",
+                hits.Count == 2 && hits[0].Possible && !hits[1].Possible, "");
 
             hits.Clear();
             hits.Add(Hit("Hildir_camp", 10, 0, false));
             hits.Add(Hit("Hildir_camp", 500, 0, false));
             Dictionary<string, float[]> icons = new Dictionary<string, float[]>();
             icons["Hildir_camp"] = new float[] { 499, 0, 1 };
-            SearchRules.ResolveUniqueOnClient(hits, icons);
+            SearchRules.ResolveUniqueOnClient(hits, icons, true);
             Check("search: client, a merchant's placed icon picks the real one and drops the rest",
                 hits.Count == 1 && hits[0].X == 500 && hits[0].Placed && !hits[0].Possible, "");
+
+            hits.Clear();
+            hits.Add(Hit("Hildir_camp", 500, 0, false));
+            SearchRules.ResolveUniqueOnClient(hits, icons, false);
+            Check("search: client, answers incomplete - a merchant's placed icon still decides",
+                hits.Count == 1 && hits[0].Placed && !hits[0].Possible, "");
 
             // --- resolve before the range cut: the real place outside range must not make a near candidate look real
             hits.Clear();
             hits.Add(Hit("Vendor_BlackForest", 100, 0, false));
             hits.Add(Hit("Vendor_BlackForest", 5000, 0, false));
-            SearchRules.ResolveUniqueOnClient(hits, null);
+            SearchRules.ResolveUniqueOnClient(hits, null, true);
             SearchRules.KeepWithinRange(hits, 0, 0, 1000);
             Check("search: a candidate left in range after the cut is still 'possible'", hits.Count == 1 && hits[0].Possible, "");
 

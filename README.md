@@ -99,7 +99,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 135 tests (parser, crash-safe save, key reads, search), on .NET and on Mono
+./run-tests.sh                                                         # 138 tests (parser, crash-safe save, key reads, search), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -210,6 +210,17 @@ Run it after every Valheim update.
   from the nearest spot, then 2-opt with that first stop fixed.
 
 ## History
+
+**1.2.1** — two fixes to Find's "(possible)" spots.
+
+- fixed: a merchant or Big Rock Clearing with a single possible spot left, not placed yet, was treated as
+  "(possible)" by the host (TomTom marked it so, Wayfinder left it out) but as the real place by a player who
+  joined; it is the real place for both now, since it is the only place the game can put it
+- fixed: when the server did not answer every request of a joining player's Find in time, a merchant or Big Rock
+  Clearing of which only one answer had arrived was taken as the real place; now TomTom keeps it "(possible)" and
+  Wayfinder leaves it out, unless the merchant's map icon settles it (once a spot is placed the game drops every
+  other one at once)
+- 3 new tests (135 → 138)
 
 **1.2.0** — Find: every place of one kind within a range, as a route.
 

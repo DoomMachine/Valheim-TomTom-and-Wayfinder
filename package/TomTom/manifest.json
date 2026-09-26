@@ -1,6 +1,6 @@
 {
   "name": "TomTom",
-  "version_number": "1.2.0",
+  "version_number": "1.2.1",
   "website_url": "https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder",
   "description": "TomTom-style waypoints: enter or paste coordinates, or place waypoints on the world map, and follow an on-screen arrow that clears itself when you arrive.",
   "dependencies": [
