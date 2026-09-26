@@ -1,8 +1,8 @@
 {
   "name": "Wayfinder",
-  "version_number": "1.1.2",
+  "version_number": "1.2.0",
   "website_url": "https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder",
-  "description": "Immersive waypoints: place one on the world map or follow one of your own markers, then follow an on-screen arrow. No coordinates in or out, so no looking places up.",
+  "description": "Immersive waypoints: place one on the world map or follow one of your own markers, then follow an on-screen arrow. No coordinates in or out; Find works only on land your map shows as explored.",
   "dependencies": [
     "denikson-BepInExPack_Valheim-5.4.2333"
   ]

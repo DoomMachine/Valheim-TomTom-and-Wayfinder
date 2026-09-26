@@ -17,9 +17,9 @@ namespace Waypointer
     {
         private static bool _open;
 #if WAYFINDER
-        private static Rect _rect = new Rect(80f, 80f, 470f, 440f);
+        private static Rect _rect = new Rect(80f, 40f, 470f, 520f);
 #else
-        private static Rect _rect = new Rect(80f, 80f, 470f, 580f);
+        private static Rect _rect = new Rect(80f, 40f, 470f, 650f);
         private static string _input = "";
         private static List<string> _errors = new List<string>();
 #endif
@@ -39,11 +39,20 @@ namespace Waypointer
 #if !WAYFINDER
         private static readonly GUILayoutOption[] _inputHeight = new GUILayoutOption[] { GUILayout.Height(80f) };
 #endif
-        private static readonly GUILayoutOption[] _listHeight = new GUILayoutOption[] { GUILayout.Height(170f) };
+        private static readonly GUILayoutOption[] _listHeight = new GUILayoutOption[] { GUILayout.Height(140f) };
         private static readonly GUILayoutOption[] _nameWidth = new GUILayoutOption[] { GUILayout.Width(200f) };
         private static readonly GUILayoutOption[] _infoWidth = new GUILayoutOption[] { GUILayout.Width(120f) };
         private static readonly GUILayoutOption[] _goWidth = new GUILayoutOption[] { GUILayout.Width(38f) };
         private static readonly GUILayoutOption[] _removeWidth = new GUILayoutOption[] { GUILayout.Width(26f) };
+        private static readonly GUILayoutOption[] _stepWidth = new GUILayoutOption[] { GUILayout.Width(26f) };
+        private static readonly GUILayoutOption[] _rangeWidth = new GUILayoutOption[] { GUILayout.Width(120f) };
+
+        // The Find section: which query, and how far. The range is written to the config once per search, not on
+        // every frame of a slider drag (each write saves the config file).
+        private static int _queryIndex;
+        private static float _searchRange = -1f;
+        private static float _rangeLabelFor = -1f;
+        private static string _rangeLabel = "";
 
         // Text that only changes with the queue length or a setting, built once per change, not per pass.
         private static string _queueHeader;
@@ -54,6 +63,7 @@ namespace Waypointer
 
         private static GUIStyle _headerStyle;
         private static GUIStyle _smallStyle;
+        private static GUIStyle _centredStyle;
 
         public static bool IsOpen { get { return _open; } }
 
@@ -161,6 +171,11 @@ namespace Waypointer
                 _smallStyle.fontSize = 11;
                 _smallStyle.wordWrap = true;
             }
+            if (_centredStyle == null)
+            {
+                _centredStyle = new GUIStyle(GUI.skin.label);
+                _centredStyle.alignment = TextAnchor.MiddleCenter;
+            }
         }
 
         private static void DrawWindow(int id)
@@ -186,6 +201,8 @@ namespace Waypointer
 #endif
             GUILayout.Space(6f);
             DrawQuickActions();
+            GUILayout.Space(6f);
+            DrawSearchSection();
             GUILayout.Space(6f);
             DrawActiveSection();
             GUILayout.Space(4f);
@@ -276,6 +293,77 @@ namespace Waypointer
             _status = string.Format(CultureInfo.InvariantCulture,
                 "Added {0} waypoint{1}{2}.", added, added == 1 ? "" : "s",
                 errors.Count > 0 ? string.Format(CultureInfo.InvariantCulture, " ({0} line(s) skipped)", errors.Count) : "");
+        }
+#endif
+
+        /// <summary>
+        /// Find: one kind of place at a time (SearchCatalog), within a range of the player, queued as a route that
+        /// starts at the nearest. TomTom reports what it found in the status line; Wayfinder says nothing.
+        /// </summary>
+        private static void DrawSearchSection()
+        {
+            GUILayout.Label("Find", _headerStyle);
+
+            SearchQuery[] queries = SearchCatalog.Queries;
+            if (_queryIndex < 0 || _queryIndex >= queries.Length) _queryIndex = 0;
+            if (_searchRange < 0f) _searchRange = Mathf.Clamp(Plugin.SearchRange.Value, 100f, 10000f);
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("<", _stepWidth)) Defer(PreviousQuery);
+            GUILayout.Label(queries[_queryIndex].Name, _centredStyle);
+            if (GUILayout.Button(">", _stepWidth)) Defer(NextQuery);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(RangeLabel(), _rangeWidth);
+            float v = GUILayout.HorizontalSlider(_searchRange, 100f, 10000f);
+            _searchRange = Mathf.Clamp(Mathf.Round(v / 100f) * 100f, 100f, 10000f);
+            GUILayout.EndHorizontal();
+
+            bool busy = LocationSearch.Busy;
+            GUI.enabled = !busy && WaypointManager.QueueBelongsToCurrentWorld;
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(busy ? "Searching..." : "Find (replace queue)")) Defer(FindReplace);
+            if (GUILayout.Button("Find (add to queue)")) Defer(FindAdd);
+            GUILayout.EndHorizontal();
+            GUI.enabled = true;
+        }
+
+        private static string RangeLabel()
+        {
+            if (_rangeLabelFor != _searchRange)
+            {
+                _rangeLabelFor = _searchRange;
+                _rangeLabel = string.Format(CultureInfo.InvariantCulture, "Within {0:0} m", _searchRange);
+            }
+            return _rangeLabel;
+        }
+
+        private static void PreviousQuery()
+        {
+            int n = SearchCatalog.Queries.Length;
+            _queryIndex = (_queryIndex + n - 1) % n;
+        }
+
+        private static void NextQuery()
+        {
+            _queryIndex = (_queryIndex + 1) % SearchCatalog.Queries.Length;
+        }
+
+        private static void FindReplace() { StartFind(true); }
+        private static void FindAdd() { StartFind(false); }
+
+        private static void StartFind(bool replace)
+        {
+            if (Plugin.SearchRange.Value != _searchRange) Plugin.SearchRange.Value = _searchRange;
+            LocationSearch.Start(SearchCatalog.Queries[_queryIndex], _searchRange, replace);
+        }
+
+#if !WAYFINDER
+        /// <summary>The status line under the window (TomTom only: Wayfinder's search reports nothing).</summary>
+        internal static void SetStatus(string text)
+        {
+            _status = text ?? "";
         }
 #endif
 

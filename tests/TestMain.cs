@@ -156,6 +156,7 @@ namespace Waypointer
 
             SafeFileTests();
             HotkeysTests();
+            SearchTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
@@ -473,6 +474,182 @@ namespace Waypointer
                 return;
             }
             Console.WriteLine("  ok   (rejected) " + input);
+        }
+
+        // ---------------------------------------------------------------- location search (1.2.0)
+
+        private static SearchHit Hit(string prefab, float x, float z, bool placed)
+        {
+            SearchHit h = new SearchHit();
+            h.Prefab = prefab; h.Label = prefab; h.X = x; h.Y = 0f; h.Z = z; h.Placed = placed;
+            return h;
+        }
+
+        private static int CountPrefab(List<SearchHit> hits, string prefab)
+        {
+            int n = 0;
+            for (int i = 0; i < hits.Count; i++) if (hits[i].Prefab == prefab) n++;
+            return n;
+        }
+
+        private static void SearchTests()
+        {
+            // --- the catalogue
+            HashSet<string> names = new HashSet<string>();
+            bool nonEmpty = true, labelled = true, uniqueNames = true;
+            for (int i = 0; i < SearchCatalog.Queries.Length; i++)
+            {
+                SearchQuery q = SearchCatalog.Queries[i];
+                if (!names.Add(q.Name)) uniqueNames = false;
+                if (q.Locations.Length + q.Objects.Length == 0) nonEmpty = false;
+                HashSet<string> prefabs = new HashSet<string>();
+                for (int j = 0; j < q.Locations.Length; j++)
+                {
+                    if (string.IsNullOrEmpty(q.Locations[j].Prefab) || string.IsNullOrEmpty(q.Locations[j].Label)) labelled = false;
+                    if (!prefabs.Add(q.Locations[j].Prefab)) nonEmpty = false;
+                }
+            }
+            Check("search: every query has a unique name, something to look for, and no location listed twice", uniqueNames && nonEmpty, "");
+            Check("search: every location has a prefab and a label", labelled, "");
+            Check("search: the four unique places are the ones the game places once (Big Rock Clearing, Haldor, Hildir, Bog Witch)",
+                SearchCatalog.IsUnique("BigRockClearing") && SearchCatalog.IsUnique("Vendor_BlackForest")
+                && SearchCatalog.IsUnique("Hildir_camp") && SearchCatalog.IsUnique("BogWitch_Camp")
+                && !SearchCatalog.IsUnique("Ruin1") && SearchCatalog.UniqueLocations.Length == 4, "");
+            SearchQuery spear = null;
+            for (int i = 0; i < SearchCatalog.Queries.Length; i++) if (SearchCatalog.Queries[i].Name == "Wooden Spear") spear = SearchCatalog.Queries[i];
+            bool spearOk = spear != null && spear.Locations.Length == 18 && spear.Items.Length == 1 && spear.Items[0] == "SpearWood";
+            bool noStoneHouse4 = true;
+            for (int i = 0; spear != null && i < spear.Locations.Length; i++)
+                if (spear.Locations[i].Prefab == "StoneHouse4" || spear.Locations[i].Prefab == "TrollCave02") noStoneHouse4 = false;
+            Check("search: Wooden Spear covers the 18 location types the 1.0.16 data lists - not StoneHouse4 (no chest) nor TrollCave02 (its spear chests are switched off)", spearOk && noStoneHouse4, "");
+
+            // --- unique places, on the server
+            List<SearchHit> hits = new List<SearchHit>();
+            hits.Add(Hit("Vendor_BlackForest", 100, 0, false));
+            hits.Add(Hit("Vendor_BlackForest", 200, 0, false));
+            hits.Add(Hit("Ruin1", 5, 5, true));
+            SearchRules.ResolveUniqueOnServer(hits);
+            Check("search: server, nothing placed yet - every candidate is kept and marked possible",
+                CountPrefab(hits, "Vendor_BlackForest") == 2 && hits[0].Possible && hits[1].Possible && !hits[2].Possible, "");
+
+            hits.Clear();
+            hits.Add(Hit("Vendor_BlackForest", 100, 0, false));
+            hits.Add(Hit("Vendor_BlackForest", 200, 0, true));
+            hits.Add(Hit("Hildir_camp", 50, 0, false));
+            SearchRules.ResolveUniqueOnServer(hits);
+            Check("search: server, one candidate placed - only the placed one stays, and it is not 'possible'",
+                CountPrefab(hits, "Vendor_BlackForest") == 1 && hits[0].X == 200 && !hits[0].Possible
+                && CountPrefab(hits, "Hildir_camp") == 1 && hits[1].Possible, "");
+
+            // --- unique places, on a client
+            hits.Clear();
+            hits.Add(Hit("BigRockClearing", 10, 0, false));
+            hits.Add(Hit("BigRockClearing", 20, 0, false));
+            hits.Add(Hit("BogWitch_Camp", 30, 0, false));
+            SearchRules.ResolveUniqueOnClient(hits, null);
+            Check("search: client, several answers - all possible; a single answer is the real place",
+                hits[0].Possible && hits[1].Possible && !hits[2].Possible, "");
+
+            hits.Clear();
+            hits.Add(Hit("Hildir_camp", 10, 0, false));
+            hits.Add(Hit("Hildir_camp", 500, 0, false));
+            Dictionary<string, float[]> icons = new Dictionary<string, float[]>();
+            icons["Hildir_camp"] = new float[] { 499, 0, 1 };
+            SearchRules.ResolveUniqueOnClient(hits, icons);
+            Check("search: client, a merchant's placed icon picks the real one and drops the rest",
+                hits.Count == 1 && hits[0].X == 500 && hits[0].Placed && !hits[0].Possible, "");
+
+            // --- resolve before the range cut: the real place outside range must not make a near candidate look real
+            hits.Clear();
+            hits.Add(Hit("Vendor_BlackForest", 100, 0, false));
+            hits.Add(Hit("Vendor_BlackForest", 5000, 0, false));
+            SearchRules.ResolveUniqueOnClient(hits, null);
+            SearchRules.KeepWithinRange(hits, 0, 0, 1000);
+            Check("search: a candidate left in range after the cut is still 'possible'", hits.Count == 1 && hits[0].Possible, "");
+
+            // --- range
+            hits.Clear();
+            hits.Add(Hit("Ruin1", 300, 400, true));   // 500 m
+            hits.Add(Hit("Ruin1", 600, 800, true));   // 1000 m
+            hits.Add(Hit("Ruin1", 601, 800, true));   // just over
+            SearchRules.KeepWithinRange(hits, 0, 0, 1000);
+            Check("search: the range is horizontal and inclusive", hits.Count == 2, hits.Count.ToString());
+
+            // --- chests
+            Check("search: chests - one filled chest without the item: skip the place", SearchRules.ChestsExhausted(1, 0, 0), "");
+            Check("search: chests - no chest found: keep (cannot tell)", !SearchRules.ChestsExhausted(0, 0, 0), "");
+            Check("search: chests - one chest not filled yet: keep", !SearchRules.ChestsExhausted(2, 1, 0), "");
+            Check("search: chests - a chest still holding it: keep", !SearchRules.ChestsExhausted(2, 0, 1), "");
+
+            // --- rocks of a clearing already listed
+            hits.Clear();
+            hits.Add(Hit("BigRockClearing", 0, 0, true));
+            SearchHit rock1 = Hit("Pickable_StoneRock", 10, 10, true); rock1.IsObject = true; hits.Add(rock1);
+            SearchHit rock2 = Hit("Pickable_StoneRock", 500, 0, true); rock2.IsObject = true; hits.Add(rock2);
+            SearchRules.DropObjectsNear(hits, "BigRockClearing", 40f);
+            Check("search: rocks inside a listed Big Rock Clearing are dropped, a scattered one stays",
+                hits.Count == 2 && hits[1].X == 500, "");
+
+            // --- which location answers vanilla may turn into a (saved, shareable) pin
+            Check("search: an answer to this mod never reaches vanilla - current, abandoned or malformed search number",
+                !SearchRules.VanillaMayHandle(SearchRules.TokenPrefix + "7")
+                && !SearchRules.VanillaMayHandle(SearchRules.TokenPrefix + "1")
+                && !SearchRules.VanillaMayHandle(SearchRules.TokenPrefix)
+                && !SearchRules.VanillaMayHandle(SearchRules.TokenPrefix + "not a number"), "");
+            Check("search: other answers (a Vegvisir's, a runestone's) still reach vanilla",
+                SearchRules.VanillaMayHandle("$enemy_eikthyr") && SearchRules.VanillaMayHandle("")
+                && SearchRules.VanillaMayHandle(null) && SearchRules.VanillaMayHandle("WaypointerSearch#3"), "");
+            Check("search: only this plugin's own answer prefix counts as the interception",
+                SearchRules.IsOurPrefix("DoomMachine.TomTom", "Waypointer.Game_RPC_DiscoverLocationResponse_Patch", "DoomMachine.TomTom", "Waypointer.Game_RPC_DiscoverLocationResponse_Patch")
+                && !SearchRules.IsOurPrefix("SomeOther.Mod", "Waypointer.Game_RPC_DiscoverLocationResponse_Patch", "DoomMachine.TomTom", "Waypointer.Game_RPC_DiscoverLocationResponse_Patch")
+                && !SearchRules.IsOurPrefix("DoomMachine.TomTom", "Waypointer.Other_Patch", "DoomMachine.TomTom", "Waypointer.Game_RPC_DiscoverLocationResponse_Patch")
+                && !SearchRules.IsOurPrefix(null, null, "DoomMachine.TomTom", "Waypointer.Game_RPC_DiscoverLocationResponse_Patch"), "");
+            bool requestsSafe = true;
+            int[] ids = { 0, 1, 7, 42, 2147483647 };
+            for (int i = 0; i < ids.Length; i++)
+                if (SearchRules.VanillaMayHandle(SearchRules.RequestPinName(ids[i]))) requestsSafe = false;
+            Check("search: every request name, and so every answer echoing it, is kept from vanilla", requestsSafe,
+                SearchRules.RequestPinName(7));
+            Check("search: the token starts with a control character no game text starts with",
+                SearchRules.TokenPrefix.Length > 1 && SearchRules.TokenPrefix[0] == (char)1, "");
+
+            // --- names
+            SearchQuery axeHead = null;
+            for (int i = 0; i < SearchCatalog.Queries.Length; i++) if (SearchCatalog.Queries[i].Name == "Curious Axe Head") axeHead = SearchCatalog.Queries[i];
+            SearchHit house = Hit("WoodHouse6", 0, 0, true); house.Label = "Abandoned House";
+            SearchHit witch = Hit("BogWitch_Camp", 0, 0, false); witch.Label = "Bog Witch"; witch.Possible = true;
+            Check("search: names say what was searched for, and 'possible' for a candidate",
+                SearchRules.WaypointName(house, axeHead) == "Abandoned House (Curious Axe Head)"
+                && SearchRules.WaypointName(witch, SearchCatalog.Queries[SearchCatalog.Queries.Length - 1]) == "Bog Witch (possible)",
+                SearchRules.WaypointName(house, axeHead));
+
+            // --- the route
+            float[] xs = { 100, 10, 50, -20, 200 };
+            float[] zs = { 0, 0, 0, 0, 0 };
+            int[] order = RoutePlanner.Plan(0, 0, xs, zs, 5, 50, 50.0);
+            Check("search: the route starts at the stop nearest the player, then takes the shortest way on (10, -20, 50, 100, 200)",
+                order.Length == 5 && order[0] == 1 && RoutePlanner.Length(0, 0, xs, zs, order) <= 260.01,
+                string.Join(",", Array.ConvertAll<int, string>(order, delegate (int v) { return v.ToString(); })));
+
+            // A case nearest-neighbour alone gets wrong: 2-opt must not make it worse, and must stay a permutation.
+            System.Random rng = new System.Random(12345);
+            int n = 200;
+            float[] rx = new float[n], rz = new float[n];
+            for (int i = 0; i < n; i++) { rx[i] = (float)(rng.NextDouble() * 4000 - 2000); rz[i] = (float)(rng.NextDouble() * 4000 - 2000); }
+            int[] nnOnly = RoutePlanner.Plan(0, 0, rx, rz, n, n, 0.0);
+            int[] opt = RoutePlanner.Plan(0, 0, rx, rz, n, n, 100.0);
+            bool perm = opt.Length == n;
+            bool[] seen = new bool[n];
+            for (int i = 0; i < opt.Length && perm; i++) { if (opt[i] < 0 || opt[i] >= n || seen[opt[i]]) perm = false; else seen[opt[i]] = true; }
+            double lnn = RoutePlanner.Length(0, 0, rx, rz, nnOnly), lopt = RoutePlanner.Length(0, 0, rx, rz, opt);
+            Check("search: 2-opt keeps every stop once, keeps the nearest first, and does not lengthen the route", perm && opt[0] == nnOnly[0] && lopt <= lnn + 1e-6,
+                string.Format("nn {0:0} m, optimised {1:0} m", lnn, lopt));
+
+            int[] capped = RoutePlanner.Plan(0, 0, rx, rz, n, 10, 100.0);
+            bool prefix = capped.Length == 10;
+            for (int i = 0; i < capped.Length && prefix; i++) if (capped[i] != opt[i]) prefix = false;
+            Check("search: the cap keeps the start of the optimised route", prefix, "");
+            Check("search: an empty search plans an empty route", RoutePlanner.Plan(0, 0, new float[0], new float[0], 0, 10, 5.0).Length == 0, "");
         }
 
         private static void Check(string label, bool condition, string detail)

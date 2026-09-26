@@ -14,6 +14,9 @@
 #  11. a key Valheim cannot read cannot stop the waypoint tick: configurable keys are read only through Hotkeys,
 #      whose reads are caught (and not rethrown), no literal key the game cannot read is used anywhere, and the
 #      tick runs in a try block of its own that reads no key
+#  12. a location search cannot make a shared pin: the server's answers are caught before vanilla turns them into
+#      saved pins, and no request is sent unless that catch is in place
+#  13. Wayfinder's search keeps only places whose centre is explored; TomTom's keeps everything in range
 #
 # A rename in a Valheim update shows up here as a failure instead of as a broken feature in-game.
 #
@@ -34,7 +37,7 @@ if ($Plugin -eq "") { $Plugin = Join-Path $ValheimDir "BepInEx\plugins\DoomMachi
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.1.2"
+$expectedVersion = "1.2.0"
 
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 
@@ -141,6 +144,8 @@ $reflectedTypes = @{
     'Minimap.m_pins'                = 'System.Collections.Generic.List`1<Minimap/PinData>'
     'Minimap.m_visibleIconTypes'    = 'System.Boolean[]'
     'Minimap.PinInteractRadius'     = 'System.Single'
+    'Minimap.IsExplored'            = 'System.Boolean'
+    'Game.RPC_DiscoverLocationResponse' = 'System.Void'
 }
 $seen = @{}
 $lookups = 0
@@ -465,8 +470,10 @@ if ($Edition -eq "Wayfinder") {
 
 # A coordinate readout has to read a world x or z and turn a number into text in the same method, or turn a
 # whole vector into text. The distance readouts get a scalar from HorizontalDistance and never touch x/z;
-# the save file (SaveIfDirty) is the one sanctioned place. A tripwire, not a proof: a helper handed bare
-# floats that formats them elsewhere is not caught. TomTom is checked the other way round (non-vacuous).
+# the save file (SaveIfDirty) is the one sanctioned place. LocationSearch.Ask is exempt too: it boxes the search
+# origin only because ZRoutedRpc.InvokeRoutedRPC takes params object[] - the vector goes to the server, never to
+# text (check 12 pins down what Ask does). A tripwire, not a proof: a helper handed bare floats that formats them
+# elsewhere is not caught. TomTom is checked the other way round (non-vacuous).
 $numericText = @()
 foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
     if (-not $m.HasBody) { continue }
@@ -479,7 +486,7 @@ foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
         if (($n -eq "box" -and $op -match "^UnityEngine\.Vector[234]$") -or ($n -like "call*" -and $op -match "UnityEngine\.Vector[234]::ToString")) { $vecText = $true }
     }
     $w = $t.Name + "." + $m.Name
-    if ($w -ne "WaypointManager.SaveIfDirty" -and ($vecText -or ($readsXZ -and $toText))) { $numericText += $w }
+    if ($w -ne "WaypointManager.SaveIfDirty" -and $w -ne "LocationSearch.Ask" -and ($vecText -or ($readsXZ -and $toText))) { $numericText += $w }
 } }
 $checks++
 if ($Edition -eq "Wayfinder") {
@@ -782,6 +789,198 @@ else {
 }
 if ($whys.Count -eq 0) { Write-Output "  ok    Plugin.Update runs WaypointManager.Tick in a try block of its own that reads no key" }
 else { foreach ($w in $whys) { Write-Output "  FAIL  $w" }; $failures++ }
+
+Write-Output ""
+Write-Output "== a location search cannot make a shared pin =="
+# As a client, the search asks the server with the request a Vegvisir makes (RPC_DiscoverClosestLocation with
+# discoverAll), and vanilla turns every answer into a save:true pin - the kind a Cartography Table shares - through
+# Game.RPC_DiscoverLocationResponse -> Minimap.DiscoverLocation -> AddPin(save: true). So:
+#   1. the plugin never references Game.DiscoverClosestLocation or Minimap.DiscoverLocation (both make such pins)
+#   2. Waypointer.Game_RPC_DiscoverLocationResponse_Patch has a Prefix returning bool that hands the answer to
+#      LocationSearch.OnServerAnswer, and whose one and only return is SearchRules.VanillaMayHandle(pinName) - the
+#      decision rests on the pin name alone (unit-tested), and VanillaMayHandle tests (StartsWith) the very
+#      control-character token SearchRules.RequestPinName builds request names from; and the requests carry exactly
+#      that name - every write to LocationSearch._token comes from RequestPinName, and Ask passes _token as the
+#      pin name (the server echoes it back in every answer)
+#   3. the request name "RPC_DiscoverClosestLocation" appears in exactly one method, LocationSearch.Ask, where the
+#      result of LocationSearch.AnswersIntercepted is branched on directly, before the only
+#      ZRoutedRpc.InvokeRoutedRPC call in the plugin; and AnswersIntercepted asks Harmony.GetPatchInfo about
+#      Game_RPC_DiscoverLocationResponse_Patch and returns, once, a flag set only to false or from
+#      SearchRules.IsOurPrefix (unit-tested) - no request is sent unless the prefix is confirmed patched
+# And the editions' rule for what a search may place (check 13):
+#   Wayfinder: LocationSearch reads MinimapAccess.IsExplored (only places whose centre is explored).
+#   TomTom:    LocationSearch does not (it places everything in range) - so the Wayfinder check is not vacuous.
+# A tripwire on the IL, not a proof: it cannot see what the prefix does with the answer beyond handing it over.
+$checks++
+$searchProblems = @()
+$askMethods = @()
+$invokeSites = @()
+foreach ($t in $plug.GetTypes()) {
+    foreach ($m in $t.Methods) {
+        if (-not $m.HasBody) { continue }
+        foreach ($i in $m.Body.Instructions) {
+            $op = $i.Operand
+            if ($op -is [Mono.Cecil.MethodReference]) {
+                $dt = $op.DeclaringType.FullName
+                if (($dt -eq "Game" -and $op.Name -eq "DiscoverClosestLocation") -or ($dt -eq "Minimap" -and $op.Name -eq "DiscoverLocation")) {
+                    $searchProblems += ("{0}.{1} references {2}.{3}, which makes a saved pin" -f $t.Name, $m.Name, $dt, $op.Name)
+                }
+                if ($dt -eq "ZRoutedRpc" -and $op.Name -eq "InvokeRoutedRPC") { $invokeSites += ("{0}.{1}" -f $t.FullName, $m.Name) }
+            }
+            if ($i.OpCode.Name -eq "ldstr" -and "$op" -eq "RPC_DiscoverClosestLocation") { $askMethods += $m }
+        }
+    }
+}
+$patchType = $plug.GetType("Waypointer.Game_RPC_DiscoverLocationResponse_Patch")
+$prefix = $null
+if ($patchType) { $prefix = $patchType.Methods | Where-Object { $_.Name -eq "Prefix" } | Select-Object -First 1 }
+if (-not $prefix) { $searchProblems += "Waypointer.Game_RPC_DiscoverLocationResponse_Patch.Prefix not found" }
+else {
+    # The prefix's only return must be SearchRules.VanillaMayHandle(pinName): the decision then rests on the pin
+    # name alone (unit-tested on both runtimes), not on what a search is doing or on an error path.
+    $pins = @($prefix.Body.Instructions)
+    if ($prefix.ReturnType.FullName -ne "System.Boolean") { $searchProblems += "the answer prefix does not return bool, so it cannot skip vanilla" }
+    $rets = @()
+    for ($k = 0; $k -lt $pins.Count; $k++) { if ($pins[$k].OpCode.Name -eq "ret") { $rets += $k } }
+    if ($rets.Count -ne 1) { $searchProblems += ("the answer prefix has {0} returns; it must have exactly one, returning SearchRules.VanillaMayHandle(pinName)" -f $rets.Count) }
+    else {
+        $r = $rets[0]
+        $prev = $null
+        if ($r -gt 0) { $prev = $pins[$r - 1] }
+        if (-not ($prev -and $prev.OpCode.Name -like "call*" -and $prev.Operand -is [Mono.Cecil.MethodReference] -and $prev.Operand.DeclaringType.FullName -eq "Waypointer.SearchRules" -and $prev.Operand.Name -eq "VanillaMayHandle")) {
+            $searchProblems += "the answer prefix does not return SearchRules.VanillaMayHandle(...) directly"
+        } else {
+            $src = Get-ArgumentSources $pins ($r - 1) $prefix.Body.ExceptionHandlers
+            $argName = ""
+            if ($src) {
+                $a = $pins[$src[0]]
+                if ($a.OpCode.Name -match '^ldarg\.([0-3])$') { $argName = $prefix.Parameters[[int]$Matches[1]].Name }
+                elseif ($a.OpCode.Name -like "ldarg*" -and $a.Operand -is [Mono.Cecil.ParameterDefinition]) { $argName = $a.Operand.Name }
+            }
+            if ($argName -ne "pinName") { $searchProblems += "the answer prefix does not pass its own pinName to SearchRules.VanillaMayHandle" }
+        }
+    }
+    $hands = @($pins | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "Waypointer.LocationSearch" -and $_.Operand.Name -eq "OnServerAnswer" })
+    if ($hands.Count -eq 0) { $searchProblems += "the answer prefix does not hand answers to LocationSearch.OnServerAnswer" }
+}
+# VanillaMayHandle must test the same token the requests carry (both compile the const to the same literal).
+$sr = $plug.GetType("Waypointer.SearchRules")
+$vmh = $null
+if ($sr) { $vmh = $sr.Methods | Where-Object { $_.Name -eq "VanillaMayHandle" } | Select-Object -First 1 }
+$lsStart = $null
+$lsType = $plug.GetType("Waypointer.LocationSearch")
+if ($lsType) { $lsStart = $lsType.Methods | Where-Object { $_.Name -eq "Start" } | Select-Object -First 1 }
+$rpn = $null
+if ($sr) { $rpn = $sr.Methods | Where-Object { $_.Name -eq "RequestPinName" } | Select-Object -First 1 }
+if (-not $vmh -or -not $rpn) { $searchProblems += "SearchRules.VanillaMayHandle or SearchRules.RequestPinName not found" }
+else {
+    $ctl = [string][char]1
+    $tokRule = @($vmh.Body.Instructions | Where-Object { $_.OpCode.Name -eq "ldstr" -and "$($_.Operand)".StartsWith($ctl) } | ForEach-Object { "$($_.Operand)" })
+    $startsWith = @($vmh.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "System.String" -and $_.Operand.Name -eq "StartsWith" })
+    $tokReq = @($rpn.Body.Instructions | Where-Object { $_.OpCode.Name -eq "ldstr" -and "$($_.Operand)".StartsWith($ctl) } | ForEach-Object { "$($_.Operand)" })
+    if ($tokRule.Count -ne 1 -or $startsWith.Count -eq 0 -or $tokReq.Count -ne 1 -or $tokRule[0] -ne $tokReq[0]) {
+        $searchProblems += "SearchRules.VanillaMayHandle does not test (StartsWith) the same control-character token SearchRules.RequestPinName builds request names from"
+    }
+}
+# The request side: the server echoes the pin name the request carries, so the requests must carry exactly the
+# name from RequestPinName - every write to LocationSearch._token comes from it, and Ask passes _token as the
+# pin name (element 2 of InvokeRoutedRPC's argument array).
+if ($lsType) {
+    foreach ($m in $lsType.Methods) {
+        if (-not $m.HasBody) { continue }
+        $mi = @($m.Body.Instructions)
+        for ($k = 0; $k -lt $mi.Count; $k++) {
+            if ($mi[$k].OpCode.Name -eq "stsfld" -and "$($mi[$k].Operand)" -match "Waypointer\.LocationSearch::_token$") {
+                $w = $null
+                if ($k -gt 0) { $w = $mi[$k - 1] }
+                if (-not ($w -and $w.Operand -is [Mono.Cecil.MethodReference] -and $w.Operand.DeclaringType.FullName -eq "Waypointer.SearchRules" -and $w.Operand.Name -eq "RequestPinName")) {
+                    $searchProblems += ("LocationSearch.{0} sets the request pin name (_token) from something other than SearchRules.RequestPinName" -f $m.Name)
+                }
+            }
+        }
+    }
+}
+if ($askMethods.Count -eq 1) {
+    $am = @($askMethods[0].Body.Instructions)
+    $carries = $false
+    for ($k = 1; $k -lt $am.Count - 1; $k++) {
+        if ($am[$k].OpCode.Name -eq "ldsfld" -and "$($am[$k].Operand)" -match "Waypointer\.LocationSearch::_token$" -and $am[$k - 1].OpCode.Name -eq "ldc.i4.2" -and $am[$k + 1].OpCode.Name -eq "stelem.ref") { $carries = $true }
+    }
+    if (-not $carries) { $searchProblems += "LocationSearch.Ask does not send LocationSearch._token as the request's pin name (argument 3 of RPC_DiscoverClosestLocation)" }
+}
+# AnswersIntercepted must really ask Harmony whether this prefix is patched in.
+$ai = $null
+if ($lsType) { $ai = $lsType.Methods | Where-Object { $_.Name -eq "AnswersIntercepted" } | Select-Object -First 1 }
+if (-not $ai) { $searchProblems += "LocationSearch.AnswersIntercepted not found" }
+else {
+    $gp = @($ai.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "HarmonyLib.Harmony" -and $_.Operand.Name -eq "GetPatchInfo" })
+    $tk = @($ai.Body.Instructions | Where-Object { $_.OpCode.Name -eq "ldtoken" -and "$($_.Operand)" -eq "Waypointer.Game_RPC_DiscoverLocationResponse_Patch" })
+    if ($gp.Count -eq 0 -or $tk.Count -eq 0) { $searchProblems += "LocationSearch.AnswersIntercepted does not ask Harmony.GetPatchInfo for Game_RPC_DiscoverLocationResponse_Patch" }
+    # Its one return is a local flag, and that flag is only ever set to false or from SearchRules.IsOurPrefix
+    # (unit-tested) - so it cannot say "patched" without finding this plugin's prefix.
+    $aiIns = @($ai.Body.Instructions)
+    $aiRets = @()
+    for ($k = 0; $k -lt $aiIns.Count; $k++) { if ($aiIns[$k].OpCode.Name -eq "ret") { $aiRets += $k } }
+    if ($aiRets.Count -ne 1) { $searchProblems += ("LocationSearch.AnswersIntercepted has {0} returns; it must have one, returning a flag set only from SearchRules.IsOurPrefix" -f $aiRets.Count) }
+    else {
+        $before = $null
+        if ($aiRets[0] -gt 0) { $before = $aiIns[$aiRets[0] - 1] }
+        $flag = -1
+        if ($before -and $before.OpCode.Name -like "ldloc*") { $flag = Get-LocalIndex $before }
+        if ($flag -lt 0) { $searchProblems += "LocationSearch.AnswersIntercepted does not return a local flag" }
+        else {
+            for ($k = 1; $k -lt $aiIns.Count; $k++) {
+                if ($aiIns[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $aiIns[$k]) -eq $flag) {
+                    $src = $aiIns[$k - 1]
+                    $fromRule = $src.OpCode.Name -like "call*" -and $src.Operand -is [Mono.Cecil.MethodReference] -and $src.Operand.DeclaringType.FullName -eq "Waypointer.SearchRules" -and $src.Operand.Name -eq "IsOurPrefix"
+                    if (-not ($src.OpCode.Name -eq "ldc.i4.0" -or $fromRule)) { $searchProblems += ("LocationSearch.AnswersIntercepted sets its result from '{0}', not from SearchRules.IsOurPrefix or false" -f $src.OpCode.Name) }
+                }
+            }
+        }
+    }
+}
+if ($askMethods.Count -ne 1) { $searchProblems += ("the request name appears in {0} methods, expected exactly one (LocationSearch.Ask)" -f $askMethods.Count) }
+else {
+    $ask = $askMethods[0]
+    if ($ask.DeclaringType.FullName -ne "Waypointer.LocationSearch" -or $ask.Name -ne "Ask") { $searchProblems += ("the request is sent from {0}.{1}, expected LocationSearch.Ask" -f $ask.DeclaringType.Name, $ask.Name) }
+    $ins = @($ask.Body.Instructions)
+    $gate = -1; $invoke = -1
+    for ($k = 0; $k -lt $ins.Count; $k++) {
+        $o = $ins[$k].Operand
+        if ($gate -lt 0 -and $o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "Waypointer.LocationSearch" -and $o.Name -eq "AnswersIntercepted") { $gate = $k; continue }
+        if ($o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "ZRoutedRpc" -and $o.Name -eq "InvokeRoutedRPC") { $invoke = $k; break }
+    }
+    # The branch must consume the check's result directly (the instruction right after the call).
+    $branchOnGate = $gate -ge 0 -and ($gate + 1) -lt $ins.Count -and "$($ins[$gate + 1].OpCode.FlowControl)" -eq "Cond_Branch"
+    if ($gate -lt 0 -or $invoke -lt 0 -or -not $branchOnGate -or $gate -gt $invoke) {
+        $searchProblems += "LocationSearch.Ask does not branch on AnswersIntercepted() before ZRoutedRpc.InvokeRoutedRPC"
+    }
+}
+$otherInvokes = @($invokeSites | Where-Object { $_ -ne "Waypointer.LocationSearch.Ask" })
+if ($otherInvokes.Count -gt 0) { $searchProblems += ("ZRoutedRpc.InvokeRoutedRPC is also called from {0}" -f ($otherInvokes -join ", ")) }
+if ($searchProblems.Count -eq 0) {
+    Write-Output "  ok    the server's answers to a search cannot become saved pins (prefix skips vanilla; no request without it; no DiscoverLocation)"
+} else {
+    foreach ($p in $searchProblems) { Write-Output "  FAIL  $p" }
+    $failures++
+}
+
+$checks++
+$ls = $plug.GetType("Waypointer.LocationSearch")
+$readsExplored = $false
+if ($ls) {
+    foreach ($m in $ls.Methods) {
+        if (-not $m.HasBody) { continue }
+        foreach ($i in $m.Body.Instructions) {
+            if ($i.Operand -is [Mono.Cecil.MethodReference] -and $i.Operand.DeclaringType.FullName -eq "Waypointer.MinimapAccess" -and $i.Operand.Name -eq "IsExplored") { $readsExplored = $true }
+        }
+    }
+}
+if (-not $ls) { Write-Output "  FAIL  Waypointer.LocationSearch not found"; $failures++ }
+elseif ($Edition -eq "Wayfinder" -and $readsExplored) { Write-Output "  ok    Wayfinder's search keeps only places whose centre is explored (reads MinimapAccess.IsExplored)" }
+elseif ($Edition -eq "Wayfinder") { Write-Output "  FAIL  Wayfinder's search does not read MinimapAccess.IsExplored - it would place unexplored places"; $failures++ }
+elseif (-not $readsExplored) { Write-Output "  ok    TomTom's search places everything in range (does not read MinimapAccess.IsExplored)" }
+else { Write-Output "  FAIL  TomTom's search reads MinimapAccess.IsExplored - the explored filter belongs to Wayfinder"; $failures++ }
 
 Write-Output ""
 Write-Output "== game types and members the plugin uses =="

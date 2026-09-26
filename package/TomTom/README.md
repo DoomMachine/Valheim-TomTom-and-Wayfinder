@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.1.2 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.2.0 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -59,6 +59,7 @@ unexplored target whose height can't be known in advance.
 - **Add to queue / Replace queue** for the pasted coordinates
 - **Add my position** — marks where you stand. It won't count as reached until you've walked away once.
 - **Nearest first** — jump to whichever queued waypoint is closest
+- **Find** — every place of one kind within a range of you, as a route (see Finding places)
 - the **active target** with its distance, **Skip this one** and **Clear all**
 - the **queue**, each entry with **Go** (make it active) and **X** (delete)
 
@@ -66,6 +67,42 @@ While it's open, the game ignores your keyboard, so you can type freely: Tab doe
 inventory and the mouse wheel scrolls the list instead of zooming the camera. The exception is key
 bindings you made with the console's `bind` command: they still run, even while you type. **Esc** — or
 **B** on a controller — closes it. The window needs a keyboard and mouse.
+
+## Finding places
+
+The window's **Find** section queues every place of one kind within a range of you, as a route that starts at
+the nearest one and is then planned to keep the walk short (a good route, not always the shortest). Pick what to look for with **<** and **>**, set the range
+with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (add to queue)**.
+
+| Find | Where it looks |
+| --- | --- |
+| Wooden Axe / Wooden Knife | Viking Graveyards |
+| Wooden Mace | Combat Ruins and Draugr Villages |
+| Wooden Sledge | Swamp Graves and Swamp Runestone Towers |
+| Wooden Spear | Greydwarf Ruins and Towers, Skeleton Towers (sunken ones too), Contested Towers and Abandoned Huts |
+| Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
+| Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and Hildir's Plains fortress |
+| Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
+| Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
+| Haldor, Hildir, Bog Witch | the merchant |
+
+Each place is one that **can** hold a chest with the item; whether a given chest is there, and holds it, is
+chance. The lists come from Valheim 1.0.16's own data, including the chests in the rooms a village builds.
+
+- **As the host (or in single player), places whose chests are known not to hold the item are left out**: the
+  game fills a chest when its area is first generated, and a place whose chests have all been filled and none
+  of which holds the item any more (emptied, or it never had it) is skipped. As a client this does nothing,
+  since only chests near you are known. `SkipCheckedChests` turns it off.
+- **Merchants and the Big Rock Clearing exist once per world.** Until someone comes near, the game keeps up to
+  ten possible spots, and the first one anybody reaches becomes the real one. Those spots are queued as
+  "(possible)". Once one is fixed, only the real one is queued.
+- **Loose Mysterious Rocks exist only where the land has been generated**: anywhere someone has been, as the
+  host; near you, as a client. Rocks already picked are left out.
+- **It works whether you host or join.** As a client, TomTom asks the server with the same request a Vegvisir
+  makes, spaced out so as not to load the server, so a large search takes a few seconds. The server's answers
+  never become map pins (see Multiplayer).
+- `MaxSearchWaypoints` (default 50) caps how many are queued; the first part of the route is kept. The status
+  line says what was found, and `BepInEx/LogOutput.log` how long it took.
 
 ## The world map
 
@@ -91,7 +128,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.1.2]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.2.0]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -127,6 +164,9 @@ them out of both the Cartography Table (`Minimap.GetSharedMapData`) and your sav
 (`Minimap.GetMapData`) — both only export pins with that flag set. A pin of your own that you follow
 keeps its normal flags and keeps syncing as usual.
 
+Find's answers from the server never become pins either: the plugin catches them before the game would
+add them, and does not ask at all unless that catch is in place.
+
 ## Keys
 
 `ToggleWindowKey` defaults to **F11**. That is also Valheim's own **screenshot** key, so each press
@@ -161,6 +201,9 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `ShowDistance`, `ShowWaypointName`, `ShowTimeToArrival` | `true` | captions |
 | `HideArrowWhenMapOpen` | `true` | |
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
+| `SearchRange` | `1000` | metres Find looks around you (the slider sets it) |
+| `MaxSearchWaypoints` | `50` | the most waypoints one Find queues |
+| `SkipCheckedChests` | `true` | as the host: leave out places whose chests are known not to hold the item |
 
 Saved queues: `BepInEx/config/DoomMachine.TomTom/waypoints_<worldUID>.txt`, one per world.
 The file is replaced safely. If a save is interrupted, a `.new` or `.old` copy may be left beside it;

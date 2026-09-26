@@ -164,6 +164,31 @@ namespace Waypointer
         }
 
         /// <summary>
+        /// Queues several waypoints with markers of their own, in the order given, and makes their markers once at
+        /// the end (a search can queue dozens). With replace, the queue is cleared first - only when there is
+        /// something to put in its place, so a search that finds nothing leaves the queue alone.
+        /// </summary>
+        public static int AddMany(List<Vector3> positions, List<string> names, bool replace)
+        {
+            if (positions == null || positions.Count == 0) return 0;
+            if (replace) Clear();
+            for (int i = 0; i < positions.Count; i++)
+            {
+                string name = names != null && i < names.Count ? names[i] : null;
+                Waypoint wp = new Waypoint();
+                wp.Name = name == null ? "" : name.Trim();
+                wp.Pos = positions[i];
+                wp.HasElevation = true;
+                wp.Borrowed = false;
+                _queue.Add(wp);
+            }
+            _dirty = true;
+            ResetSpeedEstimate();
+            EnsurePins();
+            return positions.Count;
+        }
+
+        /// <summary>
         /// Promotes a pin already on the map into a waypoint, without taking ownership of it. It may be
         /// the player's own, one shared through a Cartography Table, or a vanilla marker such as the bed
         /// spawn point.

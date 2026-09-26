@@ -4,13 +4,14 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.1.2 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.2.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
-places you have marked on your own map or are standing on, so nothing can be looked up outside the game
-and walked straight to. Waypoints are shown by name and distance only: a coordinate readout would let a
-map click be nudged, try by try, onto a looked-up location. If you do want coordinates, that's
-**TomTom** — the same mod with them included. The two cannot run together; install one.
+places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
+so nothing can be looked up outside the game and walked straight to. Waypoints are shown by name and
+distance only: a coordinate readout would let a map click be nudged, try by try, onto a looked-up
+location. If you do want coordinates, that's **TomTom** — the same mod with them included. The two cannot
+run together; install one.
 
 ---
 
@@ -46,6 +47,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 - **Add my position** — marks where you stand. It won't count as reached until you've walked away once.
 - **Nearest first** — jump to whichever queued waypoint is closest
+- **Find** — places of one kind on land your map shows as explored, as a route (see Finding places)
 - the **active target** with its distance, **Skip this one** and **Clear all**
 - the **queue**, each entry with **Go** (make it active) and **X** (delete)
 
@@ -53,11 +55,43 @@ While it's open, the game ignores your keyboard: Tab doesn't open the inventory 
 scrolls the list instead of zooming the camera. Key bindings you made with the console's `bind` command
 still run. **Esc** — or **B** on a controller — closes it. The window needs a keyboard and mouse.
 
+## Finding places
+
+The window's **Find** section queues places of one kind within a range of you, **but only on land your map
+already shows as explored**: a place counts when its centre is explored, by you or through a Cartography Table.
+Its own icon need not be on the map - a Skeleton Tower in explored forest is found. Pick what to
+look for with **<** and **>**, set the range with the slider (100 m to 10 km), and press **Find (replace queue)**
+or **Find (add to queue)**. The route starts at the nearest one and is then planned to keep the walk short.
+
+| Find | Where it looks |
+| --- | --- |
+| Wooden Axe / Wooden Knife | Viking Graveyards |
+| Wooden Mace | Combat Ruins and Draugr Villages |
+| Wooden Sledge | Swamp Graves and Swamp Runestone Towers |
+| Wooden Spear | Greydwarf Ruins and Towers, Skeleton Towers (sunken ones too), Contested Towers and Abandoned Huts |
+| Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
+| Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and Hildir's Plains fortress |
+| Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
+| Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
+| Haldor, Hildir, Bog Witch | the merchant |
+
+Each place is one that **can** hold a chest with the item; whether a given chest is there, and holds it, is
+chance. The lists come from Valheim 1.0.16's own data, including the chests in the rooms a village builds.
+
+- **Nothing is said.** There is no message and no count. If nothing that matches is explored within range,
+  nothing happens.
+- **Merchants and the Big Rock Clearing exist once per world.** The first of their possible spots anyone reaches
+  becomes the real one. Wayfinder queues them only once they are fixed.
+- **Loose Mysterious Rocks exist only where the land has been generated**, and picked ones are left out.
+- **It works whether you host or join.** As a client, Wayfinder asks the server with the same request a Vegvisir
+  makes; the answers never become map pins (see Multiplayer).
+- `MaxSearchWaypoints` (default 50) caps how many are queued; the first part of the route is kept.
+
 ## Install
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.1.2]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.2.0]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -92,6 +126,9 @@ or teleporting.
 Waypoint markers are **local to you**. They are created with the game's `save: false` flag, which keeps
 them out of both the Cartography Table and your saved map. A pin of your own that you follow keeps its
 normal flags and keeps syncing as usual.
+
+Find's answers from the server never become pins either: the plugin catches them before the game would
+add them, and does not ask at all unless that catch is in place.
 
 ## What Wayfinder does not police
 
@@ -137,6 +174,8 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `ShowDistance`, `ShowWaypointName`, `ShowTimeToArrival` | `true` | captions |
 | `HideArrowWhenMapOpen` | `true` | |
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
+| `SearchRange` | `1000` | metres Find looks around you (the slider sets it) |
+| `MaxSearchWaypoints` | `50` | the most waypoints one Find queues |
 
 Saved queues: `BepInEx/config/DoomMachine.Wayfinder/waypoints_<worldUID>.txt`, one per world — kept
 apart from TomTom's, so coordinates entered in TomTom never carry over into Wayfinder.

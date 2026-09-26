@@ -59,6 +59,13 @@ namespace Waypointer
         public static ConfigEntry<string> ArrowColorMiddle;
         public static ConfigEntry<string> ArrowColorBad;
 
+        // ---- search
+        public static ConfigEntry<float> SearchRange;
+        public static ConfigEntry<int> MaxSearchWaypoints;
+#if !WAYFINDER
+        public static ConfigEntry<bool> SkipCheckedChests;
+#endif
+
         private void Awake()
         {
             Log = Logger;
@@ -116,7 +123,8 @@ namespace Waypointer
                 typeof(Minimap_OnMapLeftDown_Patch),        // no map drag from a press on the window
                 typeof(UIInputHandler_OnPointerClick_Patch),// no ping or pin delete from a click on the window
                 typeof(Minimap_RemovePin_Patch),            // vanilla delete: right click, long press, gamepad
-                typeof(Terminal_InitTerminal_Patch)         // console command
+                typeof(Terminal_InitTerminal_Patch),        // console command
+                typeof(Game_RPC_DiscoverLocationResponse_Patch) // location search: the server's answers never become pins
             };
 
             for (int i = 0; i < patchClasses.Length; i++)
@@ -202,6 +210,24 @@ namespace Waypointer
             ArrowColorBad = Config.Bind("4 - Arrow", "ColorFacingAway", "#E05050",
                 "Arrow colour when you are facing away from the waypoint.");
 
+            SearchRange = Config.Bind("5 - Search", "SearchRange", 1000f,
+                new ConfigDescription(
+                    "How far from you, in metres, the window's Find looks. The window's slider changes it too.",
+                    new AcceptableValueRange<float>(100f, 10000f)));
+            MaxSearchWaypoints = Config.Bind("5 - Search", "MaxSearchWaypoints", 50,
+                new ConfigDescription(
+                    "The most waypoints one Find queues. The route is planned over the nearest places found, and its "
+                    + "first part is kept.",
+                    new AcceptableValueRange<int>(1, 200)));
+#if !WAYFINDER
+            SkipCheckedChests = Config.Bind("5 - Search", "SkipCheckedChests", true,
+                "When looking for a chest item as the host (or in single player), leave out places whose chests the "
+                + "game has already filled and none of which holds the item any more (emptied, or it never had it). "
+                + "The game fills a chest when its area is first generated. As a client this does nothing, since only "
+                + "chests near you are known. Reading chests runs a little each frame, so it makes a search take longer "
+                + "rather than making the game stutter; turn it off if a search feels slow.");
+#endif
+
             // Deliberately no SettingChanged handlers for ArrowSize or ArrowOpacity: the arrow texture is
             // rasterised once at a fixed resolution and then scaled and tinted at draw time, so neither
             // setting affects its pixels. Rebuilding it on every change would stall the game for the
@@ -262,6 +288,7 @@ namespace Waypointer
             try
             {
                 WaypointManager.Tick();
+                LocationSearch.Tick();
                 WaypointWindow.UpdateCursorState();
             }
             catch (Exception e)
@@ -372,6 +399,7 @@ namespace Waypointer
             try
             {
                 WaypointWindow.Close();
+                LocationSearch.Cancel();
                 WaypointManager.SaveNow();   // last chance: ignores any retry delay
                 WaypointManager.ReleaseAllPins();
                 ArrowHud.InvalidateTextures();

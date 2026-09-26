@@ -11,11 +11,13 @@ One code base, two Valheim plugins by **DoomMachine**:
 | Following a pin already on your map | yes | yes |
 | Marking where you stand (`Add my position`, `waypoint here`) | yes | yes |
 | Arrow, map markers, queue, arrival, persistence | yes | yes |
+| Find: every place of one kind within a range, as a route | yes | only places whose centre is on explored map, silently |
 | BepInEx GUID | `DoomMachine.TomTom` | `DoomMachine.Wayfinder` |
 | Installed into the game by `dotnet build` | yes | no — packaged only |
 
 **TomTom** is named in honour of the World of Warcraft addon that inspired the project. **Wayfinder** is
-the immersion edition: a location cannot be looked up outside the game and walked straight to. That
+the immersion edition: a location cannot be looked up outside the game and walked straight to (its Find places
+only what lies on land the player's map shows as explored). That
 takes removing coordinate *display* as well as entry — Alt-click works anywhere on the map, so a
 readout like "Waypoint added at 3350, -1190" would let a player nudge clicks onto a looked-up spot.
 
@@ -43,12 +45,18 @@ src/                     the shared source for both plugins
   Edition.cs             everything that differs between the editions (name, GUID, window id)
   CoordinateParser.cs    TomTom only - reading coordinates. Absent from Wayfinder.
   CoordinateFormat.cs    TomTom only - showing coordinates. Absent from Wayfinder.
+  LocationSearch.cs      Find: where places come from (the server's own list, or asking the server), the
+                         time-sliced object scan, the chest check (TomTom), the explored filter (Wayfinder)
+  SearchCatalog.cs       what can be searched for, and which location types hold it (from 1.0.16's data)
+  SearchRules.cs         unique places (candidates vs the real one), range, chests, names - Unity-free
+  RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
+  SearchPatches.cs       keeps the server's answers from becoming map pins
   ...
 Plugin.props             build settings shared by both projects (references, packaging, deploy)
 TomTom/TomTom.csproj     sets EditionName=TomTom, deploys by default
 Wayfinder/Wayfinder.csproj  defines WAYFINDER, excludes both Coordinate*.cs files, packages only
 package/<Edition>/       manifest.json, icon.png and README.md for each package
-tests/                   parser, formatter, crash-safe save and key-read tests (built as TomTom)
+tests/                   parser, formatter, crash-safe save, key-read and search tests (built as TomTom)
 preflight.ps1            checks a compiled plugin against the shipped game assemblies
 build.sh                 SDK-free fallback compiler (C# 5)
 Waypointer.slnx          the solution: both editions and the tests
@@ -91,7 +99,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 110 tests (parser, crash-safe save, key reads), on .NET and on Mono
+./run-tests.sh                                                         # 135 tests (parser, crash-safe save, key reads, search), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -123,6 +131,15 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
   console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
   missing any of them, so the check can't pass vacuously
+- a location search could turn the server's answers into map pins: the answer prefix must hand answers to
+  `LocationSearch.OnServerAnswer` and return, once, `SearchRules.VanillaMayHandle(pinName)` - a decision on the
+  pin name alone, unit-tested, on the same token the requests carry, and the requests must carry exactly the
+  name `SearchRules.RequestPinName` builds (the server echoes it); the request may be sent only from
+  `LocationSearch.Ask`, branching directly on `AnswersIntercepted()`, which asks Harmony and returns a flag set
+  only from the unit-tested `SearchRules.IsOurPrefix`; and nothing may call `Game.DiscoverClosestLocation` or
+  `Minimap.DiscoverLocation`, which make saved pins
+- Wayfinder's search does not keep to explored places (it must read `MinimapAccess.IsExplored`) - and,
+  conversely, TomTom's does, so the check can't pass vacuously
 - a referenced assembly can't be resolved from the game folder
 
 Run it after every Valheim update.
@@ -177,8 +194,38 @@ Run it after every Valheim update.
   intact file is an unfinished save and is ignored. The first save of a world has nothing older to protect.
 - The local player is destroyed and recreated on every death while the map survives, so nothing is reset
   when the player is briefly missing; a change of world is detected by world UID instead.
+- **Find** takes its places from the game's own list of location instances on a server
+  (`ZoneSystem.GetLocationList`, which knows which candidate of a unique location is placed). On a client it
+  asks the server, one location type every 0.2 s, with the request a Vegvisir makes
+  (`RPC_DiscoverClosestLocation` with `discoverAll`, which checks no permission), then one request with a
+  single guaranteed answer (the closest `StartTemple`) that marks the end, since routed calls keep their order.
+  Vanilla would turn every answer into a `save: true` pin through `Minimap.DiscoverLocation`, so a prefix on
+  `Game.RPC_DiscoverLocationResponse` catches this mod's answers first, and no request is sent unless
+  `Harmony.GetPatchInfo` shows that prefix in place. Loose objects and chests are read from the ZDOs the game
+  holds, one 64 m zone at a time through `ZDOMan.FindSectorObjects`, stopping for the frame once about 1.5 ms of
+  work is done (checked after each zone and after each chest read). A chest's contents are a byte array
+  (`ZDO.GetByteArray(s_items)`, as `Container.Load` reads them); the chest check runs only on a server and only
+  for placed locations. A unique location is resolved over every candidate before the range cut. The route is
+  planned over the nearest few hundred places (four times `MaxSearchWaypoints`, at least 100): nearest-neighbour
+  from the nearest spot, then 2-opt with that first stop fixed.
 
 ## History
+
+**1.2.0** — Find: every place of one kind within a range, as a route.
+
+- new: the window's Find section queues every place that can hold a chest with a wooden weapon or an axe head,
+  every Big Rock Clearing and loose Mysterious Rock, or a merchant (Haldor, Hildir, the Bog Witch), within a
+  range of the player (100 m to 10 km), as a route that starts at the nearest and is then shortened (2-opt).
+  The location lists come from Valheim 1.0.16's own data, including chests in the rooms villages build
+- the unique places (the merchants, the Big Rock Clearing) are queued as "(possible)" spots until one is fixed
+  in the world, then only the real one
+- TomTom, as the host, leaves out places whose chests are known to be filled without the item (`SkipCheckedChests`)
+- Wayfinder queues only places whose centre lies on explored map (explored by the player or through a
+  Cartography Table), and unique places only once fixed, and says nothing either way
+- works as host and as client; as a client it asks the server, and the answers never become map pins
+- 25 tests for the search's rules and route, on both runtimes (110 → 135); preflight checks that the server's
+  answers cannot become pins and that only Wayfinder filters by exploration (44 → 49 checks); every one of 19
+  deliberately broken builds fails it - a tripwire on the compiled code, not a proof
 
 **1.1.2** — a key Valheim cannot read no longer stops the mod.
 

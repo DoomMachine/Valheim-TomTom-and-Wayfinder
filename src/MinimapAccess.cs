@@ -17,6 +17,7 @@ namespace Waypointer
         private static bool _initialised;
         private static Func<Minimap, Vector3, Vector3> _screenToWorld;
         private static Func<Minimap, Vector3, float, bool, Minimap.PinData> _closestPin;
+        private static Func<Minimap, Vector3, bool> _isExplored;
         private static FieldInfo _pinsField;
         private static FieldInfo _visibleIconTypesField;
         private static MethodInfo _pinInteractRadiusGetter;
@@ -42,6 +43,14 @@ namespace Waypointer
             }
             catch (Exception e) { Plugin.Log.LogWarning("GetClosestPin unavailable: " + e.Message); }
 
+            try
+            {
+                MethodInfo ie = AccessTools.Method(typeof(Minimap), "IsExplored", new Type[] { typeof(Vector3) });
+                if (ie != null)
+                    _isExplored = AccessTools.MethodDelegate<Func<Minimap, Vector3, bool>>(ie);
+            }
+            catch (Exception e) { Plugin.Log.LogWarning("IsExplored unavailable: " + e.Message); }
+
             _pinsField = AccessTools.Field(typeof(Minimap), "m_pins");
             if (_pinsField == null) Plugin.Log.LogWarning("Minimap.m_pins not found.");
 
@@ -65,6 +74,27 @@ namespace Waypointer
             catch (Exception e)
             {
                 Plugin.Log.LogWarning("ScreenToWorldPoint failed: " + e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// True when the map shows this point as explored: explored by the player, or shared to them by a
+        /// Cartography Table (Minimap.IsExplored reads m_explored, then m_exploredOthers, in 12 m map pixels).
+        /// False when that cannot be read, so Wayfinder's search then places nothing rather than something the
+        /// map does not show.
+        /// </summary>
+        internal static bool IsExplored(Vector3 world)
+        {
+            Minimap mm = Minimap.instance;
+            if (mm == null || _isExplored == null) return false;
+            try
+            {
+                return _isExplored(mm, world);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("IsExplored failed: " + e.Message);
                 return false;
             }
         }
