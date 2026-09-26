@@ -178,6 +178,27 @@ namespace Waypointer
             }
         }
 
+        /// <summary>
+        /// Keeps the <paramref name="keep"/> hits nearest (x, z), horizontally. Only the player's own plugin trims:
+        /// a server answering a Find sends every place in range, since Wayfinder's exploration filter runs after it
+        /// on the player's side.
+        /// </summary>
+        public static void KeepNearest(List<SearchHit> hits, float x, float z, int keep)
+        {
+            if (hits.Count <= keep) return;
+            float[] keys = new float[hits.Count];
+            SearchHit[] items = new SearchHit[hits.Count];
+            for (int i = 0; i < hits.Count; i++)
+            {
+                float dx = hits[i].X - x, dz = hits[i].Z - z;
+                keys[i] = dx * dx + dz * dz;
+                items[i] = hits[i];
+            }
+            Array.Sort(keys, items);
+            hits.Clear();
+            for (int i = 0; i < keep; i++) hits.Add(items[i]);
+        }
+
         /// <summary>Keeps hits within range (horizontal) of the start point.</summary>
         public static void KeepWithinRange(List<SearchHit> hits, float x, float z, float range)
         {

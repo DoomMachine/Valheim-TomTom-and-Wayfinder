@@ -302,7 +302,11 @@ namespace Waypointer
         /// </summary>
         private static void DrawSearchSection()
         {
-            GUILayout.Label("Find", _headerStyle);
+            // A server that runs this plugin may not let this player use Find (its WhoMayFind); the header says so. The
+            // buttons stay on, since the server decides every request afresh (its admin list can change), and an
+            // accepted Find clears the header. The same controls are drawn either way.
+            bool refused = FindLink.RefusedByServer;
+            GUILayout.Label(refused ? FindLink.RefusalHeader : "Find", _headerStyle);
 
             SearchQuery[] queries = SearchCatalog.Queries;
             if (_queryIndex < 0 || _queryIndex >= queries.Length) _queryIndex = 0;

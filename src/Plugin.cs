@@ -14,9 +14,14 @@ namespace Waypointer
     /// The two editions declare each other incompatible. BepInEx then loads exactly one of them when
     /// both are installed and logs "Could not load [...] because it is incompatible with ..." for the
     /// other - they would otherwise both patch the same methods and both draw an arrow.
+    ///
+    /// The same plugin also runs on a dedicated server (valheim_server), where it has no window, arrow or map and
+    /// applies only its server side: answering players' Find (FindServer) under the server's WhoMayFind. The host of
+    /// a game started with Start Server runs both sides in one game.
     /// </summary>
     [BepInPlugin(Edition.GUID, Edition.Name, Edition.Version)]
     [BepInProcess("valheim.exe")]
+    [BepInProcess("valheim_server.exe")]
     [BepInIncompatibility(Edition.OtherGUID)]
     public class Plugin : BaseUnityPlugin
     {
@@ -25,6 +30,9 @@ namespace Waypointer
         public const string VERSION = Edition.Version;
 
         public static ManualLogSource Log;
+
+        /// <summary>Running in a dedicated server: only the server side is set up.</summary>
+        public static bool Dedicated;
 
         private Harmony _harmony;
 
@@ -66,15 +74,20 @@ namespace Waypointer
         public static ConfigEntry<bool> SkipCheckedChests;
 #endif
 
+        // ---- server (a dedicated server, or the host of a Start Server game)
+        public static ConfigEntry<FindPolicy> WhoMayFind;
+
         private void Awake()
         {
             Log = Logger;
+            Dedicated = IsDedicatedServerProcess();
 
             // A plugin that throws in Awake is dropped by BepInEx, so config and reflection setup are
             // guarded separately from patching: a failure in one should not silently remove the rest.
             try
             {
-                BindConfig();
+                BindServerConfig();
+                if (!Dedicated) BindConfig();
             }
             catch (Exception e)
             {
@@ -85,20 +98,36 @@ namespace Waypointer
                 return;
             }
 
-            try
+            if (!Dedicated)
             {
-                MinimapAccess.Init();
-            }
-            catch (Exception e)
-            {
-                Log.LogError("Minimap reflection setup failed, map features will be limited: " + e);
+                try
+                {
+                    MinimapAccess.Init();
+                }
+                catch (Exception e)
+                {
+                    Log.LogError("Minimap reflection setup failed, map features will be limited: " + e);
+                }
             }
 
             _harmony = new Harmony(GUID);
             ApplyPatches();
 
-            Log.LogInfo(NAME + " " + VERSION + " by " + Edition.Author + " loaded. Press "
-                        + ToggleWindowKey.Value + " to open the waypoint window.");
+            if (Dedicated)
+                Log.LogInfo(NAME + " " + VERSION + " by " + Edition.Author + " loaded on a dedicated server: it answers "
+                            + "players' Find (WhoMayFind = " + WhoMayFind.Value + ").");
+            else
+                Log.LogInfo(NAME + " " + VERSION + " by " + Edition.Author + " loaded. Press "
+                            + ToggleWindowKey.Value + " to open the waypoint window.");
+        }
+
+        /// <summary>
+        /// Whether this is Valheim's dedicated server (valheim_server.exe on Windows, valheim_server.x86_64 on Linux:
+        /// BepInEx's process name drops the extension either way).
+        /// </summary>
+        private static bool IsDedicatedServerProcess()
+        {
+            return string.Equals(Paths.ProcessName, "valheim_server", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -112,7 +141,12 @@ namespace Waypointer
         private void ApplyPatches()
         {
             int applied = 0;
-            Type[] patchClasses = new Type[]
+            Type[] serverPatches = new Type[]
+            {
+                typeof(Game_RPC_DiscoverClosestLocation_Patch), // WhoMayFind for Vegvisir-style requests from plugins without the helper
+                typeof(ZRoutedRpc_RPC_RoutedRPC_Patch)          // which connection a player's call came on (for WhoMayFind and answers)
+            };
+            Type[] patchClasses = Dedicated ? serverPatches : new Type[]
             {
                 typeof(TextInput_IsVisible_Patch),          // cursor release + input blocking
                 typeof(Chat_HasFocus_Patch),                // inventory key, camera zoom, gamepad hotbar
@@ -124,7 +158,9 @@ namespace Waypointer
                 typeof(UIInputHandler_OnPointerClick_Patch),// no ping or pin delete from a click on the window
                 typeof(Minimap_RemovePin_Patch),            // vanilla delete: right click, long press, gamepad
                 typeof(Terminal_InitTerminal_Patch),        // console command
-                typeof(Game_RPC_DiscoverLocationResponse_Patch) // location search: the server's answers never become pins
+                typeof(Game_RPC_DiscoverLocationResponse_Patch), // location search: the server's answers never become pins
+                typeof(Game_RPC_DiscoverClosestLocation_Patch),  // as the host: WhoMayFind for requests from plugins without the helper
+                typeof(ZRoutedRpc_RPC_RoutedRPC_Patch)           // as the host: which connection a player's call came on
             };
 
             for (int i = 0; i < patchClasses.Length; i++)
@@ -133,6 +169,8 @@ namespace Waypointer
                 {
                     _harmony.PatchAll(patchClasses[i]);
                     applied++;
+                    // WhoMayFind can tell callers apart only through this patch (FindProtocol.CallerMayFind).
+                    if (patchClasses[i] == typeof(ZRoutedRpc_RPC_RoutedRPC_Patch)) RoutedCallContext.Available = true;
                 }
                 catch (Exception e)
                 {
@@ -142,6 +180,24 @@ namespace Waypointer
             }
 
             Log.LogInfo(string.Format("Applied {0} of {1} patches.", applied, patchClasses.Length));
+        }
+
+        /// <summary>The settings a server uses; bound on players too, since the host of a Start Server game is one.</summary>
+        private void BindServerConfig()
+        {
+            WhoMayFind = Config.Bind("6 - Server", "WhoMayFind", FindPolicy.Everyone,
+                "Only used when this game is the server: a dedicated server, or the host of a game started with Start "
+                + "Server. Which of the players who join may use Find: Everyone, AdminsOnly (players in the server's "
+                + "adminlist.txt) or Nobody. The host's own Find is never limited. A refused player whose plugin is "
+                + "older than 1.3.0 gets no answer from the server: after about 15 seconds their Find keeps only what "
+                + "their own game has loaded nearby (loose Mysterious Rocks). This is a rule for players who "
+                + "use this plugin, not a lock: any game can ask a server for locations the way a Vegvisir does.");
+            WhoMayFind.SettingChanged += OnPolicyChanged;
+        }
+
+        private static void OnPolicyChanged(object sender, EventArgs e)
+        {
+            FindServer.PolicyChanged();
         }
 
         private void BindConfig()
@@ -221,11 +277,12 @@ namespace Waypointer
                     new AcceptableValueRange<int>(1, 200)));
 #if !WAYFINDER
             SkipCheckedChests = Config.Bind("5 - Search", "SkipCheckedChests", true,
-                "When looking for a chest item as the host (or in single player), leave out places whose chests the "
-                + "game has already filled and none of which holds the item any more (emptied, or it never had it). "
-                + "The game fills a chest when its area is first generated. As a client this does nothing, since only "
-                + "chests near you are known. Reading chests runs a little each frame, so it makes a search take longer "
-                + "rather than making the game stutter; turn it off if a search feels slow.");
+                "When looking for a chest item, leave out places whose chests the game has already filled and none of "
+                + "which holds the item any more (emptied, or it never had it). The game fills a chest when its area is "
+                + "first generated. Works as the host (or in single player), and when you join a server that runs this "
+                + "plugin too, which checks the chests for you; when you join any other server it does nothing, since "
+                + "only chests near you are known. Reading chests runs a little each frame, so it makes a search take "
+                + "longer rather than making the game stutter; turn it off if a search feels slow.");
 #endif
 
             // Deliberately no SettingChanged handlers for ArrowSize or ArrowOpacity: the arrow texture is
@@ -241,6 +298,12 @@ namespace Waypointer
 
         private void Update()
         {
+            if (Dedicated)
+            {
+                TickServer();
+                return;
+            }
+
             // This runs every frame inside the game's own update loop, so nothing here may escape:
             // an unhandled exception would surface as a Unity error every single frame. The keys and the
             // waypoint tick are guarded separately, so that nothing going wrong with a key can stop arrival
@@ -287,6 +350,7 @@ namespace Waypointer
 
             try
             {
+                SearchBudget.StartFrame();
                 WaypointManager.Tick();
                 LocationSearch.Tick();
                 WaypointWindow.UpdateCursorState();
@@ -294,6 +358,26 @@ namespace Waypointer
             catch (Exception e)
             {
                 LogThrottled(ref _updateErrors, "Waypoint update failed", e);
+            }
+
+            TickServer();
+        }
+
+        /// <summary>
+        /// This plugin's messages with the server (FindLink) and, when this game is the server, the searches it runs
+        /// for players (FindServer). Guarded on its own, so a fault here cannot stop the waypoint tick.
+        /// </summary>
+        private void TickServer()
+        {
+            try
+            {
+                if (Dedicated) SearchBudget.StartFrame();
+                FindLink.Tick();
+                FindServer.Tick();
+            }
+            catch (Exception e)
+            {
+                LogThrottled(ref _serverErrors, "Server-side Find failed", e);
             }
         }
 
@@ -361,6 +445,7 @@ namespace Waypointer
 
         private void OnGUI()
         {
+            if (Dedicated) return;
             try
             {
                 ArrowHud.Draw();
@@ -379,6 +464,7 @@ namespace Waypointer
         private static int _keyErrors;
         private static int _updateErrors;
         private static int _guiErrors;
+        private static int _serverErrors;
         private const int MaxLoggedErrors = 3;
 
         /// <summary>
@@ -396,6 +482,11 @@ namespace Waypointer
 
         private void OnDestroy()
         {
+            if (Dedicated)
+            {
+                if (_harmony != null) _harmony.UnpatchSelf();
+                return;
+            }
             try
             {
                 WaypointWindow.Close();

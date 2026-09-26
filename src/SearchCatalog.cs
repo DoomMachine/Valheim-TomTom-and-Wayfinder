@@ -122,6 +122,14 @@ namespace Waypointer
         /// </summary>
         public static readonly string[] WideLocations = { "WoodVillage1", "WoodVillage2", "GoblinCamp2", "GoblinCamp2_1", "Hildir_plainsfortress" };
 
+        /// <summary>The query with this name, or null (a server asked for a query of another catalogue version).</summary>
+        public static SearchQuery ByName(string name)
+        {
+            for (int i = 0; i < Queries.Length; i++)
+                if (string.Equals(Queries[i].Name, name, StringComparison.Ordinal)) return Queries[i];
+            return null;
+        }
+
         public static bool IsUnique(string locationPrefab)
         {
             return Array.IndexOf(UniqueLocations, locationPrefab) >= 0;

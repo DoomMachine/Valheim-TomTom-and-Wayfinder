@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.2.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.3.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
@@ -84,16 +84,18 @@ chance. The lists come from Valheim 1.0.16's own data, including the chests in t
   becomes the real one. Wayfinder queues them only once they are fixed, or when only one spot is left - and when
   you join a game, only if the server answered every request in time or a merchant's map icon settles it.
 - **Loose Mysterious Rocks exist only where the land has been generated**, and picked ones are left out.
-- **It works whether you host or join.** As a client, Wayfinder asks the server with the same request a Vegvisir
-  makes; the answers never become map pins (see Multiplayer).
+- **It works whether you host or join.** When you join a server that runs this plugin too, the server answers
+  from its own knowledge (see Servers); joining any other server, Wayfinder asks it with the same request a
+  Vegvisir makes. Either way, the answers never become map pins (see Multiplayer), and only what your map shows
+  as explored is queued.
 - `MaxSearchWaypoints` (default 50) caps how many are queued; the first part of the route is kept.
 
 ## Install
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.2.1]`. TomTom and Wayfinder exclude each
-other: install one.
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.3.0]`. TomTom and Wayfinder exclude each
+other: install one. For a server, see Servers.
 
 ## Console
 
@@ -128,8 +130,72 @@ Waypoint markers are **local to you**. They are created with the game's `save: f
 them out of both the Cartography Table and your saved map. A pin of your own that you follow keeps its
 normal flags and keeps syncing as usual.
 
-Find's answers from the server never become pins either: the plugin catches them before the game would
-add them, and does not ask at all unless that catch is in place.
+Find's answers from the server never become pins either. A server that runs this plugin answers with messages
+of its own, which the game has no pin for; any other server is asked the way a Vegvisir asks, and the plugin
+catches those answers before the game would add them, and does not ask at all unless that catch is in place.
+
+## Servers
+
+Wayfinder is a player's mod and needs nothing on the server. Installing it on the server as well - a dedicated
+server, or the game of whoever hosts with **Start Server** - adds two things:
+
+- **The server answers Find itself.** A player who joins then gets the same answer the host gets: only the
+  real merchant or Big Rock Clearing once it is fixed, loose Mysterious Rocks anywhere already generated.
+  Without it, a joining player's Find asks the server the way a Vegvisir does (see Finding places).
+- **`WhoMayFind`**, the server's rule for which of the joining players may use Find: `Everyone` (the default),
+  `AdminsOnly` (players in the server's `adminlist.txt`) or `Nobody`. The host's own Find is never limited. A
+  player the server refuses sees it in the window's Find header ("Find - turned off on this server", or "Find -
+  this server's admins only"); the server decides every request afresh, so a player added to the admin list can use
+  Find within about 10 seconds, without reconnecting, and the header clears when they do.
+
+Either edition on the server serves the players of both: a server with Wayfinder answers TomTom players too, and
+Wayfinder players still see only what their map shows as explored. Players who join without the plugin are not
+affected by it. This is a rule for players who use this plugin, not a lock: any game can ask a server for
+locations the way a Vegvisir does.
+
+**Start Server.** Nothing more to install: the host's own Wayfinder is the server's. Set `WhoMayFind` in-game through
+ConfigurationManager, where it takes effect at once and the players' windows follow; or quit the game, edit
+`BepInEx/config/DoomMachine.Wayfinder.cfg`, and start it again. (An edit made while the game runs is not read, and the
+game's next save of its settings writes the old value back.)
+
+**A dedicated server on Windows**, step by step:
+
+1. Stop the server.
+2. Download **BepInExPack Valheim** (Thunderstore, *Manual Download*) and unpack it into a folder of its own.
+3. Copy the contents of its `BepInExPack_Valheim` folder into the server's folder - the one with
+   `valheim_server.exe` (with Steam, `steamapps\common\Valheim dedicated server`). `BepInEx`, `doorstop_libs`,
+   `doorstop_config.ini` and `winhttp.dll` are now beside `valheim_server.exe`.
+4. Unpack this zip into `BepInEx\plugins\DoomMachine-Wayfinder\` in the server's folder.
+5. Start the server as you always do, for example with your copy of `start_headless_server.bat`. BepInEx comes
+   in through `winhttp.dll`; nothing else changes.
+6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
+   ```
+   Loading [Wayfinder 1.3.0]
+   Applied 2 of 2 patches.
+   Wayfinder 1.3.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Ready to answer players' Find (WhoMayFind = Everyone).
+   ```
+   The last one comes when the world loads.
+7. To change who may use Find: stop the server, open `BepInEx\config\DoomMachine.Wayfinder.cfg` (the first start writes
+   it; on a server it holds only `[6 - Server]`), set `WhoMayFind`, and start the server again.
+   - `AdminsOnly` uses the game's own admin list, `adminlist.txt`, in the server's save folder: the `-savedir`
+     folder if the server is started with one, otherwise `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim`. One
+     ID per line - the same IDs as for the game's own admin commands (kick, ban): for a Steam player, the
+     SteamID64 (the 17-digit number). The game re-reads the file at most every 10 seconds, so a change needs no
+     restart.
+
+**A dedicated server on Linux:** steps 1 to 4 the same, into the folder with `valheim_server.x86_64`; then make
+the pack's `start_server_bepinex.sh` executable (`chmod u+x start_server_bepinex.sh`), edit it with your server's
+name, world and password as you would Valheim's own start script, and start the server with it. The log and the
+config file are in the same places under `BepInEx/`. Without `-savedir`, `adminlist.txt` is in Unity's data folder
+for Valheim (usually `~/.config/unity3d/IronGate/Valheim`).
+
+**A rented server:** many Valheim hosting services can install BepInEx for you (see your host's help). Then
+upload this zip's contents to `BepInEx/plugins/DoomMachine-Wayfinder/`, and change `WhoMayFind` in
+`BepInEx/config/DoomMachine.Wayfinder.cfg` through the host's file manager.
+
+Tested so far: a Windows dedicated server with BepInEx loads the plugin and gets ready as above. A player joining
+such a server has not been tested in play yet.
 
 ## What Wayfinder does not police
 
@@ -177,6 +243,7 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
 | `SearchRange` | `1000` | metres Find looks around you (the slider sets it) |
 | `MaxSearchWaypoints` | `50` | the most waypoints one Find queues |
+| `WhoMayFind` | `Everyone` | used only when this game is the server: which joining players may use Find (see Servers) |
 
 Saved queues: `BepInEx/config/DoomMachine.Wayfinder/waypoints_<worldUID>.txt`, one per world — kept
 apart from TomTom's, so coordinates entered in TomTom never carry over into Wayfinder.

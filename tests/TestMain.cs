@@ -157,6 +157,7 @@ namespace Waypointer
             SafeFileTests();
             HotkeysTests();
             SearchTests();
+            ProtocolTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
@@ -682,6 +683,141 @@ namespace Waypointer
             for (int i = 0; i < capped.Length && prefix; i++) if (capped[i] != opt[i]) prefix = false;
             Check("search: the cap keeps the start of the optimised route", prefix, "");
             Check("search: an empty search plans an empty route", RoutePlanner.Plan(0, 0, new float[0], new float[0], 0, 10, 5.0).Length == 0, "");
+
+            // --- trimming to the nearest (the player's side only)
+            hits.Clear();
+            hits.Add(Hit("Ruin1", 300, 0, true));
+            hits.Add(Hit("Ruin1", 100, 0, true));
+            hits.Add(Hit("Ruin1", -200, 0, true));
+            SearchRules.KeepNearest(hits, 0, 0, 2);
+            Check("search: keeping the nearest keeps those closest to the player, nearest first",
+                hits.Count == 2 && hits[0].X == 100 && hits[1].X == -200, "");
+        }
+
+        // ---------------------------------------------------------------- the server protocol (1.3.0)
+
+        private static void ProtocolTests()
+        {
+            Check("server: WhoMayFind - Everyone lets every player, AdminsOnly only admins, Nobody no one",
+                FindProtocol.MayFind(FindPolicy.Everyone, false) && FindProtocol.MayFind(FindPolicy.AdminsOnly, true)
+                && !FindProtocol.MayFind(FindPolicy.AdminsOnly, false) && !FindProtocol.MayFind(FindPolicy.Nobody, true), "");
+
+            // The caller's side of WhoMayFind, for Vegvisir-style requests (contextKnown, fromConnection, knownPlayer, policy, isAdmin).
+            Check("server: the host's own call is always let through; a connection that is not a player's never is",
+                FindProtocol.CallerMayFind(true, false, false, FindPolicy.Nobody, false)
+                && !FindProtocol.CallerMayFind(true, true, false, FindPolicy.Everyone, true)
+                && !FindProtocol.CallerMayFind(true, true, false, FindPolicy.AdminsOnly, true), "");
+            Check("server: a known player gets the policy - Everyone yes, AdminsOnly only an admin, Nobody no",
+                FindProtocol.CallerMayFind(true, true, true, FindPolicy.Everyone, false)
+                && FindProtocol.CallerMayFind(true, true, true, FindPolicy.AdminsOnly, true)
+                && !FindProtocol.CallerMayFind(true, true, true, FindPolicy.AdminsOnly, false)
+                && !FindProtocol.CallerMayFind(true, true, true, FindPolicy.Nobody, true), "");
+            Check("server: without the connection patch nobody can be told apart - only Everyone lets a call through",
+                FindProtocol.CallerMayFind(false, false, false, FindPolicy.Everyone, false)
+                && !FindProtocol.CallerMayFind(false, false, false, FindPolicy.AdminsOnly, true)
+                && !FindProtocol.CallerMayFind(false, false, false, FindPolicy.Nobody, false)
+                && !FindProtocol.CallerMayFind(false, true, true, FindPolicy.AdminsOnly, true), "");
+
+            Check("server: a hello carries the protocol version",
+                FindProtocol.DecodeHello(FindProtocol.EncodeHello("TomTom 1.3.0")) == FindProtocol.Version
+                && FindProtocol.DecodeHello(new byte[] { FindProtocol.KindHello }) == -1
+                && FindProtocol.DecodeHello(null) == -1, "");
+
+            FindRequest q = new FindRequest();
+            q.SearchId = 7; q.Query = "Wooden Spear"; q.X = -1234.5f; q.Y = 31f; q.Z = 876.25f; q.Range = 2500f; q.CheckChests = true;
+            FindRequest back = FindProtocol.DecodeFind(FindProtocol.EncodeFind(q));
+            Check("server: a Find request survives the trip",
+                back != null && back.SearchId == 7 && back.Query == "Wooden Spear" && back.X == -1234.5f && back.Y == 31f
+                && back.Z == 876.25f && back.Range == 2500f && back.CheckChests, "");
+
+            bool rejects = true;
+            FindRequest bad = new FindRequest();
+            bad.Query = "Wooden Spear"; bad.Range = 20000f;
+            if (FindProtocol.DecodeFind(FindProtocol.EncodeFind(bad)) != null) rejects = false;       // range over 10 km
+            bad.Range = 50f;
+            if (FindProtocol.DecodeFind(FindProtocol.EncodeFind(bad)) != null) rejects = false;       // under 100 m
+            bad.Range = float.NaN;
+            if (FindProtocol.DecodeFind(FindProtocol.EncodeFind(bad)) != null) rejects = false;
+            bad.Range = 1000f; bad.X = float.PositiveInfinity;
+            if (FindProtocol.DecodeFind(FindProtocol.EncodeFind(bad)) != null) rejects = false;
+            byte[] good = FindProtocol.EncodeFind(q);
+            for (int cut = 0; cut < good.Length; cut++)
+            {
+                byte[] part = new byte[cut];
+                Array.Copy(good, part, cut);
+                if (FindProtocol.DecodeFind(part) != null) rejects = false;                            // every truncation
+            }
+            byte[] otherVersion = (byte[])good.Clone();
+            otherVersion[1] = (byte)(FindProtocol.Version + 1);
+            if (FindProtocol.DecodeFind(otherVersion) != null) rejects = false;
+            byte[] hugeString = new byte[] { FindProtocol.KindFind, (byte)FindProtocol.Version, 0, 0, 0, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x07 };
+            if (FindProtocol.DecodeFind(hugeString) != null) rejects = false;
+            Check("server: a malformed Find is refused, never thrown on (bad range or position, truncated, other version, huge string)", rejects, "");
+
+            ServerInfo info = new ServerInfo();
+            info.Server = "TomTom 1.3.0"; info.Policy = FindPolicy.AdminsOnly; info.MayFind = true;
+            ServerInfo infoBack = FindProtocol.DecodeInfo(FindProtocol.EncodeInfo(info));
+            Check("server: the server's info survives the trip",
+                infoBack != null && infoBack.Protocol == FindProtocol.Version && infoBack.Server == "TomTom 1.3.0"
+                && infoBack.Policy == FindPolicy.AdminsOnly && infoBack.MayFind, "");
+            byte[] newer = FindProtocol.EncodeInfo(info);
+            newer[1] = (byte)(FindProtocol.Version + 1);
+            ServerInfo newerBack = FindProtocol.DecodeInfo(newer);
+            Check("server: a server of another protocol version is read as one without the helper",
+                newerBack != null && newerBack.Protocol != FindProtocol.Version && !newerBack.MayFind, "");
+
+            // A result of 600 places travels as three Parts (256 + 256 + 88) and a Done, and comes back whole.
+            List<SearchHit> many = new List<SearchHit>();
+            for (int i = 0; i < 600; i++)
+            {
+                SearchHit h = Hit(i % 3 == 0 ? "Ruin1" : (i % 3 == 1 ? "SwampHut1" : "Pickable_StoneRock"), i * 10f, -i, i % 2 == 0);
+                h.Label = h.Prefab + " label";
+                h.IsObject = i % 3 == 2;
+                h.Possible = i == 5;
+                many.Add(h);
+            }
+            List<byte[]> messages = FindProtocol.EncodeResult(9, many, 1234, 56, 7);
+            List<SearchHit> received = new List<SearchHit>();
+            FoundMessage done = null;
+            bool allFound = true;
+            for (int i = 0; i < messages.Count; i++)
+            {
+                FoundMessage m = FindProtocol.DecodeFound(messages[i]);
+                if (m == null || m.SearchId != 9) { allFound = false; continue; }
+                if (m.Status == FindStatus.Part) received.AddRange(m.Hits);
+                else if (m.Status == FindStatus.Done) done = m;
+            }
+            bool same = received.Count == many.Count;
+            for (int i = 0; same && i < many.Count; i++)
+            {
+                SearchHit a = many[i], b = received[i];
+                same = a.Prefab == b.Prefab && a.Label == b.Label && a.X == b.X && a.Y == b.Y && a.Z == b.Z
+                    && a.Placed == b.Placed && a.Possible == b.Possible && a.IsObject == b.IsObject;
+            }
+            Check("server: every place found comes back, in order, flags and labels intact - nothing trimmed on the server",
+                allFound && messages.Count == 4 && same && done != null && done.Total == 600 && done.ObjectsRead == 1234
+                && done.ChestPlacesChecked == 56 && done.ChestPlacesSkipped == 7, messages.Count + " messages");
+
+            List<byte[]> empty = FindProtocol.EncodeResult(3, new List<SearchHit>(), 0, 0, 0);
+            FoundMessage emptyDone = empty.Count == 1 ? FindProtocol.DecodeFound(empty[0]) : null;
+            Check("server: an empty result is a single Done with a count of 0",
+                emptyDone != null && emptyDone.Status == FindStatus.Done && emptyDone.Total == 0, "");
+
+            FoundMessage refused = FindProtocol.DecodeFound(FindProtocol.EncodeStatus(4, FindStatus.Refused));
+            Check("server: a refusal says so", refused != null && refused.SearchId == 4 && refused.Status == FindStatus.Refused, "");
+
+            bool partSafe = true;
+            byte[] part0 = messages[0];
+            for (int cut = 0; cut < part0.Length; cut += 7)
+            {
+                byte[] p = new byte[cut];
+                Array.Copy(part0, p, cut);
+                if (FindProtocol.DecodeFound(p) != null && cut < part0.Length) partSafe = false;
+            }
+            byte[] badIndex = (byte[])empty[0].Clone();
+            badIndex[5] = 99;                                                                            // no such status
+            if (FindProtocol.DecodeFound(badIndex) != null) partSafe = false;
+            Check("server: a truncated or malformed answer is dropped, never thrown on", partSafe, "");
         }
 
         private static void Check(string label, bool condition, string detail)

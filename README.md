@@ -12,6 +12,7 @@ One code base, two Valheim plugins by **DoomMachine**:
 | Marking where you stand (`Add my position`, `waypoint here`) | yes | yes |
 | Arrow, map markers, queue, arrival, persistence | yes | yes |
 | Find: every place of one kind within a range, as a route | yes | only places whose centre is on explored map, silently |
+| On a server (dedicated, or the Start Server host): answers other players' Find, `WhoMayFind` | yes | yes (serves both editions' players) |
 | BepInEx GUID | `DoomMachine.TomTom` | `DoomMachine.Wayfinder` |
 | Installed into the game by `dotnet build` | yes | no — packaged only |
 
@@ -36,6 +37,11 @@ this repository's [releases](https://github.com/DoomMachine/Valheim-TomTom-and-W
 build them yourself (below), which leaves a ready-to-install zip in `dist/`. Unzip it into
 `BepInEx/plugins/`, or hand the zip to a mod manager.
 
+The same plugin also runs on a server: a dedicated server (`valheim_server`), or the game of whoever hosts with
+Start Server. There it answers other players' Find from the server's own knowledge and applies the server's
+`WhoMayFind` rule. Step-by-step setup for a dedicated server (Windows, Linux, rented) is in the **Servers** section
+of each package README.
+
 ---
 
 ## Layout
@@ -45,18 +51,24 @@ src/                     the shared source for both plugins
   Edition.cs             everything that differs between the editions (name, GUID, window id)
   CoordinateParser.cs    TomTom only - reading coordinates. Absent from Wayfinder.
   CoordinateFormat.cs    TomTom only - showing coordinates. Absent from Wayfinder.
-  LocationSearch.cs      Find: where places come from (the server's own list, or asking the server), the
-                         time-sliced object scan, the chest check (TomTom), the explored filter (Wayfinder)
+  LocationSearch.cs      Find, the player's side: where places come from (the server's own list, the server's
+                         plugin, or asking the way a Vegvisir does), the explored filter (Wayfinder), the route
+  SearchJob.cs           one search's work in the world: the location list on a server, then objects and chests,
+                         a little each frame (SearchBudget) - run for the player and, on a server, for others
+  FindServer.cs          the server side: answers players' Find, applies WhoMayFind, one search at a time
+  FindLink.cs            the player side of the server messages: hello, the server's answer, Find requests
+  FindProtocol.cs        those messages as bytes, and the WhoMayFind rule - Unity-free, tested
   SearchCatalog.cs       what can be searched for, and which location types hold it (from 1.0.16's data)
   SearchRules.cs         unique places (candidates vs the real one), range, chests, names - Unity-free
   RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
-  SearchPatches.cs       keeps the server's answers from becoming map pins
+  SearchPatches.cs       keeps the server's answers from becoming map pins; WhoMayFind for Vegvisir-style
+                         requests; which connection a routed call came on
   ...
 Plugin.props             build settings shared by both projects (references, packaging, deploy)
 TomTom/TomTom.csproj     sets EditionName=TomTom, deploys by default
 Wayfinder/Wayfinder.csproj  defines WAYFINDER, excludes both Coordinate*.cs files, packages only
 package/<Edition>/       manifest.json, icon.png and README.md for each package
-tests/                   parser, formatter, crash-safe save, key-read and search tests (built as TomTom)
+tests/                   parser, formatter, crash-safe save, key-read, search and server-message tests (built as TomTom)
 preflight.ps1            checks a compiled plugin against the shipped game assemblies
 build.sh                 SDK-free fallback compiler (C# 5)
 Waypointer.slnx          the solution: both editions and the tests
@@ -99,7 +111,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 138 tests (parser, crash-safe save, key reads, search), on .NET and on Mono
+./run-tests.sh                                                         # 152 tests (parser, crash-safe save, key reads, search, server messages and rules), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -140,6 +152,24 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
   `Minimap.DiscoverLocation`, which make saved pins
 - Wayfinder's search does not keep to explored places (it must read `MinimapAccess.IsExplored`) - and,
   conversely, TomTom's does, so the check can't pass vacuously
+- a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
+  and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
+  each checked by the literal name the call sends
+- the server side is off: the plugin must declare both `valheim.exe` and `valheim_server.exe`; the WhoMayFind
+  prefix must leave every request without this plugin's token to vanilla (branching directly on
+  `SearchRules.VanillaMayHandle(pinName)`, and the way it branches is followed to `return true`) and otherwise
+  return only `FindServer.CallerMayFind()` or false; that decision must come from the unit-tested
+  `FindProtocol.CallerMayFind` with no constant argument, the policy from `FindProtocol.MayFind`, and the admin
+  check from the game's own `ZNet.IsAdmin`; `Plugin.ApplyPatches` must set `RoutedCallContext.Available` (without
+  the connection patch only `Everyone` lets a caller through); a player must be known by the connection the call
+  came on (`RoutedCallContext`, set from `ZRoutedRpc.RPC_RoutedRPC`'s `rpc` and cleared by a finalizer): the
+  server's message handler takes no sender and asks `FindServer.CallingPeer`; `FindServer.OnMessage` must call
+  `MayFind`, and `FindServer` must never call `SearchRules.KeepNearest` (Wayfinder filters on the player's side);
+  and `FindLink.OnToClient` must compare its sender with the server peer's id. (These look at the compiled calls
+  and comparisons; they do not prove what each result decides.)
+- with Valheim's dedicated server installed beside the game (or `-ServerDir`), any reference fails to resolve
+  against the server's own assemblies - a separate build of the game, not a copy (skipped, and not counted,
+  without one)
 - a referenced assembly can't be resolved from the game folder
 
 Run it after every Valheim update.
@@ -208,8 +238,46 @@ Run it after every Valheim update.
   for placed locations. A unique location is resolved over every candidate before the range cut. The route is
   planned over the nearest few hundred places (four times `MaxSearchWaypoints`, at least 100): nearest-neighbour
   from the nearest spot, then 2-opt with that first stop fixed.
+- **On a server** the same DLL runs its server side. On a dedicated server (`Paths.ProcessName` is
+  `valheim_server`; the game's own `ZNet.IsDedicated()` needs a `ZNet` that does not exist yet in `Awake`) it binds
+  only `[6 - Server]` and applies two patches. A player's plugin says hello once per connection over a routed call
+  of its own; a server with the plugin answers with its version and whether that player may use Find, and then
+  answers each Find with one `SearchJob` run on its own data - exactly the host's answer - sent back in messages of
+  256 places at most (about 4 KB; Steam's limit per message is 512 KB), everything in range, since Wayfinder filters
+  by exploration afterwards. A vanilla server drops the unknown call silently, and after 5 s the player's Find asks
+  the way a Vegvisir does, as before 1.3.0. **A routed call's sender field is not checked by the game**
+  (`ZRoutedRpc.RPC_RoutedRPC` copies it from the packet), so a player could name an admin, or the host: the server
+  therefore knows a player by the connection the call came on, taken from `RPC_RoutedRPC`'s own argument, and runs
+  the game's admin check (`ZNet.IsAdmin`, `adminlist.txt`) on that connection's host name. `WhoMayFind` is a rule
+  for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
 
 ## History
+
+**1.3.0** — servers: the plugin on a dedicated server or as the host answers other players' Find.
+
+- new: the same plugin runs on a dedicated server (`valheim_server`), with only its server side: no window, arrow
+  or map, and a config file that holds only `[6 - Server]`. As the host of a Start Server game, the player's own
+  plugin is the server's
+- new: a player who joins such a server gets the host's answer to Find - only the real merchant or Big Rock
+  Clearing once fixed, loose Mysterious Rocks anywhere already generated, and `SkipCheckedChests` - in one request
+  instead of one per location type. Either edition on the server serves both editions' players; with any other
+  server, Find asks the way a Vegvisir does, as before
+- new: `WhoMayFind` (Everyone, AdminsOnly, Nobody), the server's rule for which joining players may use Find; it
+  also applies to plugins older than 1.3.0, whose requests carry the plugin's token. A refused player sees it in
+  the window's Find header. The server knows a player by the connection, not by the call's forgeable sender field
+- an adversarial review before release found no broken invariant, and had fixed: a server search that throws
+  was sent as if complete (it is now dropped and the player told the server is busy); WhoMayFind trusted any call
+  if the connection patch failed to apply (now only `Everyone` does then); a refusal cached at join time kept the
+  buttons off after the player was made an admin (the server now decides every request); searches kept running
+  for players who had left or were no longer allowed; Wayfinder could log a count of places; and preflight's
+  first server checks let six plausible regressions through (an inverted branch among them) - all six now fail it
+- 14 new tests (138 → 152): the server messages - round trips, and truncated, oversized or foreign input decoded
+  as nothing rather than thrown on - the WhoMayFind decision, and keeping the nearest places; preflight gains
+  the routed-call list, the server side and the check against the dedicated server's own assemblies (49 → 53
+  checks with a dedicated server installed); every one of 36 deliberately broken builds fails it, 17 of them new
+  for the server side
+- checked on a real dedicated server: it loads the plugin and gets ready (`Applied 2 of 2 patches.`, `Ready to
+  answer players' Find`); a player joining such a server has not been tested in play yet
 
 **1.2.1** — two fixes to Find's "(possible)" spots.
 

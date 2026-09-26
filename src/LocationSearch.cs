@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,21 +14,22 @@ namespace Waypointer
     ///
     /// Where the places come from:
     /// - As the server (a host or single player) the game's own list of location instances, which knows which
-    ///   unique candidate has been placed (ZoneSystem.GetLocationList).
-    /// - As a client, the server is asked, one location type at a time and paced, with the same request a Vegvisir
-    ///   makes (RPC_DiscoverClosestLocation with discoverAll). Vanilla would turn every answer into a saved map pin -
-    ///   the kind a Cartography Table shares - so Game_RPC_DiscoverLocationResponse_Patch catches this mod's answers
-    ///   first, and no request is ever sent unless that interception is confirmed active (AnswersIntercepted). A
-    ///   final request with exactly one answer (the closest StartTemple) marks the end of the answers, since routed
-    ///   calls keep their order.
-    /// - World objects (Mysterious Rocks) from the ZDOs the game holds: everything generated, on a server; only what
-    ///   is loaded near the player, on a client.
+    ///   unique candidate has been placed, and every generated object and chest (SearchJob).
+    /// - As a client of a server that runs this plugin too (a dedicated server, or a host with it installed): that
+    ///   server's own answer, the same a host gets, over this plugin's messages (FindLink, FindServer).
+    /// - As a client of any other server, the server is asked, one location type at a time and paced, with the
+    ///   same request a Vegvisir makes (RPC_DiscoverClosestLocation with discoverAll). Vanilla would turn every
+    ///   answer into a saved map pin - the kind a Cartography Table shares - so Game_RPC_DiscoverLocationResponse_Patch
+    ///   catches this mod's answers first, and no request is ever sent unless that interception is confirmed active
+    ///   (AnswersIntercepted). A final request with exactly one answer (the closest StartTemple) marks the end of the
+    ///   answers, since routed calls keep their order. World objects then come from the ZDOs the client holds:
+    ///   only what is loaded near the player.
     ///
-    /// Work that grows with the world (reading objects zone by zone) runs a little each frame, within FrameBudgetMs,
-    /// so a large search takes longer rather than making the game stutter. TomTom logs how long each search took.
-    /// Wayfinder keeps only places whose centre is explored on the map (by the player or a Cartography Table) and
-    /// unique places that are already fixed, and says nothing about what it found - no message, no count, no log
-    /// line (only a failure, such as a server that did not answer in time, is logged).
+    /// Work that grows with the world runs a little each frame (SearchBudget), so a large search takes longer rather
+    /// than making the game stutter. TomTom logs how long each search took. Wayfinder keeps only places whose centre
+    /// is explored on the map (by the player or a Cartography Table) and unique places that are already fixed, and
+    /// says nothing about what it found - no message, no count, no log line (only a failure, such as a server that
+    /// did not answer in time, is logged).
     /// </summary>
     internal static class LocationSearch
     {
@@ -37,11 +37,13 @@ namespace Waypointer
         private const string SentinelLocation = "StartTemple";
         private const float RequestSpacing = 0.2f;
         private const float AnswerTimeout = 15f;
-        private const double FrameBudgetMs = 1.5;
+        /// <summary>How long a server with this plugin may take to accept a Find, and then to finish it.</summary>
+        private const float HelperAcceptTimeout = 15f;
+        private const float HelperResultTimeout = 120f;
         private const double RouteBudgetMs = 5.0;
         private const float RockClearingRadius = 40f;
 
-        private enum Phase { Idle, Asking, Scanning }
+        private enum Phase { Idle, WaitingForServerInfo, Asking, AskingServerPlugin, Scanning }
 
         private static Phase _phase = Phase.Idle;
         private static SearchQuery _query;
@@ -49,14 +51,18 @@ namespace Waypointer
         private static float _range;
         private static Vector3 _origin;
         private static bool _onServer;
+#if !WAYFINDER
+        private static bool _answeredByServerPlugin;
+#endif
         private static readonly List<SearchHit> _hits = new List<SearchHit>();
+        private static SearchJob _job;
         private static int _searchId;
         private static string _token = SearchRules.RequestPinName(0);
+        private static bool _serverPluginDone;
         private static int _nextAsk;
         private static float _nextAskTime;
         private static float _deadline;
         private static bool _allAnswered;
-        private static IEnumerator _scan;
 
         private static readonly Stopwatch _frame = new Stopwatch();
         private static readonly Stopwatch _elapsed = new Stopwatch();
@@ -64,11 +70,8 @@ namespace Waypointer
         private static int _workFrames;
         private static int _answers;
         private static int _objectsRead;
-#if !WAYFINDER
         private static int _chestPlacesChecked;
         private static int _chestPlacesSkipped;
-        private static HashSet<int> _lootChestPrefabs;
-#endif
 
         private static MethodInfo _responseMethod;
 
@@ -89,9 +92,9 @@ namespace Waypointer
             _hits.Clear();
             _searchId++;
             _token = SearchRules.RequestPinName(_searchId);
-            _answers = _objectsRead = 0;
+            _answers = _objectsRead = _chestPlacesChecked = _chestPlacesSkipped = 0;
 #if !WAYFINDER
-            _chestPlacesChecked = _chestPlacesSkipped = 0;
+            _answeredByServerPlugin = false;
 #endif
             _workMs = 0;
             _workFrames = 0;
@@ -101,40 +104,88 @@ namespace Waypointer
 
             if (_onServer)
             {
-                CollectOnServer();
+                _job = new SearchJob(_query, _origin, _range, true, ChestCheckWanted(), _hits);
+                _job.CollectLocationsOnServer();
                 BeginScan();
                 return true;
             }
 
+            if (FindLink.ServerHasPlugin) return AskServerPlugin();
+            if (FindLink.AwaitingServerInfo)
+            {
+                // Said hello a moment ago and the server has not answered yet: give it until the answer is due.
+                _phase = Phase.WaitingForServerInfo;
+                SetStatus("Searching - asking the server...");
+                return true;
+            }
+            return StartAsking();
+        }
+
+        /// <summary>The Vegvisir-style path, for a server without this plugin.</summary>
+        private static bool StartAsking()
+        {
+#if !WAYFINDER
+            _answeredByServerPlugin = false;
+#endif
             if (!AnswersIntercepted())
             {
                 // Fail closed: without the interception every answer would become a saved, shareable pin.
                 Plugin.Log.LogWarning("Location search is unavailable here: its safety patch on Game.RPC_DiscoverLocationResponse is not active.");
-#if !WAYFINDER
-                WaypointWindow.SetStatus("Search is unavailable - see BepInEx/LogOutput.log.");
-#endif
+                SetStatus("Search is unavailable - see BepInEx/LogOutput.log.");
                 _phase = Phase.Idle;
                 return false;
             }
+            _job = new SearchJob(_query, _origin, _range, false, false, _hits);
             _phase = Phase.Asking;
             _nextAsk = 0;
             _nextAskTime = 0f;
             _deadline = float.MaxValue;
             _allAnswered = false;
-#if !WAYFINDER
-            WaypointWindow.SetStatus("Searching - asking the server...");
-#endif
+            SetStatus("Searching - asking the server...");
             return true;
+        }
+
+        /// <summary>The path for a server that runs this plugin: one request, and its own answer.</summary>
+        private static bool AskServerPlugin()
+        {
+            FindRequest request = new FindRequest();
+            request.SearchId = _searchId;
+            request.Query = _query.Name;
+            request.X = _origin.x; request.Y = _origin.y; request.Z = _origin.z;
+            request.Range = Mathf.Clamp(_range, FindProtocol.MinRange, FindProtocol.MaxRange);
+            request.CheckChests = ChestCheckWanted();
+            if (!FindLink.SendFind(request))
+            {
+                SetStatus("Search failed - see BepInEx/LogOutput.log.");
+                _phase = Phase.Idle;
+                return false;
+            }
+            _job = null;
+#if !WAYFINDER
+            _answeredByServerPlugin = true;
+#endif
+            _serverPluginDone = false;
+            _phase = Phase.AskingServerPlugin;
+            _deadline = Time.unscaledTime + HelperAcceptTimeout;
+            SetStatus("Searching - the server is looking...");
+            return true;
+        }
+
+        private static bool ChestCheckWanted()
+        {
+#if WAYFINDER
+            return false;
+#else
+            return Plugin.SkipCheckedChests.Value;
+#endif
         }
 
         /// <summary>Stops a running search without placing anything (death, world change, plugin unload).</summary>
         public static void Cancel()
         {
-#if !WAYFINDER
-            if (_phase != Phase.Idle) WaypointWindow.SetStatus("Search stopped.");
-#endif
+            if (_phase != Phase.Idle) SetStatus("Search stopped.");
             _phase = Phase.Idle;
-            _scan = null;
+            _job = null;
             _hits.Clear();
         }
 
@@ -152,16 +203,16 @@ namespace Waypointer
             _frame.Start();
             try
             {
-                if (_phase == Phase.Asking) TickAsking();
+                if (_phase == Phase.WaitingForServerInfo) TickWaitingForServerInfo();
+                else if (_phase == Phase.Asking) TickAsking();
+                else if (_phase == Phase.AskingServerPlugin) TickAskingServerPlugin();
                 else if (_phase == Phase.Scanning) TickScanning();
             }
             catch (Exception e)
             {
                 Plugin.Log.LogError("Location search failed: " + e);
                 Cancel();
-#if !WAYFINDER
-                WaypointWindow.SetStatus("Search failed - see BepInEx/LogOutput.log.");
-#endif
+                SetStatus("Search failed - see BepInEx/LogOutput.log.");
             }
             finally
             {
@@ -171,28 +222,11 @@ namespace Waypointer
 
         // ---------------------------------------------------------------- sources
 
-        private static void CollectOnServer()
+        private static void TickWaitingForServerInfo()
         {
-            Dictionary<string, int> wanted = LocationIndex(_query);
-            Dictionary<ZoneSystem.ZoneLocation, int> byLocation = new Dictionary<ZoneSystem.ZoneLocation, int>();
-            foreach (ZoneSystem.LocationInstance li in ZoneSystem.instance.GetLocationList())
-            {
-                ZoneSystem.ZoneLocation loc = li.m_location;
-                if (loc == null) continue;
-                int index;
-                if (!byLocation.TryGetValue(loc, out index))
-                {
-                    // m_prefabName equals the name the game derives from the prefab for every location that runs
-                    // (checked against Valheim 1.0.16's own data), and reading it costs nothing.
-                    if (loc.m_prefabName == null || !wanted.TryGetValue(loc.m_prefabName, out index)) index = -1;
-                    byLocation[loc] = index;
-                }
-                if (index < 0) continue;
-                AddLocationHit(index, li.m_position, li.m_placed);
-            }
-            // Unique places are resolved over every candidate first: the real one may lie outside the range.
-            SearchRules.ResolveUniqueOnServer(_hits);
-            SearchRules.KeepWithinRange(_hits, _origin.x, _origin.z, _range);
+            if (FindLink.AwaitingServerInfo) return;
+            if (FindLink.ServerHasPlugin) AskServerPlugin();
+            else StartAsking();
         }
 
         private static void TickAsking()
@@ -204,9 +238,7 @@ namespace Waypointer
                 if (!Ask(_nextAsk))
                 {
                     Cancel();
-#if !WAYFINDER
-                    WaypointWindow.SetStatus("Search is unavailable - see BepInEx/LogOutput.log.");
-#endif
+                    SetStatus("Search is unavailable - see BepInEx/LogOutput.log.");
                     return;
                 }
                 _nextAsk++;
@@ -224,6 +256,101 @@ namespace Waypointer
             if (!complete)
                 Plugin.Log.LogWarning("Location search: the server did not answer every request in time; using what arrived.");
             BeginScan();
+        }
+
+        private static void TickAskingServerPlugin()
+        {
+            if (_serverPluginDone)
+            {
+                // The server has already resolved the unique places, read the objects and checked the chests; the
+                // range was applied there, and is applied again here in case the server's differed. Finished here,
+                // inside Tick's guards (the player still in this world), not in the network handler.
+                SearchRules.KeepWithinRange(_hits, _origin.x, _origin.z, _range);
+                Finish();
+                return;
+            }
+            if (Time.unscaledTime <= _deadline) return;
+            Plugin.Log.LogWarning("Location search: the server's plugin did not answer in time.");
+            _phase = Phase.Idle;
+            _hits.Clear();
+            SetStatus("The server did not answer - try again.");
+        }
+
+        /// <summary>
+        /// Called by FindLink with every answer the server's plugin sends. Places are added as they arrive; Done
+        /// finishes the search with what arrived (all of it, unless a message was lost).
+        /// </summary>
+        internal static void OnServerPluginAnswer(FoundMessage m)
+        {
+            if (_phase != Phase.AskingServerPlugin || m == null || m.SearchId != _searchId) return;
+            if (m.Status == FindStatus.Accepted)
+            {
+                FindLink.NoteAllowed();
+                _deadline = Time.unscaledTime + HelperResultTimeout;
+                return;
+            }
+            if (m.Status == FindStatus.Part)
+            {
+                _deadline = Time.unscaledTime + HelperResultTimeout;
+                for (int i = 0; i < m.Hits.Count; i++)
+                {
+                    SearchHit h = m.Hits[i];
+                    string own = OwnLabel(h.Prefab);
+                    if (own != null) h.Label = own;
+                    _hits.Add(h);
+                }
+                _answers += m.Hits.Count;
+                return;
+            }
+            if (m.Status == FindStatus.Done)
+            {
+                if (m.Total != _answers) WarnMissing(m.Total, _answers);
+                _objectsRead = m.ObjectsRead;
+                _chestPlacesChecked = m.ChestPlacesChecked;
+                _chestPlacesSkipped = m.ChestPlacesSkipped;
+                _serverPluginDone = true;
+                return;
+            }
+
+            _phase = Phase.Idle;
+            _hits.Clear();
+            if (m.Status == FindStatus.Refused)
+            {
+                FindLink.NoteRefused();
+                SetStatus(FindLink.RefusalText);
+            }
+            else if (m.Status == FindStatus.Busy)
+                SetStatus("The server is busy with other searches - try again shortly.");
+            else if (m.Status == FindStatus.UnknownQuery)
+            {
+                // The server's plugin is another version with another list; ask the way a Vegvisir does instead.
+                Plugin.Log.LogInfo("Location search: the server's plugin does not know '" + _query.Name + "'; asking the server directly.");
+                _hits.Clear();
+                StartAsking();
+            }
+        }
+
+        /// <summary>
+        /// Part of the server's answer did not arrive. Wayfinder says so without numbers, since a count of the places
+        /// in range is what it never tells. (Logged apart from OnServerPluginAnswer, which reads the search origin's x
+        /// and z: preflight's Wayfinder scan takes a method that reads x/z and turns a number into text for a readout.)
+        /// </summary>
+        private static void WarnMissing(int sent, int arrived)
+        {
+#if WAYFINDER
+            Plugin.Log.LogWarning("Location search: part of the server's answer did not arrive; using what arrived.");
+#else
+            Plugin.Log.LogWarning(string.Format(CultureInfo.InvariantCulture,
+                "Location search: the server's plugin sent {0} places but {1} arrived; using what arrived.", sent, arrived));
+#endif
+        }
+
+        /// <summary>This plugin's own name for a prefab the query looks for, or null.</summary>
+        private static string OwnLabel(string prefab)
+        {
+            for (int i = 0; i < _query.Locations.Length; i++) if (_query.Locations[i].Prefab == prefab) return _query.Locations[i].Label;
+            for (int i = 0; i < _query.Objects.Length; i++) if (_query.Objects[i].Prefab == prefab) return _query.Objects[i].Label;
+            return null;
         }
 
         /// <summary>
@@ -258,6 +385,11 @@ namespace Waypointer
             }
             if (pinType >= 0 && pinType < _query.Locations.Length)
                 AddLocationHit(pinType, pos, false);
+        }
+
+        private static void AddLocationHit(int index, Vector3 pos, bool placed)
+        {
+            if (_job != null) _job.AddLocationHit(index, pos, placed);
         }
 
         /// <summary>True when the prefix that keeps the server's answers from becoming pins is patched in.</summary>
@@ -302,219 +434,26 @@ namespace Waypointer
             return result;
         }
 
-        private static void AddLocationHit(int index, Vector3 pos, bool placed)
-        {
-            SearchTarget t = _query.Locations[index];
-            SearchHit h = new SearchHit();
-            h.Prefab = t.Prefab;
-            h.Label = t.Label;
-            h.X = pos.x; h.Y = pos.y; h.Z = pos.z;
-            h.Placed = placed;
-            _hits.Add(h);
-        }
-
-        private static Dictionary<string, int> LocationIndex(SearchQuery q)
-        {
-            Dictionary<string, int> d = new Dictionary<string, int>(StringComparer.Ordinal);
-            for (int i = 0; i < q.Locations.Length; i++) d[q.Locations[i].Prefab] = i;
-            return d;
-        }
-
         // ---------------------------------------------------------------- the time-sliced part
 
         private static void BeginScan()
         {
             _phase = Phase.Scanning;
-            _scan = Scan();
-#if !WAYFINDER
-            WaypointWindow.SetStatus("Searching...");
-#endif
+            SetStatus("Searching...");
         }
 
         private static void TickScanning()
         {
-            bool more = _scan.MoveNext();
+            bool more = _job.Step();
             _workMs += _frame.Elapsed.TotalMilliseconds;
             _workFrames++;
-            if (!more) Finish();
-        }
-
-        private static bool OverBudget()
-        {
-            return _frame.Elapsed.TotalMilliseconds > FrameBudgetMs;
-        }
-
-        private static IEnumerator Scan()
-        {
-            SimulationDistance oneZone = new SimulationDistance(0, 0, false);
-            List<ZDO> zdos = new List<ZDO>();
-
-            // World objects within range (the scattered Mysterious Rocks).
-            for (int t = 0; t < _query.Objects.Length; t++)
+            if (!more)
             {
-                SearchTarget target = _query.Objects[t];
-                int hash = target.Prefab.GetStableHashCode();
-                Vector2s centre = ZoneSystem.GetZone(_origin);
-                int n = Mathf.CeilToInt(_range / 64f) + 1;
-                for (int sy = centre.y - n; sy <= centre.y + n; sy++)
-                {
-                    for (int sx = centre.x - n; sx <= centre.x + n; sx++)
-                    {
-                        if (!InsideWorldGrid(sx, sy) || ZoneDistance(sx, sy) > _range) continue;
-                        zdos.Clear();
-                        ZDOMan.instance.FindSectorObjects(new Vector2s(sx, sy), oneZone, zdos, null);
-                        for (int i = 0; i < zdos.Count; i++)
-                        {
-                            ZDO zdo = zdos[i];
-                            _objectsRead++;
-                            if (zdo == null || !zdo.IsValid() || zdo.GetPrefab() != hash) continue;
-                            Vector3 p = zdo.GetPosition();
-                            float dx = p.x - _origin.x, dz = p.z - _origin.z;
-                            if (dx * dx + dz * dz > _range * _range) continue;
-                            if (IsPicked(zdo, target.Prefab)) continue;
-                            SearchHit h = new SearchHit();
-                            h.Prefab = target.Prefab;
-                            h.Label = target.Label;
-                            h.X = p.x; h.Y = p.y; h.Z = p.z;
-                            h.IsObject = true;
-                            h.Placed = true;
-                            _hits.Add(h);
-                        }
-                        if (OverBudget()) yield return null;
-                    }
-                }
+                _objectsRead = _job.ObjectsRead;
+                _chestPlacesChecked = _job.ChestPlacesChecked;
+                _chestPlacesSkipped = _job.ChestPlacesSkipped;
+                Finish();
             }
-
-#if !WAYFINDER
-            // Places whose chests have all been filled already, and hold none of the items any more. On the server
-            // only, which holds every generated chest (a client holds only those near it, so an unseen chest with the
-            // item could not stop the skip), and only for placed locations: a place not generated yet has no chest of
-            // its own, and a neighbour's chest must not decide for it.
-            if (_onServer && Plugin.SkipCheckedChests.Value && _query.Items.Length > 0 && _hits.Count > 0)
-            {
-                if (_lootChestPrefabs == null)
-                {
-                    HashSet<int> found = new HashSet<int>();
-                    List<GameObject> prefabs = ZNetScene.instance.m_prefabs;
-                    for (int i = 0; i < prefabs.Count; i++)
-                    {
-                        GameObject go = prefabs[i];
-                        if (go == null) continue;
-                        Container c = go.GetComponent<Container>();
-                        if (c != null && c.m_defaultItems != null && c.m_defaultItems.m_drops != null && c.m_defaultItems.m_drops.Count > 0)
-                            found.Add(go.name.GetStableHashCode());
-                        if ((i & 63) == 0 && OverBudget()) yield return null;
-                    }
-                    _lootChestPrefabs = found;
-                }
-
-                List<string> itemNames = new List<string>();
-                for (int i = 0; i < _query.Items.Length; i++)
-                {
-                    GameObject item = ObjectDB.instance != null ? ObjectDB.instance.GetItemPrefab(_query.Items[i]) : null;
-                    ItemDrop drop = item != null ? item.GetComponent<ItemDrop>() : null;
-                    if (drop != null) itemNames.Add(drop.m_itemData.m_shared.m_name);
-                }
-
-                if (itemNames.Count > 0)
-                {
-                    Inventory scratch = new Inventory("WaypointerChestCheck", null, 8, 8);
-                    for (int h = _hits.Count - 1; h >= 0; h--)
-                    {
-                        SearchHit hit = _hits[h];
-                        if (hit.IsObject || hit.Possible || !hit.Placed) continue;
-                        float radius = SearchCatalog.WideLocation(hit.Prefab) ? 96f : 64f;
-                        int n = radius > 64f ? 2 : 1;
-                        Vector2s centre = ZoneSystem.GetZone(new Vector3(hit.X, 0f, hit.Z));
-                        int chests = 0, unfilled = 0, holding = 0;
-                        for (int sy = centre.y - n; sy <= centre.y + n; sy++)
-                        {
-                            for (int sx = centre.x - n; sx <= centre.x + n; sx++)
-                            {
-                                if (!InsideWorldGrid(sx, sy)) continue;
-                                zdos.Clear();
-                                ZDOMan.instance.FindSectorObjects(new Vector2s(sx, sy), oneZone, zdos, null);
-                                for (int i = 0; i < zdos.Count; i++)
-                                {
-                                    ZDO zdo = zdos[i];
-                                    _objectsRead++;
-                                    if (zdo == null || !zdo.IsValid() || !_lootChestPrefabs.Contains(zdo.GetPrefab())) continue;
-                                    Vector3 p = zdo.GetPosition();
-                                    float dx = p.x - hit.X, dz = p.z - hit.Z;
-                                    if (dx * dx + dz * dz > radius * radius) continue;
-                                    chests++;
-                                    if (!zdo.GetBool(ZDOVars.s_addedDefaultItems, false)) { unfilled++; continue; }
-                                    // A chest keeps its items as a byte array (Container.Save / Container.Load on
-                                    // 1.0.16); none means empty.
-                                    byte[] data = zdo.GetByteArray(ZDOVars.s_items, null);
-                                    if (data != null && data.Length > 0)
-                                    {
-                                        scratch.Load(new ZPackage(data));
-                                        for (int k = 0; k < itemNames.Count; k++)
-                                            if (scratch.ContainsItemByName(itemNames[k])) { holding++; break; }
-                                    }
-                                    // Loading a chest makes and destroys an object per item, so the budget is
-                                    // checked after every chest, not only after every zone.
-                                    if (OverBudget()) yield return null;
-                                }
-                                if (OverBudget()) yield return null;
-                            }
-                        }
-                        _chestPlacesChecked++;
-                        if (SearchRules.ChestsExhausted(chests, unfilled, holding))
-                        {
-                            _hits.RemoveAt(h);
-                            _chestPlacesSkipped++;
-                        }
-                    }
-                }
-            }
-#endif
-            yield break;
-        }
-
-        /// <summary>Keeps the <paramref name="keep"/> hits nearest the search origin (horizontally).</summary>
-        private static void KeepNearest(int keep)
-        {
-            if (_hits.Count <= keep) return;
-            float[] keys = new float[_hits.Count];
-            SearchHit[] items = new SearchHit[_hits.Count];
-            for (int i = 0; i < _hits.Count; i++)
-            {
-                float dx = _hits[i].X - _origin.x, dz = _hits[i].Z - _origin.z;
-                keys[i] = dx * dx + dz * dz;
-                items[i] = _hits[i];
-            }
-            Array.Sort(keys, items);
-            _hits.Clear();
-            for (int i = 0; i < keep; i++) _hits.Add(items[i]);
-        }
-
-        private static bool IsPicked(ZDO zdo, string prefab)
-        {
-            if (!zdo.GetBool(ZDOVars.s_picked, false)) return false;
-            GameObject go = ZNetScene.instance != null ? ZNetScene.instance.GetPrefab(prefab) : null;
-            Pickable pickable = go != null ? go.GetComponent<Pickable>() : null;
-            if (pickable == null || pickable.m_respawnTimeMinutes <= 0f) return true;
-            // A pickable that grows back counts as available once its time is up, even if nobody has been near.
-            DateTime pickedAt = new DateTime(zdo.GetLong(ZDOVars.s_pickedTime, 0L));
-            return (ZNet.instance.GetTime() - pickedAt).TotalMinutes <= pickable.m_respawnTimeMinutes;
-        }
-
-        private static bool InsideWorldGrid(int sx, int sy)
-        {
-            // ZoneSystem.SectorToIndex maps sectors outside -256..255 to index 0, a catch-all bucket.
-            return sx > -256 && sx < 256 && sy > -256 && sy < 256;
-        }
-
-        /// <summary>Horizontal distance from the search origin to the nearest point of a 64 m zone.</summary>
-        private static float ZoneDistance(int sx, int sy)
-        {
-            float minX = sx * 64f - 32f, maxX = sx * 64f + 32f;
-            float minZ = sy * 64f - 32f, maxZ = sy * 64f + 32f;
-            float dx = Mathf.Max(0f, Mathf.Max(minX - _origin.x, _origin.x - maxX));
-            float dz = Mathf.Max(0f, Mathf.Max(minZ - _origin.z, _origin.z - maxZ));
-            return Mathf.Sqrt(dx * dx + dz * dz);
         }
 
         // ---------------------------------------------------------------- the result
@@ -522,7 +461,7 @@ namespace Waypointer
         private static void Finish()
         {
             _phase = Phase.Idle;
-            _scan = null;
+            _job = null;
             _elapsed.Stop();
 
 #if WAYFINDER
@@ -545,7 +484,7 @@ namespace Waypointer
                 // The route is cut to MaxSearchWaypoints stops anyway, so it is planned over the nearest few hundred
                 // places only: planning thousands would stall a frame (10 ms for 2,000, 130 ms for 10,000 on Mono).
                 int cap = Plugin.MaxSearchWaypoints.Value;
-                KeepNearest(Math.Max(4 * cap, 100));
+                SearchRules.KeepNearest(_hits, _origin.x, _origin.z, Math.Max(4 * cap, 100));
                 int n = _hits.Count;
                 float[] xs = new float[n], zs = new float[n];
                 for (int i = 0; i < n; i++) { xs[i] = _hits[i].X; zs[i] = _hits[i].Z; }
@@ -568,13 +507,26 @@ namespace Waypointer
                     placed < count ? string.Format(CultureInfo.InvariantCulture, " - queued the first {0} of the route", placed) : "",
                     possible > 0 ? string.Format(CultureInfo.InvariantCulture, " ({0} possible spot{1})", possible, possible == 1 ? "" : "s") : "");
             WaypointWindow.SetStatus(what);
+            string source = _onServer ? "read the server's own list"
+                : _answeredByServerPlugin ? string.Format(CultureInfo.InvariantCulture, "{0} places from the server's plugin", _answers)
+                : string.Format(CultureInfo.InvariantCulture, "{0} answers from the server", _answers);
             Plugin.Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
                 "Search '{0}' within {1:0} m: {2} found, {3} queued, {4} possible; {5}; {6} objects read, {7} places' chests checked, {8} skipped; {9:0.0} ms of work over {10} frames, {11:0.00} s in all.",
-                _query.Name, _range, count, placed, possible,
-                _onServer ? "read the server's own list" : string.Format(CultureInfo.InvariantCulture, "{0} answers from the server", _answers),
+                _query.Name, _range, count, placed, possible, source,
                 _objectsRead, _chestPlacesChecked, _chestPlacesSkipped, _workMs, _workFrames, _elapsed.Elapsed.TotalSeconds));
 #endif
             _hits.Clear();
+        }
+
+        /// <summary>
+        /// The window's status line, TomTom only: Wayfinder's search says nothing, as before 1.3.0. (A server that does
+        /// not let the player use Find shows in the window's Find section in both editions - a rule, not a result.)
+        /// </summary>
+        private static void SetStatus(string text)
+        {
+#if !WAYFINDER
+            WaypointWindow.SetStatus(text);
+#endif
         }
     }
 }

@@ -27,7 +27,7 @@
     <LangVersion>5</LangVersion>
     <AssemblyName>$(EditionName)</AssemblyName>
     <RootNamespace>Waypointer</RootNamespace>
-    <Version>1.2.1</Version>
+    <Version>1.3.0</Version>
     <Authors>DoomMachine</Authors>
     <Company>DoomMachine</Company>
     <Product>$(EditionName)</Product>

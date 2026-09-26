@@ -17,6 +17,10 @@
 #  12. a location search cannot make a shared pin: the server's answers are caught before vanilla turns them into
 #      saved pins, and no request is sent unless that catch is in place
 #  13. Wayfinder's search keeps only places whose centre is explored; TomTom's keeps everything in range
+#  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
+#      requests, knows a player by the connection their call came on, and every place in range is sent back
+#  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
+#      resolves against the server's own assemblies - a separate build of the game, not a copy
 #
 # A rename in a Valheim update shows up here as a failure instead of as a broken feature in-game.
 #
@@ -27,17 +31,19 @@ param(
     [ValidateSet("TomTom", "Wayfinder")]
     [string]$Edition = "TomTom",
     [string]$ValheimDir = "E:\SteamLibrary\steamapps\common\Valheim",
-    [string]$Plugin = ""
+    [string]$Plugin = "",
+    [string]$ServerDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 $managed = Join-Path $ValheimDir "valheim_Data\Managed"
 $core = Join-Path $ValheimDir "BepInEx\core"
 if ($Plugin -eq "") { $Plugin = Join-Path $ValheimDir "BepInEx\plugins\DoomMachine-$Edition\$Edition.dll" }
+if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent) "Valheim dedicated server" }
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.2.1"
+$expectedVersion = "1.3.0"
 
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 
@@ -803,10 +809,14 @@ Write-Output "== a location search cannot make a shared pin =="
 #      that name - every write to LocationSearch._token comes from RequestPinName, and Ask passes _token as the
 #      pin name (the server echoes it back in every answer)
 #   3. the request name "RPC_DiscoverClosestLocation" appears in exactly one method, LocationSearch.Ask, where the
-#      result of LocationSearch.AnswersIntercepted is branched on directly, before the only
-#      ZRoutedRpc.InvokeRoutedRPC call in the plugin; and AnswersIntercepted asks Harmony.GetPatchInfo about
-#      Game_RPC_DiscoverLocationResponse_Patch and returns, once, a flag set only to false or from
-#      SearchRules.IsOurPrefix (unit-tested) - no request is sent unless the prefix is confirmed patched
+#      result of LocationSearch.AnswersIntercepted is branched on directly, before its ZRoutedRpc.InvokeRoutedRPC
+#      call; and AnswersIntercepted asks Harmony.GetPatchInfo about Game_RPC_DiscoverLocationResponse_Patch and
+#      returns, once, a flag set only to false or from SearchRules.IsOurPrefix (unit-tested) - no request is sent
+#      unless the prefix is confirmed patched
+#   4. every ZRoutedRpc.InvokeRoutedRPC call in the plugin sends a literal name from a fixed list, from a fixed
+#      method: Ask's request, and the plugin's own two calls with a server that runs it (1.3.0) - DoomMachine.
+#      Waypointer.ToServer from FindLink, DoomMachine.Waypointer.ToClient from FindServer. So no other code can
+#      send a request or an answer the game would turn into a pin.
 # And the editions' rule for what a search may place (check 13):
 #   Wayfinder: LocationSearch reads MinimapAccess.IsExplored (only places whose centre is explored).
 #   TomTom:    LocationSearch does not (it places everything in range) - so the Wayfinder check is not vacuous.
@@ -825,7 +835,18 @@ foreach ($t in $plug.GetTypes()) {
                 if (($dt -eq "Game" -and $op.Name -eq "DiscoverClosestLocation") -or ($dt -eq "Minimap" -and $op.Name -eq "DiscoverLocation")) {
                     $searchProblems += ("{0}.{1} references {2}.{3}, which makes a saved pin" -f $t.Name, $m.Name, $dt, $op.Name)
                 }
-                if ($dt -eq "ZRoutedRpc" -and $op.Name -eq "InvokeRoutedRPC") { $invokeSites += ("{0}.{1}" -f $t.FullName, $m.Name) }
+                if ($dt -eq "ZRoutedRpc" -and $op.Name -eq "InvokeRoutedRPC") {
+                    # The name is the call's second-to-last argument in every overload; it must be a literal.
+                    $ins = @($m.Body.Instructions)
+                    $at = [array]::IndexOf($ins, $i)
+                    $src = Get-ArgumentSources $ins $at $m.Body.ExceptionHandlers
+                    $name = "(not a literal)"
+                    if ($src -and $src.Count -ge 2) {
+                        $n = $ins[$src[$src.Count - 2]]
+                        if ($n.OpCode.Name -eq "ldstr") { $name = "$($n.Operand)" }
+                    }
+                    $invokeSites += ,@(("{0}.{1}" -f $t.FullName, $m.Name), $name)
+                }
             }
             if ($i.OpCode.Name -eq "ldstr" -and "$op" -eq "RPC_DiscoverClosestLocation") { $askMethods += $m }
         }
@@ -956,10 +977,19 @@ else {
         $searchProblems += "LocationSearch.Ask does not branch on AnswersIntercepted() before ZRoutedRpc.InvokeRoutedRPC"
     }
 }
-$otherInvokes = @($invokeSites | Where-Object { $_ -ne "Waypointer.LocationSearch.Ask" })
-if ($otherInvokes.Count -gt 0) { $searchProblems += ("ZRoutedRpc.InvokeRoutedRPC is also called from {0}" -f ($otherInvokes -join ", ")) }
+$allowedCalls = @{
+    "Waypointer.LocationSearch.Ask" = "RPC_DiscoverClosestLocation"
+    "Waypointer.FindLink.Tick" = "DoomMachine.Waypointer.ToServer"
+    "Waypointer.FindLink.SendFind" = "DoomMachine.Waypointer.ToServer"
+    "Waypointer.FindServer.Send" = "DoomMachine.Waypointer.ToClient"
+}
+foreach ($site in $invokeSites) {
+    if (-not $allowedCalls.ContainsKey($site[0]) -or $allowedCalls[$site[0]] -ne $site[1]) {
+        $searchProblems += ("ZRoutedRpc.InvokeRoutedRPC sends '{1}' from {0}, which is not on the list of routed calls the plugin may make" -f $site[0], $site[1])
+    }
+}
 if ($searchProblems.Count -eq 0) {
-    Write-Output "  ok    the server's answers to a search cannot become saved pins (prefix skips vanilla; no request without it; no DiscoverLocation)"
+    Write-Output ("  ok    the server's answers to a search cannot become saved pins (prefix skips vanilla; no request without it; no DiscoverLocation; {0} routed calls, all on the list)" -f $invokeSites.Count)
 } else {
     foreach ($p in $searchProblems) { Write-Output "  FAIL  $p" }
     $failures++
@@ -981,6 +1011,237 @@ elseif ($Edition -eq "Wayfinder" -and $readsExplored) { Write-Output "  ok    Wa
 elseif ($Edition -eq "Wayfinder") { Write-Output "  FAIL  Wayfinder's search does not read MinimapAccess.IsExplored - it would place unexplored places"; $failures++ }
 elseif (-not $readsExplored) { Write-Output "  ok    TomTom's search places everything in range (does not read MinimapAccess.IsExplored)" }
 else { Write-Output "  FAIL  TomTom's search reads MinimapAccess.IsExplored - the explored filter belongs to Wayfinder"; $failures++ }
+
+Write-Output ""
+Write-Output "== the server side =="
+# Since 1.3.0 the plugin also runs on a dedicated server, and as the host it answers other players' Find:
+#   1. it declares both processes, valheim.exe and valheim_server.exe (BepInEx skips a plugin elsewhere)
+#   2. Game_RPC_DiscoverClosestLocation_Patch applies WhoMayFind to Vegvisir-style requests that carry this plugin's
+#      token and leaves every other request to vanilla: it branches directly on SearchRules.VanillaMayHandle(pinName)
+#      - and the way it branches is followed: when that is true, the code reached is "return true" - returns true
+#      (vanilla runs) exactly once, and otherwise returns a local set only to false or from FindServer.CallerMayFind()
+#      (an error refuses). CallerMayFind returns only the unit-tested FindProtocol.CallerMayFind(...), none of
+#      whose arguments is a constant; FindServer.Allowed returns only
+#      FindProtocol.MayFind (unit-tested); FindServer.IsAdmin returns only false or ZNet.IsAdmin; and
+#      Plugin.ApplyPatches records whether the connection patch applied (RoutedCallContext.Available), without
+#      which only Everyone lets a caller through
+#   3. a player is known by the connection the call came on, never by the call's sender field (which the sending
+#      game writes itself): ZRoutedRpc_RPC_RoutedRPC_Patch sets RoutedCallContext.Current from RPC_RoutedRPC's rpc
+#      argument and a Finalizer clears it; FindServer.OnMessage takes no sender, and it and CallerMayFind get the
+#      player from FindServer.CallingPeer
+#   4. FindServer.OnMessage asks FindServer.MayFind before it accepts a Find, and FindServer never trims what it
+#      sends (no SearchRules.KeepNearest): Wayfinder's exploration filter runs on the player's side, after it
+#   5. FindLink takes answers only from the server peer: it compares its sender argument with ZNet.GetServerPeer's
+#      m_uid
+$serverProblems = @()
+$checks++
+$processes = @()
+if ($pluginType) {
+    foreach ($ca in $pluginType.CustomAttributes) {
+        if ($ca.AttributeType.Name -eq "BepInProcess") { $processes += "$($ca.ConstructorArguments[0].Value)" }
+    }
+}
+if (-not ($processes -contains "valheim.exe" -and $processes -contains "valheim_server.exe")) {
+    $serverProblems += ("BepInProcess lists '{0}', expected valheim.exe and valheim_server.exe" -f ($processes -join ", "))
+}
+$gpType = $plug.GetType("Waypointer.Game_RPC_DiscoverClosestLocation_Patch")
+$gpPrefix = $null
+if ($gpType) { $gpPrefix = $gpType.Methods | Where-Object { $_.Name -eq "Prefix" } | Select-Object -First 1 }
+if (-not $gpPrefix) { $serverProblems += "Waypointer.Game_RPC_DiscoverClosestLocation_Patch.Prefix not found" }
+else {
+    $gi = @($gpPrefix.Body.Instructions)
+    $pnames = @($gpPrefix.Parameters | ForEach-Object { $_.Name })
+    if ($gpPrefix.ReturnType.FullName -ne "System.Boolean") { $serverProblems += "the WhoMayFind prefix does not return bool, so it cannot refuse" }
+    if (-not ($pnames -contains "pinName")) { $serverProblems += "the WhoMayFind prefix does not take the request's pinName" }
+    $vmhAt = -1
+    for ($k = 0; $k -lt $gi.Count; $k++) {
+        $o = $gi[$k].Operand
+        if ($o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "Waypointer.SearchRules" -and $o.Name -eq "VanillaMayHandle") { $vmhAt = $k; break }
+    }
+    $argOk = $false
+    if ($vmhAt -ge 1) {
+        $a = $gi[$vmhAt - 1]
+        $an = ""
+        if ($a.OpCode.Name -match '^ldarg\.([0-3])$') { $an = $gpPrefix.Parameters[[int]$Matches[1]].Name }
+        elseif ($a.OpCode.Name -like "ldarg*" -and $a.Operand -is [Mono.Cecil.ParameterDefinition]) { $an = $a.Operand.Name }
+        $argOk = $an -eq "pinName"
+    }
+    $branches = $vmhAt -ge 0 -and ($vmhAt + 1) -lt $gi.Count -and "$($gi[$vmhAt + 1].OpCode.FlowControl)" -eq "Cond_Branch"
+    if (-not ($argOk -and $branches)) { $serverProblems += "the WhoMayFind prefix does not branch directly on SearchRules.VanillaMayHandle(pinName)" }
+    else {
+        # Which way: brtrue jumps when it is true, brfalse falls through when it is true. Either way the code reached
+        # must be "return true", or a request without this plugin's token would go through WhoMayFind.
+        $br = $gi[$vmhAt + 1]
+        $trueWay = -1
+        if ($br.OpCode.Name -like "brtrue*") { $trueWay = [array]::IndexOf($gi, $br.Operand) }
+        elseif ($br.OpCode.Name -like "brfalse*") { $trueWay = $vmhAt + 2 }
+        $returnsTrue = $trueWay -ge 0 -and ($trueWay + 1) -lt $gi.Count -and $gi[$trueWay].OpCode.Name -eq "ldc.i4.1" -and $gi[$trueWay + 1].OpCode.Name -eq "ret"
+        if (-not $returnsTrue) { $serverProblems += "when SearchRules.VanillaMayHandle(pinName) is true, the WhoMayFind prefix does not return true (vanilla requests would be judged by WhoMayFind)" }
+    }
+    $trueRets = 0; $flagRets = @(); $otherRets = 0
+    for ($k = 1; $k -lt $gi.Count; $k++) {
+        if ($gi[$k].OpCode.Name -ne "ret") { continue }
+        $b = $gi[$k - 1]
+        if ($b.OpCode.Name -eq "ldc.i4.1") { $trueRets++ }
+        elseif ($b.OpCode.Name -like "ldloc*") { $flagRets += (Get-LocalIndex $b) }
+        else { $otherRets++ }
+    }
+    if ($trueRets -ne 1 -or $otherRets -ne 0 -or $flagRets.Count -eq 0) {
+        $serverProblems += ("the WhoMayFind prefix must return true once (vanilla requests) and otherwise a flag; found {0} true, {1} flag and {2} other returns" -f $trueRets, $flagRets.Count, $otherRets)
+    } else {
+        $fromMayFind = $false
+        for ($k = 1; $k -lt $gi.Count; $k++) {
+            if (-not ($gi[$k].OpCode.Name -like "stloc*" -and $flagRets -contains (Get-LocalIndex $gi[$k]))) { continue }
+            $src = $gi[$k - 1]
+            $isRule = $src.OpCode.Name -like "call*" -and $src.Operand -is [Mono.Cecil.MethodReference] -and $src.Operand.DeclaringType.FullName -eq "Waypointer.FindServer" -and $src.Operand.Name -eq "CallerMayFind"
+            if ($isRule) { $fromMayFind = $true }
+            elseif ($src.OpCode.Name -ne "ldc.i4.0") { $serverProblems += ("the WhoMayFind prefix sets its answer from '{0}', not from FindServer.CallerMayFind or false" -f $src.OpCode.Name) }
+        }
+        if (-not $fromMayFind) { $serverProblems += "the WhoMayFind prefix never asks FindServer.CallerMayFind" }
+    }
+}
+# The connection, not the sender field.
+$ctxPatch = $plug.GetType("Waypointer.ZRoutedRpc_RPC_RoutedRPC_Patch")
+$ctxOk = $false
+if ($ctxPatch) {
+    $ctxTarget = @($ctxPatch.CustomAttributes | Where-Object { $_.AttributeType.Name -eq "HarmonyPatch" } | ForEach-Object { @($_.ConstructorArguments | ForEach-Object { "$($_.Value)" }) -join "." })
+    $cp = $ctxPatch.Methods | Where-Object { $_.Name -eq "Prefix" } | Select-Object -First 1
+    $cf = $ctxPatch.Methods | Where-Object { $_.Name -eq "Finalizer" } | Select-Object -First 1
+    $setsFromRpc = $false; $clears = $false
+    if ($cp) {
+        $ci = @($cp.Body.Instructions)
+        for ($k = 1; $k -lt $ci.Count; $k++) {
+            if ($ci[$k].OpCode.Name -eq "stsfld" -and "$($ci[$k].Operand)" -match "Waypointer\.RoutedCallContext::Current$") {
+                $a = $ci[$k - 1]
+                $an = ""
+                if ($a.OpCode.Name -match '^ldarg\.([0-3])$') { $an = $cp.Parameters[[int]$Matches[1]].Name }
+                elseif ($a.OpCode.Name -like "ldarg*" -and $a.Operand -is [Mono.Cecil.ParameterDefinition]) { $an = $a.Operand.Name }
+                if ($an -eq "rpc") { $setsFromRpc = $true }
+            }
+        }
+    }
+    if ($cf) {
+        $fi = @($cf.Body.Instructions)
+        for ($k = 1; $k -lt $fi.Count; $k++) {
+            if ($fi[$k].OpCode.Name -eq "stsfld" -and "$($fi[$k].Operand)" -match "Waypointer\.RoutedCallContext::Current$" -and $fi[$k - 1].OpCode.Name -eq "ldnull") { $clears = $true }
+        }
+    }
+    $ctxOk = ($ctxTarget -contains "ZRoutedRpc.RPC_RoutedRPC") -and $setsFromRpc -and $clears
+}
+if (-not $ctxOk) { $serverProblems += "ZRoutedRpc_RPC_RoutedRPC_Patch must set RoutedCallContext.Current from RPC_RoutedRPC's rpc in a Prefix and clear it in a Finalizer" }
+$apm = $null
+if ($pluginType) { $apm = $pluginType.Methods | Where-Object { $_.Name -eq "ApplyPatches" } | Select-Object -First 1 }
+$records = $false
+if ($apm) {
+    $pi = @($apm.Body.Instructions)
+    for ($k = 1; $k -lt $pi.Count; $k++) {
+        if ($pi[$k].OpCode.Name -eq "stsfld" -and "$($pi[$k].Operand)" -match "Waypointer\.RoutedCallContext::Available$" -and $pi[$k - 1].OpCode.Name -eq "ldc.i4.1") { $records = $true }
+    }
+}
+if (-not $records) { $serverProblems += "Plugin.ApplyPatches does not record that the connection patch applied (RoutedCallContext.Available)" }
+$fs = $plug.GetType("Waypointer.FindServer")
+if (-not $fs) { $serverProblems += "Waypointer.FindServer not found" }
+else {
+    foreach ($mn in @("OnMessage", "CallerMayFind")) {
+        $mm = $fs.Methods | Where-Object { $_.Name -eq $mn } | Select-Object -First 1
+        if (-not $mm) { $serverProblems += "FindServer.$mn not found"; continue }
+        if (@($mm.Parameters | Where-Object { $_.ParameterType.FullName -eq "System.Int64" }).Count -gt 0) { $serverProblems += "FindServer.$mn takes a sender id; it must know the player by the connection" }
+        $usesConn = @($mm.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "Waypointer.FindServer" -and $_.Operand.Name -eq "CallingPeer" }).Count -gt 0
+        if (-not $usesConn) { $serverProblems += "FindServer.$mn does not get the player from FindServer.CallingPeer" }
+    }
+    # The decision: CallerMayFind returns only FindProtocol.CallerMayFind(...) (unit-tested), whose arguments are
+    # all worked out, none a constant.
+    $cmf = $fs.Methods | Where-Object { $_.Name -eq "CallerMayFind" } | Select-Object -First 1
+    $decisionOk = $false
+    if ($cmf) {
+        $ci2 = @($cmf.Body.Instructions)
+        $decisionOk = $true
+        $rets2 = 0
+        for ($k = 1; $k -lt $ci2.Count; $k++) {
+            if ($ci2[$k].OpCode.Name -ne "ret") { continue }
+            $rets2++
+            $src = $ci2[$k - 1]
+            $isRule = $src.OpCode.Name -like "call*" -and $src.Operand -is [Mono.Cecil.MethodReference] -and $src.Operand.DeclaringType.FullName -eq "Waypointer.FindProtocol" -and $src.Operand.Name -eq "CallerMayFind"
+            if (-not $isRule) { $decisionOk = $false; continue }
+            $args2 = Get-ArgumentSources $ci2 ($k - 1) $cmf.Body.ExceptionHandlers
+            if (-not $args2) { $decisionOk = $false; continue }
+            foreach ($a in $args2) { if ($ci2[$a].OpCode.Name -like "ldc.i4*") { $decisionOk = $false } }
+        }
+        if ($rets2 -eq 0) { $decisionOk = $false }
+    }
+    if (-not $decisionOk) { $serverProblems += "FindServer.CallerMayFind must return only FindProtocol.CallerMayFind(...), with no constant argument" }
+    $alw = $fs.Methods | Where-Object { $_.Name -eq "Allowed" } | Select-Object -First 1
+    $alwOk = $false
+    if ($alw) {
+        $ai3 = @($alw.Body.Instructions)
+        $alwOk = $true
+        for ($k = 1; $k -lt $ai3.Count; $k++) {
+            if ($ai3[$k].OpCode.Name -ne "ret") { continue }
+            $b = $ai3[$k - 1]
+            if (-not ($b.OpCode.Name -like "call*" -and $b.Operand -is [Mono.Cecil.MethodReference] -and $b.Operand.DeclaringType.FullName -eq "Waypointer.FindProtocol" -and $b.Operand.Name -eq "MayFind")) { $alwOk = $false }
+        }
+    }
+    if (-not $alwOk) { $serverProblems += "FindServer.Allowed must return only FindProtocol.MayFind(...)" }
+    $iad = $fs.Methods | Where-Object { $_.Name -eq "IsAdmin" } | Select-Object -First 1
+    $iadOk = $false
+    if ($iad) {
+        $ii = @($iad.Body.Instructions)
+        $asks2 = @($ii | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "ZNet" -and $_.Operand.Name -eq "IsAdmin" }).Count -gt 0
+        $iadOk = $asks2
+        for ($k = 1; $k -lt $ii.Count; $k++) {
+            if ($ii[$k].OpCode.Name -ne "ret") { continue }
+            $b = $ii[$k - 1]
+            $fromGame = $b.Operand -is [Mono.Cecil.MethodReference] -and $b.Operand.DeclaringType.FullName -eq "ZNet" -and $b.Operand.Name -eq "IsAdmin"
+            if (-not ($fromGame -or $b.OpCode.Name -eq "ldc.i4.0")) { $iadOk = $false }
+        }
+    }
+    if (-not $iadOk) { $serverProblems += "FindServer.IsAdmin must return only false or the game's own ZNet.IsAdmin" }
+    $cpm = $fs.Methods | Where-Object { $_.Name -eq "CallingPeer" } | Select-Object -First 1
+    $readsCtx = $false
+    if ($cpm) { $readsCtx = @($cpm.Body.Instructions | Where-Object { $_.OpCode.Name -eq "ldsfld" -and "$($_.Operand)" -match "Waypointer\.RoutedCallContext::Current$" }).Count -gt 0 }
+    if (-not $readsCtx) { $serverProblems += "FindServer.CallingPeer does not read RoutedCallContext.Current" }
+    $om = $fs.Methods | Where-Object { $_.Name -eq "OnMessage" } | Select-Object -First 1
+    $asks = @()
+    if ($om) { $asks = @($om.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "Waypointer.FindServer" -and $_.Operand.Name -eq "MayFind" }) }
+    if ($asks.Count -eq 0) { $serverProblems += "FindServer.OnMessage does not ask FindServer.MayFind before accepting a Find" }
+    foreach ($m in $fs.Methods) {
+        if (-not $m.HasBody) { continue }
+        foreach ($i in $m.Body.Instructions) {
+            if ($i.Operand -is [Mono.Cecil.MethodReference] -and $i.Operand.DeclaringType.FullName -eq "Waypointer.SearchRules" -and $i.Operand.Name -eq "KeepNearest") {
+                $serverProblems += ("FindServer.{0} trims the places it sends (SearchRules.KeepNearest); Wayfinder's filter needs every place in range" -f $m.Name)
+            }
+        }
+    }
+}
+$fl = $plug.GetType("Waypointer.FindLink")
+$checksSender = $false
+if ($fl) {
+    $oc = $fl.Methods | Where-Object { $_.Name -eq "OnToClient" } | Select-Object -First 1
+    if ($oc) {
+        $oi = @($oc.Body.Instructions)
+        $asksServer = @($oi | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "ZNet" -and $_.Operand.Name -eq "GetServerPeer" }).Count -gt 0
+        # sender compared with the server peer's m_uid: ldarg sender ... ldfld ZNetPeer::m_uid, then a compare.
+        $compares = $false
+        for ($k = 1; $k -lt $oi.Count - 1; $k++) {
+            if (-not ($oi[$k].OpCode.Name -eq "ldfld" -and "$($oi[$k].Operand)" -match "ZNetPeer::m_uid$")) { continue }
+            if (-not ($oi[$k + 1].OpCode.Name -match '^(beq|bne\.un|ceq)')) { continue }
+            for ($j = [Math]::Max(0, $k - 3); $j -lt $k; $j++) {
+                $an = ""
+                if ($oi[$j].OpCode.Name -match '^ldarg\.([0-3])$') { $an = $oc.Parameters[[int]$Matches[1]].Name }
+                elseif ($oi[$j].OpCode.Name -like "ldarg*" -and $oi[$j].Operand -is [Mono.Cecil.ParameterDefinition]) { $an = $oi[$j].Operand.Name }
+                if ($an -eq "sender") { $compares = $true }
+            }
+        }
+        $checksSender = $asksServer -and $compares
+    }
+}
+if (-not $checksSender) { $serverProblems += "FindLink.OnToClient does not compare its sender with the server peer (ZNet.GetServerPeer().m_uid)" }
+if ($serverProblems.Count -eq 0) {
+    Write-Output "  ok    runs on valheim.exe and valheim_server.exe; WhoMayFind decides only this plugin's requests, by the calling connection; the server never trims; only its answers count"
+} else {
+    foreach ($p in $serverProblems) { Write-Output "  FAIL  $p" }
+    $failures++
+}
 
 Write-Output ""
 Write-Output "== game types and members the plugin uses =="
@@ -1011,6 +1272,47 @@ if ($unresolved -eq 0) {
     Write-Output ("  ok    all {0} type and member references into the game, Unity, BepInEx and Harmony resolve" -f $resolved)
 } else {
     $failures++
+}
+
+Write-Output ""
+Write-Output "== the dedicated server's own assemblies =="
+# The dedicated server ships its own build of assembly_valheim.dll (and of most other assemblies): the same
+# source compiled for the server, with some method bodies changed. Resolve every reference again against it, the
+# way the server's runtime will bind them. BepInEx and Harmony come from this game's BepInEx\core (the same pack
+# goes on a server). Skipped, and not counted, when no dedicated server is installed.
+$serverManaged = Join-Path $ServerDir "valheim_server_Data\Managed"
+if (-not (Test-Path (Join-Path $serverManaged "assembly_valheim.dll"))) {
+    Write-Output ("  skip  no dedicated server at {0}; the server's own assemblies were not checked" -f $ServerDir)
+} else {
+    $sResolver = New-Object Mono.Cecil.DefaultAssemblyResolver
+    $sResolver.AddSearchDirectory($serverManaged)
+    $sResolver.AddSearchDirectory($core)
+    $sParams = New-Object Mono.Cecil.ReaderParameters
+    $sParams.AssemblyResolver = $sResolver
+    $sPlug = [Mono.Cecil.ModuleDefinition]::ReadModule($Plugin, $sParams)
+    $sRefs = @()
+    foreach ($tr in $sPlug.GetTypeReferences()) { $sRefs += ,@($tr, $tr) }
+    foreach ($mr in $sPlug.GetMemberReferences()) { $sRefs += ,@($mr, $mr.DeclaringType) }
+    $sResolved = 0; $sMissing = @()
+    foreach ($pair in $sRefs) {
+        $dt = $pair[1]
+        while ($dt.IsNested) { $dt = $dt.DeclaringType }
+        $scope = $dt.Scope.Name
+        if (-not ($gameScopes -contains $scope -or $scope -like "UnityEngine*")) { continue }
+        $r = $null
+        try { $r = $pair[0].Resolve() } catch { }
+        if ($r -eq $null) { $sMissing += ("{0} ({1})" -f $pair[0].FullName, $scope) } else { $sResolved++ }
+    }
+    $sFile = $null
+    try { $sFile = $sPlug.AssemblyResolver.Resolve((New-Object Mono.Cecil.AssemblyNameReference("assembly_valheim", (New-Object Version)))).MainModule.FileName } catch { }
+    $checks++
+    if ($sMissing.Count -eq 0 -and $sFile -and $sFile.StartsWith($serverManaged, [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Output ("  ok    all {0} references resolve against the dedicated server's own assemblies ({1})" -f $sResolved, $serverManaged)
+    } else {
+        if (-not ($sFile -and $sFile.StartsWith($serverManaged, [StringComparison]::OrdinalIgnoreCase))) { Write-Output ("  FAIL  assembly_valheim resolved from '{0}', not from the server" -f $sFile) }
+        foreach ($x in $sMissing) { Write-Output ("  FAIL  {0} does not resolve on the dedicated server" -f $x) }
+        $failures++
+    }
 }
 
 Write-Output ""
