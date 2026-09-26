@@ -151,6 +151,11 @@ namespace Waypointer
             SkipWaypointKey = Config.Bind("1 - Keys", "SkipWaypointKey", KeyCode.None,
                 "Optional key that skips the active waypoint and moves to the next one in the list.");
 
+            // A key Valheim cannot read is ignored after one warning (Hotkeys); a new choice is tried afresh.
+            ToggleWindowKey.SettingChanged += OnKeySettingChanged;
+            MapModifierKey.SettingChanged += OnKeySettingChanged;
+            SkipWaypointKey.SettingChanged += OnKeySettingChanged;
+
             ArrivalRadius = Config.Bind("2 - Behaviour", "ArrivalRadius", 10f,
                 new ConfigDescription(
                     "How close you must get, in metres, before a waypoint counts as reached.",
@@ -203,10 +208,17 @@ namespace Waypointer
             // whole of a slider drag.
         }
 
+        private static void OnKeySettingChanged(object sender, EventArgs e)
+        {
+            Hotkeys.Forget();
+        }
+
         private void Update()
         {
             // This runs every frame inside the game's own update loop, so nothing here may escape:
-            // an unhandled exception would surface as a Unity error every single frame.
+            // an unhandled exception would surface as a Unity error every single frame. The keys and the
+            // waypoint tick are guarded separately, so that nothing going wrong with a key can stop arrival
+            // checks, markers and saving (preflight checks that the tick's try block reads no key).
             try
             {
                 bool consoleVisible = Console.IsVisible();
@@ -229,11 +241,11 @@ namespace Waypointer
                     }
                     // Not opened over the pause menu: Menu.Update closes it on the same Escape that closes our
                     // window, so one press would close both and unpause. Closing is always allowed.
-                    else if (IsHotkeyAvailable(ToggleWindowKey.Value) && ZInput.GetKeyDown(ToggleWindowKey.Value, false)
+                    else if (IsHotkeyAvailable(ToggleWindowKey.Value) && Hotkeys.Pressed(ToggleWindowKey)
                              && (WaypointWindow.IsOpen || !Menu.IsVisible()))
                         WaypointWindow.Toggle();
 
-                    if (IsHotkeyAvailable(SkipWaypointKey.Value) && ZInput.GetKeyDown(SkipWaypointKey.Value, false)
+                    if (IsHotkeyAvailable(SkipWaypointKey.Value) && Hotkeys.Pressed(SkipWaypointKey)
                         && WaypointManager.HasActive && WaypointManager.QueueBelongsToCurrentWorld)
                     {
                         WaypointManager.SkipActive();
@@ -241,6 +253,14 @@ namespace Waypointer
                 }
 
                 _consoleWasVisible = consoleVisible;
+            }
+            catch (Exception e)
+            {
+                LogThrottled(ref _keyErrors, "Waypoint key handling failed", e);
+            }
+
+            try
+            {
                 WaypointManager.Tick();
                 WaypointWindow.UpdateCursorState();
             }
@@ -329,6 +349,7 @@ namespace Waypointer
         // Console.Update, so on the Escape frame the console may already have closed itself.
         private static bool _consoleWasVisible;
 
+        private static int _keyErrors;
         private static int _updateErrors;
         private static int _guiErrors;
         private const int MaxLoggedErrors = 3;

@@ -25,9 +25,8 @@ namespace Waypointer
                 // Swallow clicks that were aimed at our own window sitting over the map.
                 if (WaypointWindow.PointerOverWindow()) return false;
 
-                KeyCode modifier = Plugin.MapModifierKey.Value;
-                if (modifier == KeyCode.None) return true;
-                if (!ZInput.GetKey(modifier, false)) return true;
+                // An unbound modifier, or one Valheim cannot read, leaves every click to the game.
+                if (!Hotkeys.Held(Plugin.MapModifierKey)) return true;
 
                 // Suppressed only when we actually acted on the click.
                 return !HandleWaypointClick(__instance);
@@ -109,9 +108,7 @@ namespace Waypointer
             try
             {
                 if (WaypointWindow.PointerOverWindow()) return false;
-                KeyCode modifier = Plugin.MapModifierKey.Value;
-                if (modifier == KeyCode.None) return true;
-                return !ZInput.GetKey(modifier, false);
+                return !Hotkeys.Held(Plugin.MapModifierKey);
             }
             catch (Exception e)
             {

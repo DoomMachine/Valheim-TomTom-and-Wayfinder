@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Runs CoordinateParser (TomTom's parser), CoordinateFormat and SafeFile (the crash-safe route save)
-    outside Unity. Shims.cs supplies the
-    handful of UnityEngine types and the BepInEx config entry they touch, so the real source is
+    Runs CoordinateParser (TomTom's parser), CoordinateFormat, SafeFile (the crash-safe route save) and
+    Hotkeys (reading a key Valheim cannot read) outside Unity. Shims.cs supplies the handful of UnityEngine
+    types, the BepInEx config entry and the ZInput reads they touch, so the real source is
     compiled and exercised unmodified rather than being copied or reimplemented. Built without the
     WAYFINDER symbol, i.e. as TomTom - the only edition that has a parser to test.
 
@@ -30,6 +30,7 @@
     <Compile Include="..\src\CoordinateParser.cs" />
     <Compile Include="..\src\CoordinateFormat.cs" />
     <Compile Include="..\src\SafeFile.cs" />
+    <Compile Include="..\src\Hotkeys.cs" />
   </ItemGroup>
 
 </Project>

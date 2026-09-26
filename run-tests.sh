@@ -1,5 +1,6 @@
 #!/bin/bash
-# Runs the tests: the coordinate parser and formatter, and the crash-safe route save (SafeFile).
+# Runs the tests: the coordinate parser and formatter, the crash-safe route save (SafeFile), and the guarded
+# key reads (Hotkeys).
 #
 # 1. On .NET (modern Roslyn), when the SDK is installed.
 # 2. On Mono with the game's own mscorlib.dll, when a Unity Editor is installed. The game runs Mono, and
@@ -32,6 +33,7 @@ build_partest() {
     echo "\"$(cygpath -w "$HERE/src/CoordinateParser.cs")\""
     echo "\"$(cygpath -w "$HERE/src/CoordinateFormat.cs")\""
     echo "\"$(cygpath -w "$HERE/src/SafeFile.cs")\""
+    echo "\"$(cygpath -w "$HERE/src/Hotkeys.cs")\""
   } > "$RSP"
   "$CSC" "@$(cygpath -w "$RSP")"
 }

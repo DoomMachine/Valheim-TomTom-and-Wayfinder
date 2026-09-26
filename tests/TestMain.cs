@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using BepInEx.Configuration;
 using UnityEngine;
 
 namespace Waypointer
@@ -154,6 +155,7 @@ namespace Waypointer
             Check("format 2D", formatted == "100, 200", "got " + formatted);
 
             SafeFileTests();
+            HotkeysTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
@@ -322,6 +324,110 @@ namespace Waypointer
                     Directory.Delete(dir, true);
                 }
                 catch (Exception) { }
+            }
+        }
+
+        // Keys Valheim cannot read (Hotkeys): the first failing read is caught and warned about once, then the key
+        // reads as not pressed without asking the game again, like an unbound key. ZInput here is the shim, whose
+        // Plus and WheelUp throw as Valheim 1.0.16's do, and whose F13 fails with another exception type. Every
+        // read must pass logWarning: false (the shim records it), or the game would log on every poll of a key it
+        // cannot map.
+        private static void HotkeysTests()
+        {
+            ZInput.Reset();
+            Plugin.Log.Warnings.Clear();
+            Hotkeys.Forget();
+            try
+            {
+                ConfigEntry<KeyCode> toggle = new ConfigEntry<KeyCode>("1 - Keys", "ToggleWindowKey", KeyCode.F11);
+                ConfigEntry<KeyCode> modifier = new ConfigEntry<KeyCode>("1 - Keys", "MapModifierKey", KeyCode.LeftAlt);
+                ConfigEntry<KeyCode> skip = new ConfigEntry<KeyCode>("1 - Keys", "SkipWaypointKey", KeyCode.None);
+
+                ZInput.Down.Add(KeyCode.F11);
+                bool pressed = Hotkeys.Pressed(toggle);
+                Check("keys: a readable key is read with GetKeyDown, logWarning false", pressed && ZInput.LastRead == "GetKeyDown:F11:False", ZInput.LastRead);
+                ZInput.Down.Add(KeyCode.LeftAlt);
+                bool held = Hotkeys.Held(modifier);
+                Check("keys: a held key is read with GetKey, logWarning false", held && ZInput.LastRead == "GetKey:LeftAlt:False", ZInput.LastRead);
+                ZInput.Down.Remove(KeyCode.F11);
+                Check("keys: a readable key that is up reads false", !Hotkeys.Pressed(toggle) && ZInput.LastRead == "GetKeyDown:F11:False", ZInput.LastRead);
+
+                int reads = ZInput.Reads;
+                Check("keys: an unbound key reads false without asking the game",
+                    !Hotkeys.Pressed(skip) && !Hotkeys.Held(skip) && ZInput.Reads == reads, "reads " + (ZInput.Reads - reads));
+
+                // Held down, even: it cannot be read at all.
+                toggle.Value = KeyCode.Plus;
+                ZInput.Down.Add(KeyCode.Plus);
+                bool threw = false;
+                bool first = true;
+                reads = ZInput.Reads;
+                try { first = Hotkeys.Pressed(toggle); }
+                catch (Exception) { threw = true; }
+                Check("keys: an unreadable key throws nothing and reads false", !threw && !first && ZInput.Reads == reads + 1,
+                    "threw " + threw + ", read " + first + ", reads " + (ZInput.Reads - reads));
+                Check("keys: one warning, naming the setting and the key",
+                    Plugin.Log.Warnings.Count == 1 && Plugin.Log.Warnings[0].Contains("ToggleWindowKey") && Plugin.Log.Warnings[0].Contains("Plus"),
+                    Plugin.Log.Warnings.Count + " warning(s): " + string.Join(" | ", Plugin.Log.Warnings.ToArray()));
+
+                reads = ZInput.Reads;
+                bool again = Hotkeys.Pressed(toggle) | Hotkeys.Pressed(toggle) | Hotkeys.Held(toggle);
+                Check("keys: after that it is neither read again nor warned about again",
+                    !again && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 1,
+                    "read " + again + ", reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
+
+                Check("keys: other keys still read while one cannot be", Hotkeys.Held(modifier) && ZInput.LastRead == "GetKey:LeftAlt:False", ZInput.LastRead);
+
+                skip.Value = KeyCode.Plus;
+                reads = ZInput.Reads;
+                Check("keys: the unreadable key is skipped in every setting", !Hotkeys.Pressed(skip) && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 1,
+                    "reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
+
+                toggle.Value = KeyCode.F11;
+                ZInput.Down.Add(KeyCode.F11);
+                Check("keys: a setting changed to a readable key works at once", Hotkeys.Pressed(toggle) && ZInput.LastRead == "GetKeyDown:F11:False", ZInput.LastRead);
+
+                // Plugin.BindConfig calls Forget when any key setting changes.
+                Hotkeys.Forget();
+                reads = ZInput.Reads;
+                bool retried = Hotkeys.Pressed(skip);
+                Check("keys: after Forget an unreadable key is tried once more and warned about once more",
+                    !retried && ZInput.Reads == reads + 1 && Plugin.Log.Warnings.Count == 2,
+                    "reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
+
+                modifier.Value = KeyCode.WheelUp;
+                threw = false;
+                held = true;
+                try { held = Hotkeys.Held(modifier); }
+                catch (Exception) { threw = true; }
+                Check("keys: an unreadable modifier reads as not held, with one warning",
+                    !threw && !held && Plugin.Log.Warnings.Count == 3 && Plugin.Log.Warnings[2].Contains("MapModifierKey"),
+                    "threw " + threw + ", held " + held + ", warnings " + Plugin.Log.Warnings.Count);
+
+                // Any failure of the read is caught, not only the ArgumentOutOfRangeException 1.0.16 throws.
+                toggle.Value = KeyCode.F13;
+                threw = false;
+                first = true;
+                try { first = Hotkeys.Pressed(toggle); }
+                catch (Exception) { threw = true; }
+                reads = ZInput.Reads;
+                bool later = true;
+                try { later = Hotkeys.Pressed(toggle); }
+                catch (Exception) { threw = true; }
+                Check("keys: a read failing with another exception is caught the same way",
+                    !threw && !first && !later && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 4
+                        && Plugin.Log.Warnings[3].Contains("InvalidOperationException"),
+                    "threw " + threw + ", read " + first + "/" + later + ", reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
+            }
+            catch (Exception e)
+            {
+                Fail("Hotkeys tests", e.GetType().Name + ": " + e.Message);
+            }
+            finally
+            {
+                Hotkeys.Forget();
+                ZInput.Reset();
+                Plugin.Log.Warnings.Clear();
             }
         }
 

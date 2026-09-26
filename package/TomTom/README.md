@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.1.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.1.2 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -91,7 +91,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.1.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.1.2]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -135,6 +135,14 @@ didn't, rebind it: vanilla Valheim also uses F2 (connect panel), F5 (console) an
 layout), plus Ctrl+F1 (mouse capture) and Ctrl+F3 (hide HUD), and other mods can hold keys of
 their own — choose one that nothing you run already uses.
 
+Valheim (1.0.16) cannot read some keys the configuration offers: Clear, Help, SysReq, Break, F13 to
+F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `DoubleQuote`, `Hash`,
+`Dollar`, `Percent`, `Ampersand`, `LeftParen`, `RightParen`, `Asterisk`, `Plus`, `Colon`, `Less`,
+`Greater`, `Question`, `At`, `Caret`, `Underscore`, `LeftCurlyBracket`, `Pipe`, `RightCurlyBracket` and
+`Tilde`. Choose one of those and TomTom writes a warning to `BepInEx/LogOutput.log` and ignores that
+key, as if it were unbound; everything else keeps working. Keys the game ignores outright - Mouse5,
+Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warning.
+
 ## Configuration
 
 `BepInEx/config/DoomMachine.TomTom.cfg`, also editable in-game through ConfigurationManager.
@@ -161,6 +169,6 @@ when the file itself is missing, the next start puts that copy back, and the nex
 ---
 
 Conceived and directed by DoomMachine, who plays it in their own game; written by Claude, Anthropic's AI
-model, under DoomMachine's direction. MIT licensed — the LICENSE file in this package is the full text. Source, issues and newer
-releases:
+model, under DoomMachine's direction. MIT licensed — the LICENSE file in this package is the full text.
+Source, issues and newer releases:
 https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder

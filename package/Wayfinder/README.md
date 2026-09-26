@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.1.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.1.2 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map or are standing on, so nothing can be looked up outside the game
@@ -57,7 +57,7 @@ still run. **Esc** — or **B** on a controller — closes it. The window needs 
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.1.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.1.2]`. TomTom and Wayfinder exclude each
 other: install one.
 
 ## Console
@@ -111,6 +111,14 @@ also saves a picture to Valheim's screenshots folder (on Windows, `%USERPROFILE%
 didn't, rebind it: vanilla Valheim also uses F2 (connect panel), F5 (console) and F9 (gamepad
 layout), plus Ctrl+F1 (mouse capture) and Ctrl+F3 (hide HUD), and other mods can hold keys of
 their own — choose one that nothing you run already uses.
+
+Valheim (1.0.16) cannot read some keys the configuration offers: Clear, Help, SysReq, Break, F13 to
+F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `DoubleQuote`, `Hash`,
+`Dollar`, `Percent`, `Ampersand`, `LeftParen`, `RightParen`, `Asterisk`, `Plus`, `Colon`, `Less`,
+`Greater`, `Question`, `At`, `Caret`, `Underscore`, `LeftCurlyBracket`, `Pipe`, `RightCurlyBracket` and
+`Tilde`. Choose one of those and Wayfinder writes a warning to `BepInEx/LogOutput.log` and ignores that
+key, as if it were unbound; everything else keeps working. Keys the game ignores outright - Mouse5,
+Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warning.
 
 ## Configuration
 

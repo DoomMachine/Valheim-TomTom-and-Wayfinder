@@ -11,6 +11,9 @@
 #   8. every game, Unity, BepInEx and Harmony type and member the plugin uses resolves with its exact signature
 #   9. the Chat.HasFocus postfix still runs last (Chatter's postfix overwrites the result and loads later)
 #  10. routes are saved only through SafeFile.WriteAllText, which flushes the new file to disk before swapping it in
+#  11. a key Valheim cannot read cannot stop the waypoint tick: configurable keys are read only through Hotkeys,
+#      whose reads are caught (and not rethrown), no literal key the game cannot read is used anywhere, and the
+#      tick runs in a try block of its own that reads no key
 #
 # A rename in a Valheim update shows up here as a failure instead of as a broken feature in-game.
 #
@@ -31,7 +34,7 @@ if ($Plugin -eq "") { $Plugin = Join-Path $ValheimDir "BepInEx\plugins\DoomMachi
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.1.1"
+$expectedVersion = "1.1.2"
 
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 
@@ -225,14 +228,24 @@ function Test-LiteralZero($ins, [int]$at) {
     if ($n -eq "ldc.i4.s" -or $n -eq "ldc.i4" -or $n -eq "ldc.i8") { return ([long]"$($p.Operand)" -eq 0) }
     return $false
 }
-function Get-ArgumentSources($ins, [int]$callAt) {
+function Get-ArgumentSources($ins, [int]$callAt, $handlers = $null) {
     # Replays the evaluation stack over the code before a call and returns, for each value the call
     # consumes (the instance first), the index of the instruction that pushed it; $null if it does not add
     # up. A branch or return starts a new statement (compiled C# has an empty stack there); a branch
     # INSIDE the argument list (a ?: operand) leaves too few values, so it returns $null and the check fails.
+    # Pass the method's ExceptionHandlers for a call that may follow a catch block: a catch (or filter) handler
+    # starts with the exception object on an otherwise empty stack, which the straight replay never pushed.
     $stack = New-Object System.Collections.ArrayList
     for ($k = 0; $k -lt $callAt; $k++) {
-        $i = $ins[$k]; $pop = "$($i.OpCode.StackBehaviourPop)"; $push = "$($i.OpCode.StackBehaviourPush)"
+        $i = $ins[$k]
+        if ($handlers) {
+            foreach ($h in $handlers) {
+                $ht = "$($h.HandlerType)"
+                if ((($ht -eq "Catch" -or $ht -eq "Filter") -and $h.HandlerStart -eq $i) -or ($ht -eq "Filter" -and $h.FilterStart -eq $i)) { $stack.Clear(); [void]$stack.Add($k) }
+                elseif (($ht -eq "Finally" -or $ht -eq "Fault") -and $h.HandlerStart -eq $i) { $stack.Clear() }
+            }
+        }
+        $pop = "$($i.OpCode.StackBehaviourPop)"; $push = "$($i.OpCode.StackBehaviourPush)"
         $flow = "$($i.OpCode.FlowControl)"
         if ($flow -eq "Branch" -or $flow -eq "Cond_Branch" -or $flow -eq "Return" -or $flow -eq "Throw") { $stack.Clear(); continue }
         $nPop = 0
@@ -596,6 +609,179 @@ else {
 }
 if ($null -eq $why) { Write-Output "  ok    SafeFile.WriteAllText flushes the new file to disk (FileStream.Flush(true)) before any File.Move swaps it in" }
 else { Write-Output "  FAIL  $why"; $failures++ }
+
+Write-Output ""
+Write-Output "== a key Valheim cannot read cannot stop the waypoint tick =="
+# Valheim 1.0.16's ZInput throws ArgumentOutOfRangeException on every read of 30 KeyCodes that BepInEx still
+# offers as settings (Plus, F13-F15, WheelUp, ...): the KeyCode is missing from ZInput's KeyCode-to-Key table,
+# the lookup yields Key.None and Keyboard.current[Key.None] throws. In 1.1.1 such a key skipped
+# WaypointManager.Tick on every frame in which no chat, console or text field had the keyboard. So:
+#   1. every ZInput.GetKey/GetKeyDown/GetKeyUp whose key is not a literal is in Hotkeys, which makes both kinds
+#      of read (GetKey and GetKeyDown), and a literal key anywhere else must be one the game can read. That set
+#      is worked out from the game itself - the KeyCode enum against the KeyCode-to-Key entries ZInput..cctor
+#      adds, through the routing of ZInput.TryGetKeyStateLowLevel (IsKeyCodeValid, gamepad, mouse, keyboard) -
+#      and a change in it is reported as a note, not a failure: both package READMEs and Hotkeys.cs list the 30
+#   2. each of those reads in Hotkeys passes a literal false for logWarning (true would log a Unity warning on
+#      every poll of a key the game cannot map, e.g. JoystickButton15) and lies inside a try whose
+#      catch (System.Exception) does not rethrow
+#   3. in Plugin.Update, WaypointManager.Tick is called once, inside at least one such try/catch, and no try
+#      block around it reads a key (ZInput.GetKey/GetKeyDown/GetKeyUp, or anything in Hotkeys); every key read in
+#      Update lies inside such a try/catch of its own, so it cannot escape Update either; and Update reads its
+#      keys through Hotkeys.Pressed
+# A catch whose handler contains throw or rethrow does not count as catching. A tripwire on the IL, not a proof:
+# a key read hidden in a helper that Update calls inside the tick's block is not seen.
+function Get-LiteralInt($i) {
+    $n = $i.OpCode.Name
+    if ($n -match '^ldc\.i4\.([0-8])$') { return [int]$Matches[1] }
+    if ($n -eq "ldc.i4.m1") { return -1 }
+    if ($n -eq "ldc.i4" -or $n -eq "ldc.i4.s") { return [int]"$($i.Operand)" }
+    return $null
+}
+function Get-CatchTries($m, $i) {
+    # The try/catch (System.Exception) blocks whose try range holds instruction $i and whose handler neither
+    # throws nor rethrows, so that an exception thrown there really stops there.
+    $found = @()
+    $all = @($m.Body.Instructions)
+    foreach ($h in $m.Body.ExceptionHandlers) {
+        if ($h.HandlerType -ne [Mono.Cecil.Cil.ExceptionHandlerType]::Catch -or $h.CatchType.FullName -ne "System.Exception") { continue }
+        $end = [int]::MaxValue
+        if ($h.TryEnd) { $end = $h.TryEnd.Offset }
+        if ($i.Offset -lt $h.TryStart.Offset -or $i.Offset -ge $end) { continue }
+        $hEnd = [int]::MaxValue
+        if ($h.HandlerEnd) { $hEnd = $h.HandlerEnd.Offset }
+        $throws = @($all | Where-Object { $_.Offset -ge $h.HandlerStart.Offset -and $_.Offset -lt $hEnd -and ($_.OpCode.Name -eq "throw" -or $_.OpCode.Name -eq "rethrow") })
+        if ($throws.Count -eq 0) { $found += ,$h }
+    }
+    return ,$found
+}
+
+# The KeyCodes the game cannot read, worked out from the shipped assemblies.
+$unreadableKeys = @{}      # value -> name
+$keyDerivation = $null     # why the set could not be worked out, when it could not
+$kcType = Find-GameType "UnityEngine.KeyCode"
+$zType = Find-GameType "ZInput"
+if (-not $kcType -or -not $zType) { $keyDerivation = "UnityEngine.KeyCode or ZInput not found in the game" }
+else {
+    $kcName = @{}; $kcValue = @{}
+    foreach ($f in $kcType.Fields) {
+        if (-not $f.HasConstant) { continue }
+        $v = [int]$f.Constant
+        $kcValue[$f.Name] = $v
+        if (-not $kcName.ContainsKey($v)) { $kcName[$v] = $f.Name }
+    }
+    $mapped = @{}
+    $cctor = $zType.Methods | Where-Object { $_.Name -eq ".cctor" -and $_.HasBody } | Select-Object -First 1
+    if ($cctor) {
+        $ci = @($cctor.Body.Instructions)
+        for ($k = 2; $k -lt $ci.Count; $k++) {
+            $op = $ci[$k].Operand
+            if (-not ($op -is [Mono.Cecil.MethodReference]) -or $op.Name -ne "Add") { continue }
+            if (-not "$($op.DeclaringType)".Contains('Dictionary`2<UnityEngine.KeyCode,UnityEngine.InputSystem.Key>')) { continue }
+            $v = Get-LiteralInt $ci[$k - 2]
+            if ($null -ne $v) { $mapped[$v] = $true }
+        }
+    }
+    $needed = @("JoystickButton0", "JoystickButton19", "Mouse0", "Mouse4", "Mouse5", "Mouse6")
+    if (@($needed | Where-Object { -not $kcValue.ContainsKey($_) }).Count -gt 0) { $keyDerivation = "UnityEngine.KeyCode lacks one of " + ($needed -join ", ") }
+    elseif ($mapped.Count -lt 50) { $keyDerivation = "found only {0} KeyCode-to-Key entries in ZInput..cctor (the IL pattern no longer matches)" -f $mapped.Count }
+    else {
+        foreach ($v in @($kcName.Keys)) {
+            if ($v -eq 0 -or $v -gt $kcValue["JoystickButton19"] -or $v -eq $kcValue["Mouse5"] -or $v -eq $kcValue["Mouse6"]) { continue }   # IsKeyCodeValid: never fires
+            if ($v -ge $kcValue["JoystickButton0"]) { continue }                                                                                # gamepad
+            if ($v -ge $kcValue["Mouse0"] -and $v -le $kcValue["Mouse4"]) { continue }                                                          # mouse
+            if (-not $mapped.ContainsKey($v)) { $unreadableKeys[$v] = $kcName[$v] }
+        }
+    }
+}
+$documentedUnreadable = @("Clear", "Exclaim", "DoubleQuote", "Hash", "Dollar", "Percent", "Ampersand", "LeftParen",
+    "RightParen", "Asterisk", "Plus", "Colon", "Less", "Greater", "Question", "At", "Caret", "Underscore",
+    "LeftCurlyBracket", "Pipe", "RightCurlyBracket", "Tilde", "F13", "F14", "F15", "Help", "SysReq", "Break",
+    "WheelUp", "WheelDown")
+if ($null -eq $keyDerivation) {
+    $unreadableNames = @($unreadableKeys.Values | Sort-Object)
+    if (Compare-Object @($documentedUnreadable | Sort-Object) $unreadableNames) {
+        Write-Output ("  note  the game now cannot read {0} KeyCodes, not the 30 of Valheim 1.0.16 - update the Keys paragraph of both package READMEs and Hotkeys.cs: {1}" -f $unreadableNames.Count, ($unreadableNames -join ", "))
+    } else {
+        Write-Output "  note  the game cannot read the same 30 KeyCodes as Valheim 1.0.16 (the list in both package READMEs)"
+    }
+}
+
+$keyReadNames = @("GetKey", "GetKeyDown", "GetKeyUp")
+$unguardedReads = @(); $unreadableLiterals = @(); $unprotectedReads = @(); $guardedKinds = @{}
+foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
+    if (-not $m.HasBody) { continue }
+    $ins = @($m.Body.Instructions)
+    for ($k = 0; $k -lt $ins.Count; $k++) {
+        $op = $ins[$k].Operand
+        if (-not ($op -is [Mono.Cecil.MethodReference]) -or $op.DeclaringType.FullName -ne "ZInput" -or $keyReadNames -notcontains $op.Name) { continue }
+        if ($op.Parameters.Count -lt 1 -or $op.Parameters[0].ParameterType.FullName -ne "UnityEngine.KeyCode") { continue }
+        $where = "{0}.{1} ZInput.{2}" -f $t.Name, $m.Name, $op.Name
+        $src = Get-ArgumentSources $ins $k $m.Body.ExceptionHandlers
+        if ($t.FullName -eq "Waypointer.Hotkeys") {
+            $guardedKinds[$op.Name] = $true
+            if ((Get-CatchTries $m $ins[$k]).Count -eq 0) { $unprotectedReads += ($where + " is not inside a try whose catch (System.Exception) does not rethrow") }
+            if ($null -eq $src -or $src.Count -lt 2 -or $ins[$src[1]].OpCode.Name -ne "ldc.i4.0") { $unprotectedReads += ($where + " does not pass a literal false for logWarning") }
+            continue
+        }
+        $lit = $null
+        if ($null -ne $src) { $lit = Get-LiteralInt $ins[$src[0]] }
+        if ($null -eq $lit) { $unguardedReads += $where }
+        elseif ($unreadableKeys.ContainsKey($lit)) { $unreadableLiterals += ("{0}({1})" -f $where, $unreadableKeys[$lit]) }
+    }
+} }
+$checks++
+$bothKinds = $guardedKinds.ContainsKey("GetKey") -and $guardedKinds.ContainsKey("GetKeyDown")
+if ($null -eq $keyDerivation -and $bothKinds -and $unguardedReads.Count -eq 0 -and $unreadableLiterals.Count -eq 0) {
+    Write-Output "  ok    configurable keys are read only through Hotkeys (it reads both GetKey and GetKeyDown); elsewhere only literal keys the game can read"
+} else {
+    if ($null -ne $keyDerivation) { Write-Output "  FAIL  cannot work out which KeyCodes the game cannot read: $keyDerivation" }
+    if (-not $bothKinds) { Write-Output "  FAIL  Hotkeys does not read both ZInput.GetKey and ZInput.GetKeyDown" }
+    foreach ($w in $unguardedReads) { Write-Output "  FAIL  a key that is not a literal is read outside Hotkeys: $w" }
+    foreach ($w in $unreadableLiterals) { Write-Output "  FAIL  a literal key the game cannot read (it throws on every read): $w" }
+    $failures++
+}
+$checks++
+if ($guardedKinds.Count -gt 0 -and $unprotectedReads.Count -eq 0) {
+    Write-Output "  ok    every ZInput key read in Hotkeys passes logWarning: false and is caught (catch (System.Exception), no rethrow)"
+} else {
+    if ($guardedKinds.Count -eq 0) { Write-Output "  FAIL  Hotkeys makes no ZInput key read" }
+    foreach ($w in $unprotectedReads) { Write-Output "  FAIL  a ZInput key read in Hotkeys: $w" }
+    $failures++
+}
+$checks++
+$whys = @()
+$upd = $null
+if ($pluginType) { $upd = $pluginType.Methods | Where-Object { $_.Name -eq "Update" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $upd) { $whys += "Waypointer.Plugin.Update not found" }
+else {
+    $ins = @($upd.Body.Instructions)
+    $isCall = { param($i) $i.Operand -is [Mono.Cecil.MethodReference] -and $i.OpCode.Name -like "call*" }
+    $tick = @($ins | Where-Object { (& $isCall $_) -and $_.Operand.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and $_.Operand.Name -eq "Tick" })
+    # Key reads: ZInput.GetKey/GetKeyDown/GetKeyUp with a KeyCode, and anything in Hotkeys.
+    $keyCalls = @($ins | Where-Object { (& $isCall $_) -and (
+        $_.Operand.DeclaringType.FullName -eq "Waypointer.Hotkeys" -or
+        ($_.Operand.DeclaringType.FullName -eq "ZInput" -and $keyReadNames -contains $_.Operand.Name -and $_.Operand.Parameters.Count -ge 1 -and
+         $_.Operand.Parameters[0].ParameterType.FullName -eq "UnityEngine.KeyCode")) })
+    $pressed = @($keyCalls | Where-Object { $_.Operand.DeclaringType.FullName -eq "Waypointer.Hotkeys" -and $_.Operand.Name -eq "Pressed" })
+    if ($tick.Count -ne 1) { $whys += ("Plugin.Update calls WaypointManager.Tick {0} times, expected once" -f $tick.Count) }
+    else {
+        $tickTries = Get-CatchTries $upd $tick[0]
+        if ($tickTries.Count -eq 0) { $whys += "WaypointManager.Tick is not inside a try whose catch (System.Exception) does not rethrow, in Plugin.Update" }
+        foreach ($h in $tickTries) {
+            $end = [int]::MaxValue; if ($h.TryEnd) { $end = $h.TryEnd.Offset }
+            $shared = @($keyCalls | Where-Object { $_.Offset -ge $h.TryStart.Offset -and $_.Offset -lt $end })
+            if ($shared.Count -gt 0) {
+                $whys += ("a try block around WaypointManager.Tick also reads a key ({0}.{1}), so a failing key read would skip the tick" -f $shared[0].Operand.DeclaringType.Name, $shared[0].Operand.Name)
+                break
+            }
+        }
+    }
+    $loose = @($keyCalls | Where-Object { (Get-CatchTries $upd $_).Count -eq 0 } | ForEach-Object { "{0}.{1}" -f $_.Operand.DeclaringType.Name, $_.Operand.Name } | Select-Object -Unique)
+    foreach ($c in $loose) { $whys += ("{0} in Plugin.Update is not inside a try whose catch (System.Exception) does not rethrow, so a throw would escape Update and skip the tick" -f $c) }
+    if ($pressed.Count -eq 0) { $whys += "Plugin.Update reads no key through Hotkeys.Pressed" }
+}
+if ($whys.Count -eq 0) { Write-Output "  ok    Plugin.Update runs WaypointManager.Tick in a try block of its own that reads no key" }
+else { foreach ($w in $whys) { Write-Output "  FAIL  $w" }; $failures++ }
 
 Write-Output ""
 Write-Output "== game types and members the plugin uses =="

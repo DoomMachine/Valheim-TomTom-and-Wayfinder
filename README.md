@@ -48,7 +48,7 @@ Plugin.props             build settings shared by both projects (references, pac
 TomTom/TomTom.csproj     sets EditionName=TomTom, deploys by default
 Wayfinder/Wayfinder.csproj  defines WAYFINDER, excludes both Coordinate*.cs files, packages only
 package/<Edition>/       manifest.json, icon.png and README.md for each package
-tests/                   parser, formatter and crash-safe save tests (built as TomTom)
+tests/                   parser, formatter, crash-safe save and key-read tests (built as TomTom)
 preflight.ps1            checks a compiled plugin against the shipped game assemblies
 build.sh                 SDK-free fallback compiler (C# 5)
 Waypointer.slnx          the solution: both editions and the tests
@@ -91,7 +91,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 97 tests (parser and crash-safe save), on .NET and on Mono
+./run-tests.sh                                                         # 110 tests (parser, crash-safe save, key reads), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -115,6 +115,10 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
   unconditionally, and only then `File.Move` it into place; the save must go through it, and nothing but that
   method's one `FileStream` may open a file for writing (whether the drive honours the flush is beyond any
   check)
+- a key the player chooses could stop the waypoint tick: Valheim throws on every read of 30 of the keys
+  BepInEx offers, so every configurable key must be read through `Hotkeys`, whose reads are caught (and not
+  rethrown), a hard-coded key must be one the game can read (the 30 are worked out from the game itself),
+  and `Plugin.Update` must call `WaypointManager.Tick` in a try block of its own that reads no key
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
   console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
@@ -175,6 +179,19 @@ Run it after every Valheim update.
   when the player is briefly missing; a change of world is detected by world UID instead.
 
 ## History
+
+**1.1.2** — a key Valheim cannot read no longer stops the mod.
+
+- fixed: Valheim throws on every read of 30 of the keys the configuration offers (symbol keys such as
+  `Plus` and `Hash`, F13 to F15, the mouse wheel and a few others). Set as `ToggleWindowKey` or
+  `SkipWaypointKey`, such a key stopped the waypoint tick on almost every frame (all but those spent typing
+  in chat, the console or a text field): a world's saved route was not loaded, and no waypoint was reached,
+  repaired or saved - a waypoint added on the map still got its marker. As `MapModifierKey`, Alt-click
+  stopped working and every left click on the map logged an error. Now the key is ignored after one warning
+  in the log, as if it were unbound, and nothing else is affected; choosing another key tries it afresh
+- 13 tests for reading such keys, on both runtimes; preflight checks that configurable keys are read only
+  through the guarded reader, that no hard-coded key is one the game cannot read, and that the waypoint tick
+  runs apart from the keys (41 → 44 checks)
 
 **1.1.1** — the route file is saved safely.
 
