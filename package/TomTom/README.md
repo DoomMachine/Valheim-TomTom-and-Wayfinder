@@ -88,6 +88,9 @@ with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (
 
 Each place is one that **can** hold a chest with the item; whether a given chest is there, and holds it, is
 chance. The lists come from Valheim 1.0.16's own data, including the chests in the rooms a village builds.
+They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes from
+the world you are playing in, or from its server. A Valheim update that adds or moves such chests needs a plugin
+update.
 
 - **Places whose chests are known not to hold the item are left out**: the game fills a chest when its area is
   first generated, and a place whose chests have all been filled and none of which holds the item any more

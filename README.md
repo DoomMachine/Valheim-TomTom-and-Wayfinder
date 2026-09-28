@@ -238,6 +238,17 @@ Run it after every Valheim update.
   for placed locations. A unique location is resolved over every candidate before the range cut. The route is
   planned over the nearest few hundred places (four times `MaxSearchWaypoints`, at least 100): nearest-neighbour
   from the nearest spot, then 2-opt with that first stop fixed.
+- **Find needs nothing beyond BepInEx and the running game; it does not use SeedLab.** Every result comes
+  from the game as it runs: the location list (as the host) or the server's answers (when joining), the world
+  objects the game has loaded, and the chests' saved contents. What is fixed in the plugin is the catalogue
+  (`src/SearchCatalog.cs`): which kinds of place can hold a chest with each item, and which places are the
+  merchants and the rocks. It was derived during development from a dump of Valheim 1.0.16's own prefab data -
+  every location's children, their chests and loot tables, and the rooms dungeon generators build - taken from
+  the running game with SeedLab's game-data dumper (https://github.com/DoomMachine/Valheim-SeedLab,
+  `tools/SeedLab.Dumper`; the dump itself is not published), and checked again against the same dump and the
+  decompiled game code on 2026-09-28. So a Valheim update that adds or moves such chests leaves the catalogue
+  behind until its lists are derived again from the new build: preflight catches changed game methods, not
+  changed chest lists.
 - **On a server** the same DLL runs its server side. On a dedicated server (`Paths.ProcessName` is
   `valheim_server`; the game's own `ZNet.IsDedicated()` needs a `ZNet` that does not exist yet in `Awake`) it binds
   only `[6 - Server]` and applies two patches. A player's plugin says hello once per connection over a routed call

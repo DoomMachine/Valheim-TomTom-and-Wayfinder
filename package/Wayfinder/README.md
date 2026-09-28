@@ -77,6 +77,9 @@ or **Find (add to queue)**. The route starts at the nearest one and is then plan
 
 Each place is one that **can** hold a chest with the item; whether a given chest is there, and holds it, is
 chance. The lists come from Valheim 1.0.16's own data, including the chests in the rooms a village builds.
+They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes from
+the world you are playing in, or from its server. A Valheim update that adds or moves such chests needs a plugin
+update.
 
 - **Nothing is said.** There is no message and no count. If nothing that matches is explored within range,
   nothing happens.
