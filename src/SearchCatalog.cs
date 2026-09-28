@@ -96,7 +96,7 @@ namespace Waypointer
                         T("GoblinCamp2", "Fuling Village"), T("GoblinCamp2_1", "Fuling Village"),
                         T("StoneTower1", "Fuling Outpost"), T("StoneTower3", "Fuling Outpost"), T("Ruin3", "Fuling Ruin"),
                         T("GoblinHut02", "Fuling Hut"), T("GoblinHut03", "Fuling Hut"),
-                        T("Hildir_plainsfortress", "Hildir's Plains Fortress")
+                        T("Hildir_plainsfortress", "Sealed Tower")
                     }, null,
                     new[] { "AtgeirWood" }),
                 new SearchQuery("Curious Axe Head",
@@ -117,8 +117,11 @@ namespace Waypointer
 
         /// <summary>
         /// Location types whose chests can stand further out: the ones a dungeon generator builds rooms for (the
-        /// villages and Hildir's fortress). Their chests are looked for within 96 m of the location's centre instead
-        /// of 64 m (their own extents reach 32 m).
+        /// villages and Hildir's Sealed Tower). Their chests are looked for within 96 m of the location's centre instead
+        /// of 64 m. That is generous: the generator keeps every room it tests inside its zone
+        /// (DungeonGenerator.IsInsideDungeon), about 48 m from the centre at most, and the ones it does not test (a
+        /// dungeon's start room, zero-depth end caps) sit at the centre or attach to tested rooms. A neighbour's chest in
+        /// reach can never drop a place whose own chest still holds, or may still hold, the item.
         /// </summary>
         public static readonly string[] WideLocations = { "WoodVillage1", "WoodVillage2", "GoblinCamp2", "GoblinCamp2_1", "Hildir_plainsfortress" };
 

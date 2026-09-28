@@ -37,6 +37,7 @@
     <Compile Include="..\src\SearchCatalog.cs" />
     <Compile Include="..\src\SearchRules.cs" />
     <Compile Include="..\src\FindProtocol.cs" />
+    <Compile Include="..\src\CaptionFit.cs" />
   </ItemGroup>
 
 </Project>

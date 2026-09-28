@@ -158,6 +158,7 @@ namespace Waypointer
             HotkeysTests();
             SearchTests();
             ProtocolTests();
+            CaptionTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
@@ -692,6 +693,35 @@ namespace Waypointer
             SearchRules.KeepNearest(hits, 0, 0, 2);
             Check("search: keeping the nearest keeps those closest to the player, nearest first",
                 hits.Count == 2 && hits[0].X == 100 && hits[1].X == -200, "");
+        }
+
+        // ---------------------------------------------------------------- the arrow's name caption (1.3.1)
+
+        private static void CaptionTests()
+        {
+            // A stand-in for the font: 8 px per character.
+            Func<string, float> m = delegate (string s) { return s.Length * 8f; };
+            string name = "Abandoned House (Mysterious Axe Head)";
+            string suffix = "  (2 left)";
+
+            Check("caption: a name that fits is drawn whole, with the queue count",
+                CaptionFit.Fit(name, suffix, 1000f, m) == name + suffix, "");
+
+            string cut = CaptionFit.Fit(name, suffix, 300f, m);
+            bool longest = cut.Length * 8f <= 300f
+                && CaptionFit.Fit(name, suffix, 300f + 8f, m).Length > cut.Length;
+            Check("caption: a name wider than the screen loses its end, not the queue count, and keeps all that fits",
+                cut.EndsWith(CaptionFit.Ellipsis + suffix, StringComparison.Ordinal) && name.StartsWith(cut.Substring(0, cut.Length - CaptionFit.Ellipsis.Length - suffix.Length), StringComparison.Ordinal)
+                && longest, cut);
+
+            Check("caption: with a single waypoint there is no count, and the name alone is shortened",
+                CaptionFit.Fit(name, "", 100f, m) == "Abandoned..." , CaptionFit.Fit(name, "", 100f, m));
+
+            Check("caption: a space before the cut is not left before the ellipsis",
+                CaptionFit.Fit("Abandoned House", "", 13 * 8f, m) == "Abandoned...", CaptionFit.Fit("Abandoned House", "", 13 * 8f, m));
+
+            Check("caption: when not even the count fits, the ellipsis and the count remain (the box clips them)",
+                CaptionFit.Fit(name, suffix, 10f, m) == CaptionFit.Ellipsis + suffix, CaptionFit.Fit(name, suffix, 10f, m));
         }
 
         // ---------------------------------------------------------------- the server protocol (1.3.0)

@@ -16,6 +16,9 @@ namespace Waypointer
         private static Texture2D _arrow;
         private static GUIStyle _labelStyle;
 
+        /// <summary>Keeps the captions this far from the screen's left and right edges.</summary>
+        private const float CaptionMargin = 8f;
+
         // Parsed arrow colours, refreshed only when the configured hex strings change.
         private static string _goodSource, _middleSource, _badSource;
         private static Color _goodColor, _middleColor, _badColor;
@@ -92,18 +95,24 @@ namespace Waypointer
             EnsureStyle();
 
             float y = arrowRect.yMax + 2f;
-            float width = Mathf.Max(arrowRect.width * 3f, 260f);
-            float x = arrowRect.center.x - width * 0.5f;
+            float centre = arrowRect.center.x;
 
+            // Each caption's box is exactly as wide as its text (measured when the text changes), centred under the
+            // arrow and moved only as far as needed to stay on screen - so no caption is cut off at the box's ends
+            // ("Abandoned House (Mysterious Axe Head)  (2 left)" once was) or pushed away from the arrow.
             if (Plugin.ShowWaypointName.Value)
             {
-                DrawOutlinedLabel(new Rect(x, y, width, 22f), NameCaption(wp), Color.white);
+                float nameWidth;
+                string name = FittedName(wp, out nameWidth);
+                DrawOutlinedLabel(CaptionRect(centre, y, nameWidth), name, Color.white);
                 y += 20f;
             }
 
             if (Plugin.ShowDistance.Value)
             {
-                DrawOutlinedLabel(new Rect(x, y, width, 22f), DistanceCaption(distance), new Color(0.88f, 0.88f, 0.88f, 1f));
+                string text = DistanceCaption(distance);
+                DrawOutlinedLabel(CaptionRect(centre, y, TextWidth(text, ref _distanceWidthFor, ref _distanceWidth)), text,
+                    new Color(0.88f, 0.88f, 0.88f, 1f));
                 y += 20f;
             }
 
@@ -111,8 +120,37 @@ namespace Waypointer
             {
                 string eta = FormatEta(distance, WaypointManager.SmoothedSpeed);
                 if (eta != null)
-                    DrawOutlinedLabel(new Rect(x, y, width, 22f), eta, new Color(0.75f, 0.75f, 0.75f, 1f));
+                    DrawOutlinedLabel(CaptionRect(centre, y, TextWidth(eta, ref _etaWidthFor, ref _etaWidth)), eta,
+                        new Color(0.75f, 0.75f, 0.75f, 1f));
             }
+        }
+
+        // The distance and ETA captions' widths, measured only when their text changes (DistanceCaption and FormatEta
+        // hand back the same string until the shown value changes).
+        private static string _distanceWidthFor, _etaWidthFor;
+        private static float _distanceWidth, _etaWidth;
+
+        private static float TextWidth(string text, ref string measuredFor, ref float width)
+        {
+            if (!ReferenceEquals(text, measuredFor))
+            {
+                measuredFor = text;
+                // The outline draws the text one pixel either side.
+                width = MeasureCaption(text) + 2f;
+            }
+            return width;
+        }
+
+        /// <summary>
+        /// A caption box as wide as its text, centred under the arrow, no wider than the screen allows, and moved
+        /// sideways only if it would cross a screen edge (the arrow can be placed near one).
+        /// </summary>
+        private static Rect CaptionRect(float centreX, float y, float width)
+        {
+            float max = Mathf.Max(0f, Screen.width - 2f * CaptionMargin);
+            if (width > max) width = max;
+            float x = Mathf.Clamp(centreX - width * 0.5f, CaptionMargin, Screen.width - CaptionMargin - width);
+            return new Rect(x, y, width, 22f);
         }
 
         /// <summary>Draws text with a cheap black outline so it stays readable against snow or sky.</summary>
@@ -254,6 +292,44 @@ namespace Waypointer
         private static int _distanceKey = int.MinValue;
         private static string _etaCaption;
         private static int _etaKey = int.MinValue;
+
+        // The name caption as drawn, fitted to the screen width (CaptionFit), with its width. Measured only when the
+        // caption or the screen width changes - NameCaption hands back the same string until the name or the queue
+        // count changes - so a frame costs no measuring.
+        private static readonly GUIContent _measure = new GUIContent();
+        private static readonly Func<string, float> _measureFn = MeasureCaption;
+        private static string _fitSource;
+        private static float _fitMaxWidth = -1f;
+        private static string _fitText;
+        private static float _fitWidth;
+
+        private static string FittedName(Waypoint wp, out float width)
+        {
+            string caption = NameCaption(wp);
+            // The outline draws the text one pixel either side, hence the 2 px kept free.
+            float max = Mathf.Max(0f, Screen.width - 2f * CaptionMargin - 2f);
+            if (!ReferenceEquals(caption, _fitSource) || max != _fitMaxWidth || _fitText == null)
+            {
+                _fitSource = caption;
+                _fitMaxWidth = max;
+                if (MeasureCaption(caption) <= max) _fitText = caption;
+                else
+                {
+                    int count = WaypointManager.Queue.Count;
+                    string suffix = count > 1 ? string.Format(CultureInfo.InvariantCulture, "  ({0} left)", count) : "";
+                    _fitText = CaptionFit.Fit(wp.DisplayName, suffix, max, _measureFn);
+                }
+                _fitWidth = MeasureCaption(_fitText) + 2f;
+            }
+            width = _fitWidth;
+            return _fitText;
+        }
+
+        private static float MeasureCaption(string text)
+        {
+            _measure.text = text;
+            return _labelStyle.CalcSize(_measure).x;
+        }
 
         private static string NameCaption(Waypoint wp)
         {

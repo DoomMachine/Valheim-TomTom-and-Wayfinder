@@ -64,6 +64,8 @@ namespace Waypointer
         private static GUIStyle _headerStyle;
         private static GUIStyle _smallStyle;
         private static GUIStyle _centredStyle;
+        // Waypoint names: wrapped onto a second line rather than cut off, whatever the game's skin does by default.
+        private static GUIStyle _nameStyle;
 
         public static bool IsOpen { get { return _open; } }
 
@@ -175,6 +177,11 @@ namespace Waypointer
             {
                 _centredStyle = new GUIStyle(GUI.skin.label);
                 _centredStyle.alignment = TextAnchor.MiddleCenter;
+            }
+            if (_nameStyle == null)
+            {
+                _nameStyle = new GUIStyle(GUI.skin.label);
+                _nameStyle.wordWrap = true;
             }
         }
 
@@ -418,7 +425,7 @@ namespace Waypointer
                 distanceText = string.Format(CultureInfo.InvariantCulture, "   {0:0} m away", d);
             }
 
-            GUILayout.Label(active.DisplayName + distanceText);
+            GUILayout.Label(active.DisplayName + distanceText, _nameStyle);
 #if !WAYFINDER
             GUILayout.Label(active.CoordText, _smallStyle);
 #endif
@@ -459,7 +466,7 @@ namespace Waypointer
 
                 GUILayout.BeginHorizontal();
 
-                GUILayout.Label(RowPrefix(i) + wp.DisplayName, _nameWidth);
+                GUILayout.Label(RowPrefix(i) + wp.DisplayName, _nameStyle, _nameWidth);
 #if WAYFINDER
                 // Distance rather than coordinates: relative, so it can't be matched to a looked-up place.
                 GUILayout.Label(DistanceTo(wp), _smallStyle, _infoWidth);

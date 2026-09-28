@@ -43,7 +43,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.3.0"
+$expectedVersion = "1.3.1"
 
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 

@@ -111,7 +111,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 152 tests (parser, crash-safe save, key reads, search, server messages and rules), on .NET and on Mono
+./run-tests.sh                                                         # 157 tests (parser, crash-safe save, key reads, search, server messages and rules, captions), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -241,14 +241,16 @@ Run it after every Valheim update.
 - **Find needs nothing beyond BepInEx and the running game; it does not use SeedLab.** Every result comes
   from the game as it runs: the location list (as the host) or the server's answers (when joining), the world
   objects the game has loaded, and the chests' saved contents. What is fixed in the plugin is the catalogue
-  (`src/SearchCatalog.cs`): which kinds of place can hold a chest with each item, and which places are the
-  merchants and the rocks. It was derived during development from a dump of Valheim 1.0.16's own prefab data -
+  (`src/SearchCatalog.cs`) - which kinds of place can hold a chest with each item, and which places are the
+  merchants and the rocks - and the distances Find looks within (a place's chests within 64 m of it, or 96 m for
+  the places a dungeon generator builds; loose Mysterious Rocks within 40 m of a Big Rock Clearing count as the
+  clearing). The catalogue was derived during development from a dump of Valheim 1.0.16's own prefab data -
   every location's children, their chests and loot tables, and the rooms dungeon generators build - taken from
   the running game with SeedLab's game-data dumper (https://github.com/DoomMachine/Valheim-SeedLab,
   `tools/SeedLab.Dumper`; the dump itself is not published), and checked again against the same dump and the
   decompiled game code on 2026-09-28. So a Valheim update that adds or moves such chests leaves the catalogue
-  behind until its lists are derived again from the new build: preflight catches changed game methods, not
-  changed chest lists.
+  behind until its lists are derived again from the new build: preflight catches game methods that were
+  renamed, removed or changed their signature, not changed chest lists.
 - **On a server** the same DLL runs its server side. On a dedicated server (`Paths.ProcessName` is
   `valheim_server`; the game's own `ZNet.IsDedicated()` needs a `ZNet` that does not exist yet in `Awake`) it binds
   only `[6 - Server]` and applies two patches. A player's plugin says hello once per connection over a routed call
@@ -263,6 +265,19 @@ Run it after every Valheim update.
   for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
 
 ## History
+
+**1.3.1** — the arrow's captions are no longer cut off, and the Sealed Tower has its name.
+
+- fixed: a long caption under the arrow was cut off at both ends ("Abandoned House (Mysterious Axe Head)  (2
+  left)"), because every caption was drawn in a box of a fixed width. Each caption's box is now as wide as its
+  text, centred under the arrow and moved sideways only as far as needed to stay on screen; a name wider than the
+  screen is shortened at its end with "...", and the count of waypoints left is kept
+- fixed: Find for the Wooden Atgeir named Hildir's Plains location "Hildir's Plains Fortress"; the game calls it
+  the Sealed Tower, and so does Find now (found by checking every place and item of Find's catalogue against the
+  game's own 1.0.16 data again)
+- changed: the window's queue and the active target's line now wrap a long waypoint name onto a second line by
+  their own style, rather than leaving it to the default label style
+- 5 new tests (152 → 157)
 
 **1.3.0** — servers: the plugin on a dedicated server or as the host answers other players' Find.
 

@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.3.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.3.1 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -81,7 +81,7 @@ with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (
 | Wooden Sledge | Swamp Graves and Swamp Runestone Towers |
 | Wooden Spear | Greydwarf Ruins and Towers, Skeleton Towers (sunken ones too), Contested Towers and Abandoned Huts |
 | Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
-| Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and Hildir's Plains fortress |
+| Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
 | Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
 | Haldor, Hildir, Bog Witch | the merchant |
@@ -136,7 +136,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.3.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.3.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Console
@@ -213,9 +213,9 @@ game's next save of its settings writes the old value back.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.3.0]
+   Loading [TomTom 1.3.1]
    Applied 2 of 2 patches.
-   TomTom 1.3.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.3.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.

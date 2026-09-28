@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.3.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.3.1 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
@@ -70,7 +70,7 @@ or **Find (add to queue)**. The route starts at the nearest one and is then plan
 | Wooden Sledge | Swamp Graves and Swamp Runestone Towers |
 | Wooden Spear | Greydwarf Ruins and Towers, Skeleton Towers (sunken ones too), Contested Towers and Abandoned Huts |
 | Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
-| Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and Hildir's Plains fortress |
+| Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
 | Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
 | Haldor, Hildir, Bog Witch | the merchant |
@@ -97,7 +97,7 @@ update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.3.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.3.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Console
@@ -173,9 +173,9 @@ game's next save of its settings writes the old value back.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.3.0]
+   Loading [Wayfinder 1.3.1]
    Applied 2 of 2 patches.
-   Wayfinder 1.3.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.3.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.
