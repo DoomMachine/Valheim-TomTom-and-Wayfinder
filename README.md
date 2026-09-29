@@ -27,7 +27,8 @@ one and logs `Could not load [...] because it is incompatible with ...` for the 
 
 User documentation ships inside each package: [`package/TomTom/README.md`](package/TomTom/README.md) and
 [`package/Wayfinder/README.md`](package/Wayfinder/README.md). This file is about building and
-maintaining them.
+maintaining them. What is untested, unverified, planned or only an idea is listed in
+[`docs/open-items.md`](docs/open-items.md), kept current as work goes on.
 
 ## Installing
 
@@ -69,6 +70,7 @@ TomTom/TomTom.csproj     sets EditionName=TomTom, deploys by default
 Wayfinder/Wayfinder.csproj  defines WAYFINDER, excludes both Coordinate*.cs files, packages only
 package/<Edition>/       manifest.json, icon.png and README.md for each package
 tests/                   parser, formatter, crash-safe save, key-read, search and server-message tests (built as TomTom)
+docs/open-items.md       what is untested, unverified, planned or only an idea, and what is decided
 preflight.ps1            checks a compiled plugin against the shipped game assemblies
 build.sh                 SDK-free fallback compiler (C# 5)
 Waypointer.slnx          the solution: both editions and the tests
