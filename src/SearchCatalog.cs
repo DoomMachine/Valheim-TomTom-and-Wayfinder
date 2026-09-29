@@ -23,12 +23,26 @@ namespace Waypointer
         public readonly SearchTarget[] Objects;
         public readonly string[] Items;
 
+        /// <summary>
+        /// The Objects grow only inside the Locations (a Bee Nest in an Abandoned House), so a place and the objects
+        /// in its 64 m zone are one find: an object found replaces its place (SearchRules.DropPlacesWithObjectsInZone),
+        /// and a place whose zone the game has generated without one holds none (SearchRules.DropPlacesKnownEmpty).
+        /// False when the objects are found apart from the places (the loose Mysterious Rocks).
+        /// </summary>
+        public readonly bool PlacesHoldObjects;
+
         public SearchQuery(string name, SearchTarget[] locations, SearchTarget[] objects, string[] items)
+            : this(name, locations, objects, items, false)
+        {
+        }
+
+        public SearchQuery(string name, SearchTarget[] locations, SearchTarget[] objects, string[] items, bool placesHoldObjects)
         {
             Name = name;
             Locations = locations ?? new SearchTarget[0];
             Objects = objects ?? new SearchTarget[0];
             Items = items ?? new string[0];
+            PlacesHoldObjects = placesHoldObjects;
         }
     }
 
@@ -38,7 +52,8 @@ namespace Waypointer
     /// loot table lists the item. Only chests that are enabled in the prefab count: ZoneSystem.SpawnLocation spawns
     /// only enabled children (Utils.GetEnabledComponentsInChildren), so a chest in a switched-off part never
     /// appears (the Troll Cave's spear chests, for one). A location type counts if it CAN hold such a chest;
-    /// whether a given one does is left to chance.
+    /// whether a given one does is left to chance. The Bee Nest's places were read the same way: every location
+    /// prefab, and every room its generator can build, with an enabled wild nest (Beehive) among its children.
     ///
     /// Unity-free, so the tests compile it directly.
     /// </summary>
@@ -109,6 +124,24 @@ namespace Waypointer
                     new[] { T("BigRockClearing", "Big Rock Clearing") },
                     new[] { T("Pickable_StoneRock", "Mysterious Rock") },
                     null),
+                // A wild nest (Beehive, not the player's own piece_beehive) grows only as a child of these places,
+                // each with a chance rolled when its zone is generated: eleven Abandoned Houses (25%; WoodHouse8 and
+                // WoodHouse12 hold none), the Contested Tower (81.8% x 28.1%), the Bear Cave (50%, on its fir tree),
+                // and rooms the generators of the fenced Meadows farm (WoodFarm1, which has no name in the game) and of
+                // the Draugr Villages can build. Nothing else in world generation makes one: no vegetation carries it.
+                new SearchQuery("Bee Nest",
+                    new[]
+                    {
+                        T("WoodHouse1", "Abandoned House"), T("WoodHouse2", "Abandoned House"), T("WoodHouse3", "Abandoned House"),
+                        T("WoodHouse4", "Abandoned House"), T("WoodHouse5", "Abandoned House"), T("WoodHouse6", "Abandoned House"),
+                        T("WoodHouse7", "Abandoned House"), T("WoodHouse9", "Abandoned House"), T("WoodHouse10", "Abandoned House"),
+                        T("WoodHouse11", "Abandoned House"), T("WoodHouse13", "Abandoned House"),
+                        T("StoneTowerRuins03", "Contested Tower"), T("BearCave", "Bear Cave"),
+                        T("WoodFarm1", "Abandoned Village"),
+                        T("WoodVillage1", "Draugr Village"), T("WoodVillage2", "Draugr Village")
+                    },
+                    new[] { T("Beehive", "Bee Nest") },
+                    null, true),
                 new SearchQuery("Haldor", new[] { T("Vendor_BlackForest", "Haldor") }, null, null),
                 new SearchQuery("Hildir", new[] { T("Hildir_camp", "Hildir") }, null, null),
                 new SearchQuery("Bog Witch", new[] { T("BogWitch_Camp", "Bog Witch") }, null, null),

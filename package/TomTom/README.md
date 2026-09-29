@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.3.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.4.0 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -84,19 +84,28 @@ with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (
 | Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
 | Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
+| Bee Nest | most kinds of Abandoned House, Contested Towers, Bear Caves, Abandoned Villages (the fenced Meadows farms) and Draugr Villages |
 | Haldor, Hildir, Bog Witch | the merchant |
 
-Each place is one that **can** hold a chest with the item; whether a given chest is there, and holds it, is
-chance. The lists come from Valheim 1.0.16's own data, including the chests in the rooms a village builds.
-They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes from
-the world you are playing in, or from its server. A Valheim update that adds or moves such chests needs a plugin
-update.
+Each place is one that **can** hold a chest with the item, or a Bee Nest; whether a given chest or nest is there
+is chance. The lists come from Valheim 1.0.16's own data, including the chests and nests in the rooms a village
+builds. They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes
+from the world you are playing in, or from its server. A Valheim update that adds or moves such chests or nests
+needs a plugin update.
 
 - **Places whose chests are known not to hold the item are left out**: the game fills a chest when its area is
   first generated, and a place whose chests have all been filled and none of which holds the item any more
   (emptied, or it never had it) is skipped. This works as the host (or in single player), and when you join a
   server that runs this plugin too (see Servers); joining any other server it does nothing, since only chests
   near you are known. `SkipCheckedChests` turns it off.
+- **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
+  Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
+  Draugr Village - decided when the place's area is first generated. A nest found is queued as **Bee Nest**, in
+  place of its place; a place not known to hold one is queued as, say, "Abandoned House (Bee Nest)". As the host
+  (or in single player), or when you join a server that runs this plugin too (1.4.0 or later), nests are known
+  wherever the land has been generated, and `SkipCheckedChests` also leaves out places whose area has been generated
+  without a nest left in it (none grew there, or it was destroyed). Joining any other server, only the nests your
+  game has seen since you joined (near where you have been) are known.
 - **Merchants and the Big Rock Clearing exist once per world.** Until someone comes near, the game keeps up to
   ten possible spots, and the first one anybody reaches becomes the real one. Those spots are queued as
   "(possible)". Once one is fixed - or only one spot is left - only that one is queued, as the real place. (When
@@ -136,7 +145,7 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.3.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.4.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Console
@@ -213,9 +222,9 @@ game's next save of its settings writes the old value back.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.3.1]
+   Loading [TomTom 1.4.0]
    Applied 2 of 2 patches.
-   TomTom 1.3.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.4.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.

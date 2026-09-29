@@ -111,7 +111,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 157 tests (parser, crash-safe save, key reads, search, server messages and rules, captions), on .NET and on Mono
+./run-tests.sh                                                         # 172 tests (parser, crash-safe save, key reads, search, server messages and rules, captions), on .NET and on Mono
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 ```
@@ -237,19 +237,25 @@ Run it after every Valheim update.
   (`ZDO.GetByteArray(s_items)`, as `Container.Load` reads them); the chest check runs only on a server and only
   for placed locations. A unique location is resolved over every candidate before the range cut. The route is
   planned over the nearest few hundred places (four times `MaxSearchWaypoints`, at least 100): nearest-neighbour
-  from the nearest spot, then 2-opt with that first stop fixed.
+  from the nearest spot, then 2-opt with that first stop fixed. A **Bee Nest** grows only inside its place, and the
+  game places a location wholly inside one 64 m zone, so a nest found stands for the place in its zone
+  (`SearchRules.DropPlacesWithObjectsInZone`, on the player's side after Wayfinder's filter: `SearchRules.FinishHits`
+  keeps that order), and a server asked to skip places known not to hold what is looked for (`SkipCheckedChests`)
+  leaves out a place whose zone it has generated with no nest left in it (`SearchRules.DropPlacesKnownEmpty`, from
+  the zones of every nest it read, in range or not). These decisions are Unity-free, so the tests exercise them.
 - **Find needs nothing beyond BepInEx and the running game; it does not use SeedLab.** Every result comes
   from the game as it runs: the location list (as the host) or the server's answers (when joining), the world
   objects the game has loaded, and the chests' saved contents. What is fixed in the plugin is the catalogue
-  (`src/SearchCatalog.cs`) - which kinds of place can hold a chest with each item, and which places are the
-  merchants and the rocks - and the distances Find looks within (a place's chests within 64 m of it, or 96 m for
+  (`src/SearchCatalog.cs`) - which kinds of place can hold a chest with each item or a Bee Nest, and which places
+  are the merchants and the rocks - and the distances Find looks within (a place's chests within 64 m of it, or 96 m for
   the places a dungeon generator builds; loose Mysterious Rocks within 40 m of a Big Rock Clearing count as the
   clearing). The catalogue was derived during development from a dump of Valheim 1.0.16's own prefab data -
   every location's children, their chests and loot tables, and the rooms dungeon generators build - taken from
   the running game with SeedLab's game-data dumper (https://github.com/DoomMachine/Valheim-SeedLab,
   `tools/SeedLab.Dumper`; the dump itself is not published), and checked again against the same dump and the
-  decompiled game code on 2026-09-28. So a Valheim update that adds or moves such chests leaves the catalogue
-  behind until its lists are derived again from the new build: preflight catches game methods that were
+  decompiled game code on 2026-09-28; the Bee Nest's places were derived the same way on 2026-09-29, and also
+  checked against every object in the game's asset bundles. So a Valheim update that adds or moves such chests or
+  nests leaves the catalogue behind until its lists are derived again from the new build: preflight catches game methods that were
   renamed, removed or changed their signature, not changed chest lists.
 - **On a server** the same DLL runs its server side. On a dedicated server (`Paths.ProcessName` is
   `valheim_server`; the game's own `ZNet.IsDedicated()` needs a `ZNet` that does not exist yet in `Awake`) it binds
@@ -265,6 +271,25 @@ Run it after every Valheim update.
   for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
 
 ## History
+
+**1.4.0** — Find: Bee Nests.
+
+- new: Find looks for **Bee Nests** (the wild nest, `Beehive`, not a beehive a player builds). A nest grows only
+  inside certain places, each with its own chance rolled when the place's area is first generated: eleven kinds of
+  Abandoned House (1 in 4), the Contested Tower (about 23%), the Bear Cave (1 in 2, on its fir tree), and some of
+  the rooms the fenced Meadows farms ("Abandoned Village"; the game gives them no name) and the Draugr Villages
+  build. These 16 location types were read from Valheim 1.0.16's own data; an inventory of every object in the
+  game's asset bundles found no other source (no tree or other vegetation carries a nest outside these places)
+- a nest found is queued as "Bee Nest" in place of its place; a place not known to hold one is queued as, say,
+  "Abandoned House (Bee Nest)". Nests are known wherever the land has been generated as the host or with a server
+  that runs the plugin (1.4.0 or later), and otherwise only where the player has been since joining
+- as the host, or with a server that runs the plugin (1.4.0 or later), TomTom's `SkipCheckedChests` now also leaves
+  out places whose area has been generated without a nest left in it (none grew there, or it was destroyed)
+- the server messages are unchanged: a server on 1.3.x answers a Bee Nest Find as a query it does not know, and the
+  player's Find then asks it the way a Vegvisir does
+- the search's decisions on the player's side (the explored filter, then the rocks of a clearing, then the nest
+  merge) and the server's known-empty decisions are Unity-free SearchRules members, so the tests reach them
+- 15 new tests (157 → 172)
 
 **1.3.1** — the arrow's captions are no longer cut off, and the Sealed Tower has its name.
 

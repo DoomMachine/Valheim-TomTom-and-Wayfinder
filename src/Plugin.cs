@@ -278,11 +278,13 @@ namespace Waypointer
 #if !WAYFINDER
             SkipCheckedChests = Config.Bind("5 - Search", "SkipCheckedChests", true,
                 "When looking for a chest item, leave out places whose chests the game has already filled and none of "
-                + "which holds the item any more (emptied, or it never had it). The game fills a chest when its area is "
-                + "first generated. Works as the host (or in single player), and when you join a server that runs this "
-                + "plugin too, which checks the chests for you; when you join any other server it does nothing, since "
-                + "only chests near you are known. Reading chests runs a little each frame, so it makes a search take "
-                + "longer rather than making the game stutter; turn it off if a search feels slow.");
+                + "which holds the item any more (emptied, or it never had it); when looking for a Bee Nest, leave out "
+                + "places whose area the game has generated without a nest left in it (none grew there, or it was "
+                + "destroyed). The game fills a chest, and rolls whether a nest grows, when an area is first generated. "
+                + "Works as the host (or in single player), and when you join a server that runs this plugin too (for "
+                + "a Bee Nest, 1.4.0 or later), which checks for you; when you join any other server it does nothing, "
+                + "since your game knows only what it has seen since you joined. Reading chests runs a little each frame, so it makes a search take longer rather than making "
+                + "the game stutter; turn it off if a search feels slow.");
 #endif
 
             // Deliberately no SettingChanged handlers for ArrowSize or ArrowOpacity: the arrow texture is

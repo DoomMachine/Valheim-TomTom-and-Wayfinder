@@ -510,9 +510,11 @@ namespace Waypointer
                     if (string.IsNullOrEmpty(q.Locations[j].Prefab) || string.IsNullOrEmpty(q.Locations[j].Label)) labelled = false;
                     if (!prefabs.Add(q.Locations[j].Prefab)) nonEmpty = false;
                 }
+                for (int j = 0; j < q.Objects.Length; j++)
+                    if (string.IsNullOrEmpty(q.Objects[j].Prefab) || string.IsNullOrEmpty(q.Objects[j].Label)) labelled = false;
             }
             Check("search: every query has a unique name, something to look for, and no location listed twice", uniqueNames && nonEmpty, "");
-            Check("search: every location has a prefab and a label", labelled, "");
+            Check("search: every location and object has a prefab and a label", labelled, "");
             Check("search: the four unique places are the ones the game places once (Big Rock Clearing, Haldor, Hildir, Bog Witch)",
                 SearchCatalog.IsUnique("BigRockClearing") && SearchCatalog.IsUnique("Vendor_BlackForest")
                 && SearchCatalog.IsUnique("Hildir_camp") && SearchCatalog.IsUnique("BogWitch_Camp")
@@ -624,6 +626,133 @@ namespace Waypointer
             Check("search: rocks inside a listed Big Rock Clearing are dropped, a scattered one stays",
                 hits.Count == 2 && hits[1].X == 500, "");
 
+            // --- Bee Nests (1.4.0): a nest grows only inside its place, in the place's own 64 m zone
+            SearchQuery bees = SearchCatalog.ByName("Bee Nest");
+            string[] beePlaces =
+            {
+                "WoodHouse1", "WoodHouse2", "WoodHouse3", "WoodHouse4", "WoodHouse5", "WoodHouse6", "WoodHouse7", "WoodHouse9",
+                "WoodHouse10", "WoodHouse11", "WoodHouse13", "StoneTowerRuins03", "BearCave", "WoodFarm1", "WoodVillage1", "WoodVillage2"
+            };
+            bool beesListed = bees != null && bees.Locations.Length == beePlaces.Length;
+            for (int i = 0; beesListed && i < beePlaces.Length; i++)
+            {
+                bool found = false;
+                for (int j = 0; j < bees.Locations.Length; j++) if (bees.Locations[j].Prefab == beePlaces[i]) found = true;
+                if (!found) beesListed = false;
+            }
+            Check("search: Bee Nest covers the 16 location types whose 1.0.16 data holds a wild nest - not WoodHouse8 or WoodHouse12, which hold none",
+                beesListed && bees.PlacesHoldObjects && bees.Items.Length == 0 && bees.Objects.Length == 1
+                && bees.Objects[0].Prefab == "Beehive" && bees.Objects[0].Label == "Bee Nest", "");
+            string[,] beeLabels =
+            {
+                { "WoodHouse1", "Abandoned House" }, { "WoodHouse13", "Abandoned House" }, { "StoneTowerRuins03", "Contested Tower" },
+                { "BearCave", "Bear Cave" }, { "WoodFarm1", "Abandoned Village" }, { "WoodVillage1", "Draugr Village" },
+                { "WoodVillage2", "Draugr Village" }
+            };
+            bool beeLabelled = bees != null;
+            for (int i = 0; beeLabelled && i < beeLabels.GetLength(0); i++)
+            {
+                bool match = false;
+                for (int j = 0; j < bees.Locations.Length; j++)
+                    if (bees.Locations[j].Prefab == beeLabels[i, 0] && bees.Locations[j].Label == beeLabels[i, 1]) match = true;
+                if (!match) beeLabelled = false;
+            }
+            Check("search: each kind of Bee Nest place has its name (Abandoned House, Contested Tower, Bear Cave, Abandoned Village, Draugr Village)",
+                beeLabelled, "");
+            int holding = 0;
+            for (int i = 0; i < SearchCatalog.Queries.Length; i++) if (SearchCatalog.Queries[i].PlacesHoldObjects) holding++;
+            Check("search: only the Bee Nest keeps its objects inside its places (the Mysterious Rocks lie apart)",
+                holding == 1 && !SearchCatalog.ByName("Mysterious Rock").PlacesHoldObjects, "");
+
+            Check("search: zones are the game's 64 m squares centred on multiples of 64 (ZoneSystem.GetZone)",
+                SearchRules.Zone(0f) == 0 && SearchRules.Zone(31.5f) == 0 && SearchRules.Zone(32.5f) == 1 && SearchRules.Zone(-31.5f) == 0
+                && SearchRules.Zone(-32.5f) == -1 && SearchRules.Zone(100f) == 2 && SearchRules.Zone(-10000f) == -156
+                && SearchRules.ZoneKey(10f, -40f) != SearchRules.ZoneKey(-40f, 10f), "");
+            Check("search: a zone key tells apart zones sharing a column or a row",
+                SearchRules.ZoneKey(100f, -100f) != SearchRules.ZoneKey(-100f, -100f) && SearchRules.ZoneKey(100f, -100f) != SearchRules.ZoneKey(100f, 100f)
+                && SearchRules.ZoneKey(0f, 640f) != SearchRules.ZoneKey(5f, 0f) && SearchRules.ZoneKey(640f, 0f) != SearchRules.ZoneKey(0f, 640f), "");
+
+            hits.Clear();
+            SearchHit houseA = Hit("WoodHouse2", 20, 5, true); hits.Add(houseA);                              // zone (0, 0)
+            SearchHit houseB = Hit("WoodHouse5", 40, 5, true); hits.Add(houseB);                              // zone (1, 0), 20 m away
+            SearchHit village = Hit("WoodVillage1", 640, 0, true); hits.Add(village);                         // zone (10, 0)
+            SearchHit nestA = Hit("Beehive", 26, 9, true); nestA.IsObject = true; hits.Add(nestA);             // house A's
+            SearchHit nestV1 = Hit("Beehive", 666, 27, true); nestV1.IsObject = true; hits.Add(nestV1);        // 37 m out
+            SearchHit nestV2 = Hit("Beehive", 620, -20, true); nestV2.IsObject = true; hits.Add(nestV2);
+            SearchHit nestLone = Hit("Beehive", 2000, 0, true); nestLone.IsObject = true; hits.Add(nestLone);  // no place listed
+            SearchRules.DropPlacesWithObjectsInZone(hits);
+            Check("search: a nest found stands for its place - the place in its zone goes, a neighbour's place and every nest stay",
+                hits.Count == 5 && !hits.Contains(houseA) && hits.Contains(houseB) && !hits.Contains(village)
+                && hits.Contains(nestA) && hits.Contains(nestV1) && hits.Contains(nestV2) && hits.Contains(nestLone), hits.Count.ToString());
+
+            hits.Clear();
+            SearchHit withNest = Hit("WoodHouse3", 5, 5, true); hits.Add(withNest);
+            SearchHit emptied = Hit("WoodHouse4", 200, 5, true); hits.Add(emptied);
+            SearchHit notYet = Hit("WoodHouse7", 400, 5, false); hits.Add(notYet);
+            SearchHit nestBeyond = Hit("WoodHouse9", 990, 0, true); hits.Add(nestBeyond);   // its nest lies just beyond the range
+            SearchHit nestHit = Hit("Beehive", 8, 7, true); nestHit.IsObject = true; hits.Add(nestHit);
+            HashSet<long> nestZones = new HashSet<long>();
+            nestZones.Add(SearchRules.ZoneKey(8, 7));
+            nestZones.Add(SearchRules.ZoneKey(991, 2));
+            int emptyDropped;
+            int beeChecked = SearchRules.DropPlacesKnownEmpty(hits, nestZones, out emptyDropped);
+            Check("search: a generated place without a nest in its zone is left out - not one generated later, nor one whose nest is out of range",
+                beeChecked == 3 && emptyDropped == 1 && !hits.Contains(emptied) && hits.Contains(withNest) && hits.Contains(notYet)
+                && hits.Contains(nestBeyond) && hits.Contains(nestHit), beeChecked + "/" + emptyDropped);
+            hits.Clear();
+            SearchHit candidate = Hit("WoodHouse10", 5, 5, true); candidate.Possible = true; hits.Add(candidate);
+            hits.Add(Hit("WoodHouse11", 300, 5, true));
+            beeChecked = SearchRules.DropPlacesKnownEmpty(hits, null, out emptyDropped);
+            Check("search: no nest known at all - every generated place goes, a candidate stays",
+                beeChecked == 1 && emptyDropped == 1 && hits.Count == 1 && hits[0] == candidate, "");
+
+            // --- the player's side once every answer is in (FinishHits), and the server's known-empty decisions
+            hits.Clear();
+            SearchHit seenHouse = Hit("WoodHouse1", 10, 10, true); hits.Add(seenHouse);
+            SearchHit unseenNest = Hit("Beehive", 14, 12, true); unseenNest.IsObject = true; hits.Add(unseenNest);
+            SearchRules.FinishHits(hits, bees, delegate (SearchHit h) { return !h.IsObject; }, 40f);
+            Check("search: Wayfinder's filter comes before the nest merge - an unexplored nest leaves its explored place queued",
+                hits.Count == 1 && hits[0] == seenHouse, hits.Count.ToString());
+
+            hits.Clear();
+            SearchHit someHouse = Hit("WoodHouse1", 10, 10, true); hits.Add(someHouse);
+            SearchHit itsNest = Hit("Beehive", 14, 12, true); itsNest.IsObject = true; hits.Add(itsNest);
+            SearchHit farHouse = Hit("WoodHouse5", 0, 640, true); hits.Add(farHouse);
+            SearchHit farNest = Hit("Beehive", 5, 0, true); farNest.IsObject = true; hits.Add(farNest);
+            SearchRules.FinishHits(hits, bees, null, 40f);
+            Check("search: without a filter (TomTom) a nest found replaces the place in its zone, and only that one",
+                hits.Count == 3 && !hits.Contains(someHouse) && hits.Contains(itsNest) && hits.Contains(farHouse) && hits.Contains(farNest),
+                hits.Count.ToString());
+
+            hits.Clear();
+            SearchHit candidateSeen = Hit("BigRockClearing", 900, 900, false); candidateSeen.Possible = true; hits.Add(candidateSeen);
+            SearchHit unexploredRuin = Hit("Ruin1", 300, 0, true); unexploredRuin.Label = "unexplored"; hits.Add(unexploredRuin);
+            SearchHit exploredRuin = Hit("Ruin1", 400, 0, true); hits.Add(exploredRuin);
+            SearchRules.FinishHits(hits, SearchCatalog.ByName("Wooden Spear"), delegate (SearchHit h) { return h.Label != "unexplored"; }, 40f);
+            Check("search: Wayfinder's filter drops unexplored places and every unique candidate", hits.Count == 1 && hits[0] == exploredRuin, "");
+
+            hits.Clear();
+            SearchHit rockClearing = Hit("BigRockClearing", -20, -20, true); hits.Add(rockClearing);
+            SearchHit nearRock = Hit("Pickable_StoneRock", -20, 10, true); nearRock.IsObject = true; hits.Add(nearRock);   // 30 m
+            SearchHit zoneRock = Hit("Pickable_StoneRock", 20, 10, true); zoneRock.IsObject = true; hits.Add(zoneRock);    // 50 m, same zone
+            SearchRules.FinishHits(hits, SearchCatalog.ByName("Mysterious Rock"), null, 40f);
+            Check("search: a Mysterious Rock Find folds rocks within 40 m into their clearing, and never merges by zone",
+                hits.Count == 2 && hits.Contains(rockClearing) && hits.Contains(zoneRock), hits.Count.ToString());
+
+            Check("search: places known to hold no nest are left out only on a server, only when asked, and only for the Bee Nest",
+                SearchRules.KnownEmptyApplies(true, true, bees) && !SearchRules.KnownEmptyApplies(false, true, bees)
+                && !SearchRules.KnownEmptyApplies(true, false, bees) && !SearchRules.KnownEmptyApplies(true, true, SearchCatalog.ByName("Mysterious Rock"))
+                && !SearchRules.KnownEmptyApplies(true, true, SearchCatalog.ByName("Wooden Spear"))
+                && !SearchRules.KnownEmptyApplies(true, true, null), "");
+
+            HashSet<long> noted = new HashSet<long>();
+            bool beyond = SearchRules.NoteObject(noted, 1010, 0, 0, 0, 1000);
+            bool inside = SearchRules.NoteObject(noted, 600, 800, 0, 0, 1000);
+            bool noZones = SearchRules.NoteObject(null, 10, 0, 0, 0, 1000);
+            Check("search: a nest read counts for its zone even beyond the range, and the range test is horizontal and inclusive",
+                !beyond && inside && noZones && noted.Count == 2 && noted.Contains(SearchRules.ZoneKey(1010, 0))
+                && noted.Contains(SearchRules.ZoneKey(600, 800)), "");
+
             // --- which location answers vanilla may turn into a (saved, shareable) pin
             Check("search: an answer to this mod never reaches vanilla - current, abandoned or malformed search number",
                 !SearchRules.VanillaMayHandle(SearchRules.TokenPrefix + "7")
@@ -654,8 +783,17 @@ namespace Waypointer
             SearchHit witch = Hit("BogWitch_Camp", 0, 0, false); witch.Label = "Bog Witch"; witch.Possible = true;
             Check("search: names say what was searched for, and 'possible' for a candidate",
                 SearchRules.WaypointName(house, axeHead) == "Abandoned House (Curious Axe Head)"
-                && SearchRules.WaypointName(witch, SearchCatalog.Queries[SearchCatalog.Queries.Length - 1]) == "Bog Witch (possible)",
+                && SearchRules.WaypointName(witch, SearchCatalog.ByName("Bog Witch")) == "Bog Witch (possible)",
                 SearchRules.WaypointName(house, axeHead));
+            SearchHit beeHouse = Hit("WoodHouse3", 0, 0, true); beeHouse.Label = "Abandoned House";
+            SearchHit beeNest = Hit("Beehive", 0, 0, true); beeNest.Label = "Bee Nest"; beeNest.IsObject = true;
+            SearchHit clearing = Hit("BigRockClearing", 0, 0, true); clearing.Label = "Big Rock Clearing";
+            SearchHit looseRock = Hit("Pickable_StoneRock", 0, 0, true); looseRock.Label = "Mysterious Rock"; looseRock.IsObject = true;
+            SearchQuery rocks = SearchCatalog.ByName("Mysterious Rock");
+            Check("search: a place that may hold a nest says so, a nest found is just a Bee Nest, and the rocks' names are unchanged",
+                SearchRules.WaypointName(beeHouse, bees) == "Abandoned House (Bee Nest)" && SearchRules.WaypointName(beeNest, bees) == "Bee Nest"
+                && SearchRules.WaypointName(clearing, rocks) == "Big Rock Clearing" && SearchRules.WaypointName(looseRock, rocks) == "Mysterious Rock",
+                SearchRules.WaypointName(beeHouse, bees));
 
             // --- the route
             float[] xs = { 100, 10, 50, -20, 200 };

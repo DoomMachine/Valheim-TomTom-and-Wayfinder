@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.3.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.4.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
@@ -73,13 +73,14 @@ or **Find (add to queue)**. The route starts at the nearest one and is then plan
 | Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
 | Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
+| Bee Nest | most kinds of Abandoned House, Contested Towers, Bear Caves, Abandoned Villages (the fenced Meadows farms) and Draugr Villages |
 | Haldor, Hildir, Bog Witch | the merchant |
 
-Each place is one that **can** hold a chest with the item; whether a given chest is there, and holds it, is
-chance. The lists come from Valheim 1.0.16's own data, including the chests in the rooms a village builds.
-They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes from
-the world you are playing in, or from its server. A Valheim update that adds or moves such chests needs a plugin
-update.
+Each place is one that **can** hold a chest with the item, or a Bee Nest; whether a given chest or nest is there
+is chance. The lists come from Valheim 1.0.16's own data, including the chests and nests in the rooms a village
+builds. They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes
+from the world you are playing in, or from its server. A Valheim update that adds or moves such chests or nests
+needs a plugin update.
 
 - **Nothing is said.** There is no message and no count. If nothing that matches is explored within range,
   nothing happens.
@@ -87,6 +88,13 @@ update.
   becomes the real one. Wayfinder queues them only once they are fixed, or when only one spot is left - and when
   you join a game, only if the server answered every request in time or a merchant's map icon settles it.
 - **Loose Mysterious Rocks exist only where the land has been generated**, and picked ones are left out.
+- **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
+  Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
+  Draugr Village - decided when the place's area is first generated. A nest found where the land has been
+  generated is queued as **Bee Nest**, in place of its place; a place not known to hold one is queued as, say,
+  "Abandoned House (Bee Nest)", even when its area has been generated without one. Joining a server without this
+  plugin, or with a version older than 1.4.0, only the nests your game has seen since you joined (near where you
+  have been) are known.
 - **It works whether you host or join.** When you join a server that runs this plugin too, the server answers
   from its own knowledge (see Servers); joining any other server, Wayfinder asks it with the same request a
   Vegvisir makes. Either way, the answers never become map pins (see Multiplayer), and only what your map shows
@@ -97,7 +105,7 @@ update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.3.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.4.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Console
@@ -173,9 +181,9 @@ game's next save of its settings writes the old value back.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.3.1]
+   Loading [Wayfinder 1.4.0]
    Applied 2 of 2 patches.
-   Wayfinder 1.3.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.4.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.

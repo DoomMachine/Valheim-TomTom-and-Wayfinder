@@ -27,6 +27,6 @@ namespace Waypointer
 #endif
 
         public const string Author = "DoomMachine";
-        public const string Version = "1.3.1";
+        public const string Version = "1.4.0";
     }
 }

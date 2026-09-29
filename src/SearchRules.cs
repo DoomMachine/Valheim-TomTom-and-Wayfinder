@@ -179,6 +179,103 @@ namespace Waypointer
         }
 
         /// <summary>
+        /// The game's zone index of a world coordinate, computed as ZoneSystem.GetZone does (Valheim 1.0.16): the
+        /// division in double, then Utils.FloorToInt, which is (int)(f + 64000f) - 64000. The same expression, so the
+        /// runtime that runs both rounds them alike at a zone's edge.
+        /// </summary>
+        public static int Zone(float v)
+        {
+            float f = (float)(((double)v + 32.0) / 64.0);
+            return (int)(f + 64000f) - 64000;
+        }
+
+        /// <summary>One key for the zone holding (x, z), for sets of zones.</summary>
+        public static long ZoneKey(float x, float z)
+        {
+            return ((long)Zone(x) << 32) | (uint)Zone(z);
+        }
+
+        /// <summary>
+        /// For a query whose objects grow inside its places (the Bee Nest): drops every place with an object found in its
+        /// own 64 m zone. The object is the find, and it can stand well away from the place's centre (about 38 m in a
+        /// village). The game places a location wholly inside one zone, so its nests share that zone, and a zone holds
+        /// one location. Every object is kept: a village can hold several nests.
+        /// </summary>
+        public static void DropPlacesWithObjectsInZone(List<SearchHit> hits)
+        {
+            HashSet<long> zones = new HashSet<long>();
+            for (int i = 0; i < hits.Count; i++) if (hits[i].IsObject) zones.Add(ZoneKey(hits[i].X, hits[i].Z));
+            if (zones.Count == 0) return;
+            for (int i = hits.Count - 1; i >= 0; i--)
+                if (!hits[i].IsObject && zones.Contains(ZoneKey(hits[i].X, hits[i].Z))) hits.RemoveAt(i);
+        }
+
+        /// <summary>
+        /// The player's side, once every answer is in, in this order: Wayfinder's explored filter (explored non-null:
+        /// keep only the hits it accepts, and no unique place's candidate), then the rocks of a listed Big Rock Clearing,
+        /// then - for a query whose objects grow inside its places - the places a found object stands for. The merge
+        /// must come after the filter, or an unexplored nest would remove its explored place and then vanish itself.
+        /// </summary>
+        public static void FinishHits(List<SearchHit> hits, SearchQuery q, Predicate<SearchHit> explored, float rockClearingRadius)
+        {
+            if (explored != null)
+            {
+                for (int i = hits.Count - 1; i >= 0; i--)
+                    if (hits[i].Possible || !explored(hits[i])) hits.RemoveAt(i);
+            }
+            DropObjectsNear(hits, "BigRockClearing", rockClearingRadius);
+            if (q != null && q.PlacesHoldObjects) DropPlacesWithObjectsInZone(hits);
+        }
+
+        /// <summary>
+        /// Whether a search leaves out the places known to hold none of its objects: only on a server (which holds every
+        /// generated object), only when the player asked to skip places known not to hold what they look for (the
+        /// request's CheckChests, TomTom's SkipCheckedChests), and only for a query whose objects grow inside its places.
+        /// </summary>
+        public static bool KnownEmptyApplies(bool onServer, bool checkChests, SearchQuery q)
+        {
+            return onServer && checkChests && q != null && q.PlacesHoldObjects;
+        }
+
+        /// <summary>
+        /// Notes the zone of an object read (when <paramref name="zones"/> is not null) before any range test - a place
+        /// in range can hold a nest just beyond it - and returns whether the object lies within range (horizontal,
+        /// inclusive) of (ox, oz).
+        /// </summary>
+        public static bool NoteObject(HashSet<long> zones, float x, float z, float ox, float oz, float range)
+        {
+            if (zones != null) zones.Add(ZoneKey(x, z));
+            float dx = x - ox, dz = z - oz;
+            return dx * dx + dz * dz <= range * range;
+        }
+
+        /// <summary>
+        /// For a query whose objects grow inside its places, on a server only: drops every placed place (its zone has
+        /// been generated, so its nests' chances have been rolled) with no object left in its zone - none grew there,
+        /// or it was destroyed. <paramref name="objectZones"/> holds the zone of every such object the server holds
+        /// around the search, in range or not (a place in range can hold a nest just beyond it); null means none. A
+        /// place not generated yet, a unique place's candidate, and an object are kept. Returns how many places were
+        /// checked; <paramref name="dropped"/> receives how many of them were dropped.
+        /// </summary>
+        public static int DropPlacesKnownEmpty(List<SearchHit> hits, HashSet<long> objectZones, out int dropped)
+        {
+            int checkedPlaces = 0;
+            dropped = 0;
+            for (int i = hits.Count - 1; i >= 0; i--)
+            {
+                SearchHit h = hits[i];
+                if (h.IsObject || h.Possible || !h.Placed) continue;
+                checkedPlaces++;
+                if (objectZones == null || !objectZones.Contains(ZoneKey(h.X, h.Z)))
+                {
+                    hits.RemoveAt(i);
+                    dropped++;
+                }
+            }
+            return checkedPlaces;
+        }
+
+        /// <summary>
         /// Keeps the <paramref name="keep"/> hits nearest (x, z), horizontally. Only the player's own plugin trims:
         /// a server answering a Find sends every place in range, since Wayfinder's exploration filter runs after it
         /// on the player's side.
@@ -212,12 +309,13 @@ namespace Waypointer
 
         /// <summary>
         /// The waypoint name for a hit: its label, then what the search was for when that is a chest item
-        /// ("Skeleton Tower (Wooden Spear)"), and "(possible)" for a unique candidate that may never be the real one.
+        /// ("Skeleton Tower (Wooden Spear)") or what a place may hold ("Abandoned House (Bee Nest)"; a nest found is
+        /// just "Bee Nest"), and "(possible)" for a unique candidate that may never be the real one.
         /// </summary>
         public static string WaypointName(SearchHit h, SearchQuery q)
         {
             string name = h.Label;
-            if (q != null && q.Items.Length > 0) name += " (" + q.Name + ")";
+            if (q != null && (q.Items.Length > 0 || (q.PlacesHoldObjects && !h.IsObject))) name += " (" + q.Name + ")";
             if (h.Possible) name += " (possible)";
             return name;
         }

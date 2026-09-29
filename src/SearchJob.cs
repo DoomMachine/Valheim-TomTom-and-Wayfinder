@@ -112,8 +112,10 @@ namespace Waypointer
         {
             SimulationDistance oneZone = new SimulationDistance(0, 0, false);
             List<ZDO> zdos = new List<ZDO>();
+            // For a query whose objects grow inside its places: the zone of every such object read, in range or not.
+            HashSet<long> objectZones = Query.PlacesHoldObjects ? new HashSet<long>() : null;
 
-            // World objects within range (the scattered Mysterious Rocks).
+            // World objects within range (the scattered Mysterious Rocks, the Bee Nests).
             for (int t = 0; t < Query.Objects.Length; t++)
             {
                 SearchTarget target = Query.Objects[t];
@@ -133,9 +135,8 @@ namespace Waypointer
                             ObjectsRead++;
                             if (zdo == null || !zdo.IsValid() || zdo.GetPrefab() != hash) continue;
                             Vector3 p = zdo.GetPosition();
-                            float dx = p.x - Origin.x, dz = p.z - Origin.z;
-                            if (dx * dx + dz * dz > Range * Range) continue;
                             if (IsPicked(zdo, target.Prefab)) continue;
+                            if (!SearchRules.NoteObject(objectZones, p.x, p.z, Origin.x, Origin.z, Range)) continue;
                             SearchHit h = new SearchHit();
                             h.Prefab = target.Prefab;
                             h.Label = target.Label;
@@ -147,6 +148,18 @@ namespace Waypointer
                         if (SearchBudget.Over()) yield return null;
                     }
                 }
+            }
+
+            // Places whose zone the game has generated without a nest left in it (none grew there, or it was destroyed),
+            // for a query whose objects grow inside its places. On the server only, which holds every generated object
+            // (the world's chunks are all loaded with it), and only when the player asked to leave out places known not
+            // to hold what they look for. Every listed place's zone was read above: the place is within range, so its
+            // zone's nearest point is too (ZoneDistance <= Range), and its nests stand in that same zone.
+            if (SearchRules.KnownEmptyApplies(OnServer, CheckChests, Query) && Hits.Count > 0)
+            {
+                int dropped;
+                ChestPlacesChecked += SearchRules.DropPlacesKnownEmpty(Hits, objectZones, out dropped);
+                ChestPlacesSkipped += dropped;
             }
 
             // Places whose chests have all been filled already, and hold none of the items any more. On the server

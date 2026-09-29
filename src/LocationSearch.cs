@@ -345,6 +345,16 @@ namespace Waypointer
 #endif
         }
 
+#if WAYFINDER
+        // Cached by hand: C# 5 makes a new delegate for every method-group conversion.
+        private static readonly Predicate<SearchHit> _exploredFn = IsExploredHit;
+
+        private static bool IsExploredHit(SearchHit h)
+        {
+            return MinimapAccess.IsExplored(new Vector3(h.X, h.Y, h.Z));
+        }
+#endif
+
         /// <summary>This plugin's own name for a prefab the query looks for, or null.</summary>
         private static string OwnLabel(string prefab)
         {
@@ -466,14 +476,13 @@ namespace Waypointer
 
 #if WAYFINDER
             // Only what the map already shows: a place whose centre is explored (by the player, or shared by a
-            // Cartography Table), and a unique place only once it is fixed.
-            for (int i = _hits.Count - 1; i >= 0; i--)
-            {
-                SearchHit h = _hits[i];
-                if (h.Possible || !MinimapAccess.IsExplored(new Vector3(h.X, h.Y, h.Z))) _hits.RemoveAt(i);
-            }
+            // Cartography Table), and a unique place only once it is fixed (FinishHits drops the candidates).
+            Predicate<SearchHit> explored = _exploredFn;
+#else
+            Predicate<SearchHit> explored = null;
 #endif
-            SearchRules.DropObjectsNear(_hits, "BigRockClearing", RockClearingRadius);
+            // The explored filter, then the rocks of a listed clearing, then the places a nest found stands for.
+            SearchRules.FinishHits(_hits, _query, explored, RockClearingRadius);
 
             int count = _hits.Count;
             int possible = 0;
@@ -511,9 +520,10 @@ namespace Waypointer
                 : _answeredByServerPlugin ? string.Format(CultureInfo.InvariantCulture, "{0} places from the server's plugin", _answers)
                 : string.Format(CultureInfo.InvariantCulture, "{0} answers from the server", _answers);
             Plugin.Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
-                "Search '{0}' within {1:0} m: {2} found, {3} queued, {4} possible; {5}; {6} objects read, {7} places' chests checked, {8} skipped; {9:0.0} ms of work over {10} frames, {11:0.00} s in all.",
+                "Search '{0}' within {1:0} m: {2} found, {3} queued, {4} possible; {5}; {6} objects read, {7} {12}, {8} skipped; {9:0.0} ms of work over {10} frames, {11:0.00} s in all.",
                 _query.Name, _range, count, placed, possible, source,
-                _objectsRead, _chestPlacesChecked, _chestPlacesSkipped, _workMs, _workFrames, _elapsed.Elapsed.TotalSeconds));
+                _objectsRead, _chestPlacesChecked, _chestPlacesSkipped, _workMs, _workFrames, _elapsed.Elapsed.TotalSeconds,
+                _query.PlacesHoldObjects ? "places checked for a nest" : "places' chests checked"));
 #endif
             _hits.Clear();
         }
