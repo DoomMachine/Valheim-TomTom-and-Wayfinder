@@ -238,6 +238,18 @@ namespace Waypointer
         }
 
         /// <summary>
+        /// Whether a world object counts: it was not placed through the build system (Piece.SetCreator writes
+        /// ZDOVars.s_creator - the way mods make a pickable buildable) and not spawned with the console's spawn or
+        /// location command (they set ZDOVars.s_cheated). World generation sets neither - nor does the console's
+        /// vegetation command, whose objects cannot be told from the world's. Player IDs can be negative, so the test is
+        /// != 0.
+        /// </summary>
+        public static bool WorldMade(long creator, bool cheated)
+        {
+            return creator == 0L && !cheated;
+        }
+
+        /// <summary>
         /// Notes the zone of an object read (when <paramref name="zones"/> is not null) before any range test - a place
         /// in range can hold a nest just beyond it - and returns whether the object lies within range (horizontal,
         /// inclusive) of (ox, oz).
@@ -315,7 +327,7 @@ namespace Waypointer
         public static string WaypointName(SearchHit h, SearchQuery q)
         {
             string name = h.Label;
-            if (q != null && (q.Items.Length > 0 || (q.PlacesHoldObjects && !h.IsObject))) name += " (" + q.Name + ")";
+            if (q != null && (q.Items.Length > 0 || (q.PlacesHoldObjects && !h.IsObject))) name += " (" + q.Title + ")";
             if (h.Possible) name += " (possible)";
             return name;
         }

@@ -111,16 +111,19 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 172 tests (parser, crash-safe save, key reads, search, server messages and rules, captions), on .NET and on Mono
+./run-tests.sh                                                         # 248 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
+powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Valheim"   # a game folder elsewhere
 ```
 
 `preflight.ps1` reads a compiled plugin and fails if:
 
 - its `BepInPlugin` identity or its incompatibility with the other edition is wrong
 - any Harmony patch target, or any private game member reached by reflection, has disappeared from the
-  shipped game assemblies (the first thing a Valheim update breaks)
+  shipped game assemblies (the first thing a Valheim update breaks), or a `[HarmonyPatch]` class is not applied:
+  `Plugin.ApplyPatches`' game array must name each once, and its dedicated-server array exactly the two server
+  patches
 - anything could create a **shareable** map marker — markers must be `save: false` with owner 0, passed
   to `AddPin` and re-asserted after it, which keeps them out of the Cartography Table
   (`Minimap.GetSharedMapData`) and the player profile (`Minimap.GetMapData`); `AddPin` must be referenced
@@ -134,11 +137,19 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
   save no test can observe: `SafeFile.WriteAllText` must write the new text, call `FileStream.Flush(true)`
   unconditionally, and only then `File.Move` it into place; the save must go through it, and nothing but that
   method's one `FileStream` may open a file for writing (whether the drive honours the flush is beyond any
-  check)
+  check); and a route that could not be read must not be saved over: `WaypointManager.SaveIfDirty` must ask
+  `RouteReadGate.Pending` before `SafeFile.WriteAllText` and return while it is true, `Load` and `RetryRead` must
+  record a failed read (and `RetryRead` return right after it), `ReadRoute`'s catch must return false,
+  `LoadForCurrentWorldIfNeeded` must mark the route not read when `PersistWaypoints` is off, `RetryRead` must set
+  `_dirty` from whether anything was queued meanwhile, and `SaveIfDirty` must be the only caller of
+  `SafeFile.WriteAllText`
 - a key the player chooses could stop the waypoint tick: Valheim throws on every read of 30 of the keys
   BepInEx offers, so every configurable key must be read through `Hotkeys`, whose reads are caught (and not
   rethrown), a hard-coded key must be one the game can read (the 30 are worked out from the game itself),
-  and `Plugin.Update` must call `WaypointManager.Tick` in a try block of its own that reads no key
+  and `Plugin.Update` must call `WaypointManager.Tick` in a try block of its own that reads no key; and the
+  keys the game cannot read must still be the 30 listed for Valheim 1.0.16 (after a game update that changes
+  them, this fails until the list in `preflight.ps1` is updated; update the lists in `Hotkeys.cs` and both package
+  READMEs with it - the check does not read them)
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
   console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
@@ -150,8 +161,13 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
   `LocationSearch.Ask`, branching directly on `AnswersIntercepted()`, which asks Harmony and returns a flag set
   only from the unit-tested `SearchRules.IsOurPrefix`; and nothing may call `Game.DiscoverClosestLocation` or
   `Minimap.DiscoverLocation`, which make saved pins
-- Wayfinder's search does not keep to explored places (it must read `MinimapAccess.IsExplored`) - and,
-  conversely, TomTom's does, so the check can't pass vacuously
+- Wayfinder's search does not read `MinimapAccess.IsExplored` - and, conversely, TomTom's does, so the check
+  can't pass vacuously (that Wayfinder's filter is the one handed to `SearchRules.FinishHits` is not checked yet)
+- the search's decisions are not wired as the tests assume: `LocationSearch.Finish` must hand the search's own
+  places and query to `SearchRules.FinishHits` exactly once, TomTom's with no filter; `SearchJob`'s scan must gate
+  the known-empty drop with `SearchRules.KnownEmptyApplies(OnServer, CheckChests, Query)` and give it the zone set
+  `SearchRules.NoteObject` fills; and it must check `SearchRules.WorldMade` (the object's creator and cheat flag,
+  read with the defaults 0 and false) before an object counts, skipping the object when it is false
 - a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
   and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
   each checked by the literal name the call sends
@@ -170,7 +186,11 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugi
 - with Valheim's dedicated server installed beside the game (or `-ServerDir`), any reference fails to resolve
   against the server's own assemblies - a separate build of the game, not a copy (skipped, and not counted,
   without one)
-- a referenced assembly can't be resolved from the game folder
+- a referenced assembly can't be resolved from the game folder (a game folder that is not found at all is named,
+  with `-ValheimDir` to point it elsewhere)
+
+On a game build other than Valheim 1.0.16 it also prints a note: Find's catalogue was derived for 1.0.16, and no
+check can see whether a newer build moved the chests or nests it lists.
 
 Run it after every Valheim update.
 
@@ -198,8 +218,9 @@ Run it after every Valheim update.
   moves to a new engine version; it would add a binary that neither build path can reproduce, and it
   would change nothing per frame.
 - Private game members (`Minimap.ScreenToWorldPoint`, `m_pins`, `PinInteractRadius`, `GetClosestPin`,
-  `m_visibleIconTypes`) are reached with `HarmonyLib.AccessTools` reflection, so the
-  plugins depend only on the shipped DLLs.
+  `m_visibleIconTypes`, and in Wayfinder `IsExplored`) are reached with `HarmonyLib.AccessTools` reflection, so
+  the plugins depend only on the shipped DLLs. If `PinInteractRadius` cannot be read, map clicks reach as far as
+  its public parts say (`m_removeRadius` times the zoom), with one warning.
 - Input is taken over by making `TextInput.IsVisible` report `true` while the window is open. That one
   flag is what `Player.TakeInput` and `GameCamera.UpdateMouseCapture` consult, so it releases the cursor
   and blocks movement, the hotbar and Use together — the same approach ConfigurationManager and
@@ -216,12 +237,19 @@ Run it after every Valheim update.
   world's queue replaces it, and a failed write is retried after a growing delay rather than every frame.
   The route file is replaced crash-safely (`SafeFile`, the pattern of the game's own
   `FileHelpers.ReplaceOldFile`): the new text goes to `.new` and is flushed to disk, the current file steps
-  aside as `.old`, `.new` takes its name, `.old` goes. Once a route file exists, a crash or a power cut
+  aside as `.old` (or as `.old2` while another program holds a `.old` left by an earlier save), `.new` takes its
+  name, and the copy goes. Once a route file exists, a crash or a power cut
   during a save leaves the previous or the new text complete on disk - in the file itself or in the
   `.new`/`.old` beside it (after a power cut, provided the drive honours the flush to disk) - because `.new`
   is then only written while that file exists. When the file is missing, the next start renames the copy
   back rather than rewriting it (and reads it in place if it cannot be moved yet). A stray `.new` beside an
   intact file is an unfinished save and is ignored. The first save of a world has nothing older to protect.
+  A route that could not be read when its world loaded (another program held it) is never saved over:
+  `SaveIfDirty` returns while `RouteReadGate` is pending, the read is tried again after a growing delay (2, 4, 6 s
+  ... at most 30 s) and once more when another world loads or the game closes, and once it succeeds what was queued
+  meanwhile comes first
+  and the saved waypoints follow (`RouteMerge` leaves out a restored waypoint that matches a queued one). The same
+  happens when `PersistWaypoints` is turned on in a world that was entered with it off.
 - The local player is destroyed and recreated on every death while the map survives, so nothing is reset
   when the player is briefly missing; a change of world is detected by world UID instead.
 - **Find** takes its places from the game's own list of location instances on a server
@@ -242,13 +270,18 @@ Run it after every Valheim update.
   (`SearchRules.DropPlacesWithObjectsInZone`, on the player's side after Wayfinder's filter: `SearchRules.FinishHits`
   keeps that order), and a server asked to skip places known not to hold what is looked for (`SkipCheckedChests`)
   leaves out a place whose zone it has generated with no nest left in it (`SearchRules.DropPlacesKnownEmpty`, from
-  the zones of every nest it read, in range or not). These decisions are Unity-free, so the tests exercise them.
+  the zones of every nest it read, in range or not). These decisions are Unity-free, so the tests check their
+  order and rules; preflight checks what the game code hands them. An object is left out when a player placed it
+  through the build system (`s_creator`) or spawned it with the console's `spawn` or `location` command
+  (`s_cheated`) (`SearchRules.WorldMade`); the console's `vegetation` command marks neither, so what it makes
+  counts. The rock Find keeps its key, `Mysterious Rock`, which servers look a Find up by, and shows the game's own
+  name, Rock (`SearchQuery.Title`); the game's "Mysterious Rock" is the pet rock a player builds, never listed.
 - **Find needs nothing beyond BepInEx and the running game; it does not use SeedLab.** Every result comes
   from the game as it runs: the location list (as the host) or the server's answers (when joining), the world
   objects the game has loaded, and the chests' saved contents. What is fixed in the plugin is the catalogue
   (`src/SearchCatalog.cs`) - which kinds of place can hold a chest with each item or a Bee Nest, and which places
   are the merchants and the rocks - and the distances Find looks within (a place's chests within 64 m of it, or 96 m for
-  the places a dungeon generator builds; loose Mysterious Rocks within 40 m of a Big Rock Clearing count as the
+  the places a dungeon generator builds; loose Rocks within 40 m of a Big Rock Clearing count as the
   clearing). The catalogue was derived during development from a dump of Valheim 1.0.16's own prefab data -
   every location's children, their chests and loot tables, and the rooms dungeon generators build - taken from
   the running game with SeedLab's game-data dumper (https://github.com/DoomMachine/Valheim-SeedLab,
@@ -271,6 +304,39 @@ Run it after every Valheim update.
   for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
 
 ## History
+
+**1.4.1** — fixes: an unreadable saved route is never overwritten, rocks have their own name, safer coordinate input.
+
+- fixed: when a world's saved route could not be read as the world loaded (another program - a backup, sync or
+  antivirus tool - held the file), the queue started empty and the next change replaced the saved route. Now the
+  file is never saved over while it cannot be read: changes are kept, the read is tried again every few seconds (at
+  most every 30 s), and once it succeeds what was queued meanwhile comes first and the saved waypoints follow.
+  Turning `PersistWaypoints` on in a world works the same way: the saved route is joined, not replaced
+- fixed: a leftover `.old` copy held open by another program no longer stops saving: the current file steps aside
+  as `.old2` instead
+- fixed: the loose rocks Find lists are named "Rock", the game's own name; they were called "Mysterious Rock", which
+  in the game is the pet rock a player builds. The Find entry reads "Rock", and its key stays "Mysterious Rock", so
+  servers and players on other versions still agree. Waypoints already queued keep their old name. A rock or nest
+  a player placed through the build system or spawned with the console's `spawn` command is left out (on a server,
+  when it runs 1.4.1 or later)
+- fixed (TomTom): coordinate lines that were silently misread are refused, remedy first: a comma between two digits
+  where reading it as a decimal comma would name another place (`12,5 30`, `1234,5; -567,25`), more than three
+  numbers, and a first word that starts like a number (`1234m, -567, 20`). A decimal comma is not accepted: it would
+  silently move lines that work today
+- fixed: the arrow's captions: a name the game cannot translate is no longer measured again every frame, a caption
+  is measured again if measuring ever fails, a character is never cut in half before "...", and trailing spaces
+  never get "..."; the arrow's rotation and colour are restored even if drawing fails
+- fixed: if a game update renamed the private `PinInteractRadius`, map clicks would have reached only 12 m; they now
+  reach as far as its public parts say, with one warning
+- fixed: a key Valheim cannot read is now named in the warning for every setting that uses it, and the window's map
+  hint says when its modifier key cannot be read
+- docs: No Map worlds, an Uninstall section, a Linux Alt-click note (not tested), `Use3DDistance` for map clicks, run
+  Find again for the merchants after a game update, and the server texts (`WhoMayFind`'s 15 to 20 seconds, restart a
+  rented server after changing it, who rewrites the settings file, what a server's log records, `;` in the console
+  with Server Devcommands)
+- 76 new tests (172 → 248), and preflight checks that every patch class is applied, that an unread route is
+  not saved over, how the search's decisions are wired, and that the game's unreadable keys are still the 30 known
+  ones (53 → 59 checks per edition); `run-tests.sh` stops a run after `TEST_TIMEOUT` seconds
 
 **1.4.0** — Find: Bee Nests.
 

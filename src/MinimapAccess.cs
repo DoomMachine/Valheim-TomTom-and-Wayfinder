@@ -59,6 +59,9 @@ namespace Waypointer
 
             PropertyInfo pir = AccessTools.Property(typeof(Minimap), "PinInteractRadius");
             if (pir != null) _pinInteractRadiusGetter = pir.GetGetMethod(true);
+            if (_pinInteractRadiusGetter == null)
+                Plugin.Log.LogWarning("Minimap.PinInteractRadius not found: map clicks reach as far as its public parts "
+                    + "(m_removeRadius, LargeZoom) say instead.");
         }
 
         /// <summary>Converts a screen/cursor position into a world position on the map. Returns false if unavailable.</summary>
@@ -166,23 +169,54 @@ namespace Waypointer
             return GetPins(mm).Contains(pin);
         }
 
-        /// <summary>Stand-in for PinInteractRadius when its private getter cannot be reached.</summary>
+        /// <summary>The last resort for PinInteractRadius, when neither its getter nor its public parts can be read.</summary>
         internal const float FallbackPinInteractRadius = 12f;
 
-        internal static float PinInteractRadius(Minimap mm, float fallback)
+        private static bool _radiusWarned;
+
+        /// <summary>
+        /// How far from a map click a pin still counts as clicked: Valheim's own Minimap.PinInteractRadius (private),
+        /// read through reflection; else worked out the same way from its public parts; else FallbackPinInteractRadius.
+        /// </summary>
+        internal static float PinInteractRadius(Minimap mm)
         {
-            if (mm == null || _pinInteractRadiusGetter == null) return fallback;
-            try
+            if (mm == null) return FallbackPinInteractRadius;
+            if (_pinInteractRadiusGetter != null)
             {
-                object v = _pinInteractRadiusGetter.Invoke(mm, null);
-                if (v is float)
+                try
                 {
-                    float f = (float)v;
-                    if (f > 0f) return f;
+                    object v = _pinInteractRadiusGetter.Invoke(mm, null);
+                    if (v is float && (float)v > 0f) return (float)v;
+                }
+                catch (Exception e)
+                {
+                    if (!_radiusWarned)
+                    {
+                        _radiusWarned = true;
+                        Plugin.Log.LogWarning("Minimap.PinInteractRadius could not be read (" + e.Message + "): map clicks "
+                            + "reach as far as its public parts (m_removeRadius, LargeZoom) say instead.");
+                    }
                 }
             }
-            catch { /* fall through to the fallback */ }
-            return fallback;
+            try
+            {
+                float r = RadiusFromPublicParts(mm);
+                if (r > 0f) return r;
+            }
+            catch (Exception) { /* a public member an update renamed: the last resort below */ }
+            return FallbackPinInteractRadius;
+        }
+
+        /// <summary>
+        /// Minimap.PinInteractRadius as Valheim 1.0.16 works it out, from public members only: m_removeRadius *
+        /// (LargeZoom * 2), 1.3 times that with touch input - so it follows the map's zoom. A method of its own, so that
+        /// a member an update renames fails only here, when this method is compiled, and not the caller.
+        /// </summary>
+        private static float RadiusFromPublicParts(Minimap mm)
+        {
+            float r = mm.m_removeRadius * (mm.LargeZoom * 2f);
+            if (ZInput.IsTouchActive()) r *= 1.3f;
+            return r;
         }
 
         /// <summary>

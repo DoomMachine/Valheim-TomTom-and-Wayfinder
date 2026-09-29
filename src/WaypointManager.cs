@@ -112,6 +112,11 @@ namespace Waypointer
         private static float _nextSaveAttempt;
         private static int _saveFailures;
 
+        // Whether the route of the world the queue belongs to has been read. One that could not be read when its world
+        // loaded (another program held it) is never saved over, and is read again after a growing delay (Load,
+        // RetryRead, SaveIfDirty). Reset whenever the queue moves to another world.
+        private static readonly RouteReadGate _read = new RouteReadGate();
+
         // Speed estimate used for the time-to-arrival readout, smoothed to stop it flickering.
         private static float _lastDistance = -1f;
         private static float _smoothedSpeed;
@@ -648,7 +653,12 @@ namespace Waypointer
         {
             long uid = CurrentWorldUid();
             if (uid == 0L) return;
-            if (_loadedForThisWorld && _loadedWorldUid == uid) return;
+            if (_loadedForThisWorld && _loadedWorldUid == uid)
+            {
+                // A route that could not be read when this world loaded is tried again, after a growing delay.
+                if (_read.Due(Time.unscaledTime) && Plugin.PersistWaypoints.Value) RetryRead(false);
+                return;
+            }
 
             bool worldChanged = _loadedForThisWorld && _loadedWorldUid != uid;
             if (worldChanged)
@@ -661,12 +671,17 @@ namespace Waypointer
             _loadedForThisWorld = true;
             _saveFailures = 0;
             _nextSaveAttempt = 0f;
+            _read.Reset();
 
             if (Plugin.PersistWaypoints.Value)
             {
                 Load(uid);
+                return;
             }
-            else if (worldChanged)
+            // Not read, so not to be saved over: if PersistWaypoints is turned on in this world, the saved route is read
+            // on the next tick and joined with what is queued by then, instead of the next change replacing it.
+            _read.NotRead(Time.unscaledTime);
+            if (worldChanged)
             {
                 // Different world, nothing saved to restore: just drop the stale route.
                 ReleaseAllPins();
@@ -681,18 +696,42 @@ namespace Waypointer
             // Drop any markers we already own before replacing the queue, so none are orphaned on the map.
             ReleaseAllPins();
             _queue.Clear();
-            _dirty = false;   // the queue now matches the file; the early return inside the try skips the reset below
+            _dirty = false;   // the queue now matches the file; nothing is written back
+            List<Waypoint> restored = new List<Waypoint>();
+            string recoveredFrom;
+            if (ReadRoute(worldUid, restored, out recoveredFrom))
+            {
+                _queue.AddRange(restored);
+                Plugin.Log.LogInfo(string.Format("Restored {0} waypoint(s) for world {1}{2}", _queue.Count, worldUid,
+                    recoveredFrom != null ? " from " + recoveredFrom + ", left by an interrupted save" : ""));
+            }
+            else
+            {
+                // A route that is there but could not be read (another program - a backup, sync or antivirus tool - held
+                // it) must not be replaced by the empty queue: nothing is saved until a later read succeeds (RetryRead),
+                // and what the player queues meanwhile is kept, and put in front of it then.
+                _read.Failed(Time.unscaledTime);
+            }
+        }
+
+        /// <summary>
+        /// Reads the world's saved route into <paramref name="into"/>: true when it was read or there is none yet, false
+        /// when a file is there but could not be read (warned about once per world). Nothing is added unless the whole
+        /// file was read.
+        /// </summary>
+        private static bool ReadRoute(long worldUid, List<Waypoint> into, out string recoveredFrom)
+        {
             string path = SavePath(worldUid);
             // A save that was cut short leaves a copy beside the missing route file - complete, unless it was
             // that world's first save. It is renamed
             // back - never rewritten from memory, which could replace it with an empty list if it could not be
             // read - and read where it is when it cannot be moved right now.
             string survivor = SafeFile.ReadablePath(path);
-            string recoveredFrom = survivor != null && survivor != path ? Path.GetFileName(survivor) : null;
+            recoveredFrom = survivor != null && survivor != path ? Path.GetFileName(survivor) : null;
             string readPath = SafeFile.RecoverInterrupted(path);
+            if (readPath == null) return true;   // nothing saved for this world yet
             try
             {
-                if (readPath == null) return;
                 string[] lines = File.ReadAllLines(readPath);
                 for (int i = 0; i < lines.Length; i++)
                 {
@@ -735,16 +774,65 @@ namespace Waypointer
                     // the player's pins, and EnsurePins finds that pin again rather than adding a marker.
                     wp.Borrowed = !owns;
                     wp.OwnsPin = false;
-                    _queue.Add(wp);
+                    into.Add(wp);
                 }
-                Plugin.Log.LogInfo(string.Format("Restored {0} waypoint(s) for world {1}{2}", _queue.Count, worldUid,
-                    recoveredFrom != null ? " from " + recoveredFrom + ", left by an interrupted save" : ""));
+                return true;
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning("Could not read saved waypoints: " + e.Message);
+                into.Clear();
+                if (_read.Failures == 0)
+                    Plugin.Log.LogWarning("Could not read saved waypoints: " + e.Message + " They are not saved over; "
+                        + "reading them again every few seconds (at most every 30 s).");
+                return false;
             }
-            _dirty = false;   // the queue matches what is on disk; nothing is written back
+        }
+
+        /// <summary>
+        /// Tries again to read a route that could not be read when its world loaded. Once it can be, its waypoints follow
+        /// the ones queued meanwhile, which stay first so the arrow keeps its target (RouteMerge: a restored waypoint that
+        /// matches a queued one is not added twice), and saving resumes. With lastChance (leaving the world, shutting
+        /// down) no marker is made: the map may already be the next world's.
+        /// </summary>
+        private static void RetryRead(bool lastChance)
+        {
+            List<Waypoint> restored = new List<Waypoint>();
+            string recoveredFrom;
+            if (!ReadRoute(_loadedWorldUid, restored, out recoveredFrom))
+            {
+                _read.Failed(Time.unscaledTime);
+                return;
+            }
+            int attempt = _read.Failures + 1;
+            int meanwhile = _queue.Count;
+            List<int> append = RouteMerge.ToAppend(Entries(_queue), Entries(restored));
+            for (int i = 0; i < append.Count; i++) _queue.Add(restored[append[i]]);
+            _read.Succeeded();
+            // With nothing queued meanwhile the queue is the file again; otherwise the merged route is saved.
+            _dirty = meanwhile > 0;
+            Plugin.Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
+                "Read the saved waypoints of world {0} at attempt {1}: {2} restored{3}{4}.", _loadedWorldUid, attempt,
+                append.Count,
+                meanwhile > 0 ? string.Format(CultureInfo.InvariantCulture, ", after the {0} queued meanwhile", meanwhile) : "",
+                recoveredFrom != null ? " (from " + recoveredFrom + ", left by an interrupted save)" : ""));
+            if (!lastChance) EnsurePins();
+        }
+
+        /// <summary>The queue as route entries, for RouteMerge. Kept apart from any text: preflight's readout scan.</summary>
+        private static List<RouteEntry> Entries(List<Waypoint> waypoints)
+        {
+            List<RouteEntry> list = new List<RouteEntry>(waypoints.Count);
+            for (int i = 0; i < waypoints.Count; i++) list.Add(ToEntry(waypoints[i]));
+            return list;
+        }
+
+        private static RouteEntry ToEntry(Waypoint wp)
+        {
+            RouteEntry e = new RouteEntry();
+            e.X = wp.Pos.x; e.Z = wp.Pos.z;
+            e.Borrowed = wp.Borrowed;
+            e.Name = wp.Name;
+            return e;
         }
 
         public static void SaveIfDirty()
@@ -756,6 +844,17 @@ namespace Waypointer
             // current, which during a world change is already the next one. The dirty flag is only cleared
             // once the write succeeds; a failed write is retried after a growing delay.
             if (!_loadedForThisWorld || _loadedWorldUid == 0L) return;
+
+            // A route that could not be read is never written over. What changed meanwhile stays in the queue, and is
+            // saved together with it once it has been read (RetryRead).
+            if (_read.Pending)
+            {
+                if (_read.WarnSaveRefused())
+                    Plugin.Log.LogWarning("Waypoints not saved: the saved route of world "
+                        + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + " could not be read yet, and is not "
+                        + "written over. Changes are kept, and saved with it once it can be read.");
+                return;
+            }
             if (Time.unscaledTime < _nextSaveAttempt) return;
 
             try
@@ -799,12 +898,18 @@ namespace Waypointer
         /// </summary>
         public static void SaveNow()
         {
+            // A last try at a route that could not be read, so what was queued meanwhile can be saved with it.
+            if (_read.Pending && Plugin.PersistWaypoints.Value && _loadedForThisWorld && _loadedWorldUid != 0L)
+                RetryRead(true);
             _nextSaveAttempt = 0f;
             SaveIfDirty();
             // Both callers are about to replace or drop the queue, so an unsaved change is gone for good.
             if (_dirty && Plugin.PersistWaypoints.Value && _loadedForThisWorld && _loadedWorldUid != 0L)
-                Plugin.Log.LogWarning("Could not save the waypoints of world "
-                    + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + "; the last change is lost.");
+                Plugin.Log.LogWarning(_read.Pending
+                    ? "The saved route of world " + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + " could still "
+                        + "not be read. It is left as it was; the waypoints changed since it was loaded are not saved."
+                    : "Could not save the waypoints of world "
+                        + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + "; the last change is lost.");
         }
 
         private static bool IsFinite(float v) { return !float.IsNaN(v) && !float.IsInfinity(v); }

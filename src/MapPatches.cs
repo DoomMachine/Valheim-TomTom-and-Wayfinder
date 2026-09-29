@@ -50,7 +50,7 @@ namespace Waypointer
                 return false;
             }
 
-            float radius = MinimapAccess.PinInteractRadius(minimap, MinimapAccess.FallbackPinInteractRadius);
+            float radius = MinimapAccess.PinInteractRadius(minimap);
 
             // Ignore the second half of a double click - consumed, but does nothing.
             if (Time.time - _lastClickTime < DoubleClickWindow

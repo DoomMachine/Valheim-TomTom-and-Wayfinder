@@ -78,14 +78,20 @@ namespace Waypointer
 
             Color previousColor = GUI.color;
             Matrix4x4 previousMatrix = GUI.matrix;
-
-            // Positive bearing means the target is to the right, and a positive IMGUI rotation turns
-            // clockwise on screen, so the angle can be applied directly.
-            GUIUtility.RotateAroundPivot(bearing, rect.center);
-            GUI.color = tint;
-            GUI.DrawTexture(rect, _arrow, ScaleMode.StretchToFill, true);
-            GUI.matrix = previousMatrix;
-            GUI.color = previousColor;
+            try
+            {
+                // Positive bearing means the target is to the right, and a positive IMGUI rotation turns
+                // clockwise on screen, so the angle can be applied directly.
+                GUIUtility.RotateAroundPivot(bearing, rect.center);
+                GUI.color = tint;
+                GUI.DrawTexture(rect, _arrow, ScaleMode.StretchToFill, true);
+            }
+            finally
+            {
+                // Restored even if drawing throws, so nothing drawn after it in this frame comes out rotated or tinted.
+                GUI.matrix = previousMatrix;
+                GUI.color = previousColor;
+            }
 
             DrawCaptions(rect, wp, distance);
         }
@@ -132,11 +138,13 @@ namespace Waypointer
 
         private static float TextWidth(string text, ref string measuredFor, ref float width)
         {
-            if (!ReferenceEquals(text, measuredFor))
+            // string.Equals, not ReferenceEquals: the same text built again (near a rounding boundary) is not re-measured.
+            if (!string.Equals(text, measuredFor))
             {
-                measuredFor = text;
-                // The outline draws the text one pixel either side.
+                // The outline draws the text one pixel either side. The key is set only once measured, so a measure
+                // that throws is tried again next frame instead of leaving the old width in place.
                 width = MeasureCaption(text) + 2f;
+                measuredFor = text;
             }
             return width;
         }
@@ -157,14 +165,20 @@ namespace Waypointer
         private static void DrawOutlinedLabel(Rect rect, string text, Color color)
         {
             Color previous = GUI.color;
-            GUI.color = new Color(0f, 0f, 0f, 0.85f);
-            GUI.Label(new Rect(rect.x - 1f, rect.y, rect.width, rect.height), text, _labelStyle);
-            GUI.Label(new Rect(rect.x + 1f, rect.y, rect.width, rect.height), text, _labelStyle);
-            GUI.Label(new Rect(rect.x, rect.y - 1f, rect.width, rect.height), text, _labelStyle);
-            GUI.Label(new Rect(rect.x, rect.y + 1f, rect.width, rect.height), text, _labelStyle);
-            GUI.color = color;
-            GUI.Label(rect, text, _labelStyle);
-            GUI.color = previous;
+            try
+            {
+                GUI.color = new Color(0f, 0f, 0f, 0.85f);
+                GUI.Label(new Rect(rect.x - 1f, rect.y, rect.width, rect.height), text, _labelStyle);
+                GUI.Label(new Rect(rect.x + 1f, rect.y, rect.width, rect.height), text, _labelStyle);
+                GUI.Label(new Rect(rect.x, rect.y - 1f, rect.width, rect.height), text, _labelStyle);
+                GUI.Label(new Rect(rect.x, rect.y + 1f, rect.width, rect.height), text, _labelStyle);
+                GUI.color = color;
+                GUI.Label(rect, text, _labelStyle);
+            }
+            finally
+            {
+                GUI.color = previous;
+            }
         }
 
         private static void EnsureStyle()
@@ -308,18 +322,25 @@ namespace Waypointer
             string caption = NameCaption(wp);
             // The outline draws the text one pixel either side, hence the 2 px kept free.
             float max = Mathf.Max(0f, Screen.width - 2f * CaptionMargin - 2f);
-            if (!ReferenceEquals(caption, _fitSource) || max != _fitMaxWidth || _fitText == null)
+            // string.Equals, not ReferenceEquals: a name whose translation comes back as a new string on every call (one
+            // that is empty or holds MISSING KEY, which Localization does not cache) is otherwise re-measured every frame.
+            if (!string.Equals(caption, _fitSource) || max != _fitMaxWidth || _fitText == null)
             {
-                _fitSource = caption;
-                _fitMaxWidth = max;
-                if (MeasureCaption(caption) <= max) _fitText = caption;
+                // Measured into locals and remembered last: a measure that throws leaves the cache stale, so the next
+                // frame measures again instead of drawing the old caption until the text changes.
+                string text;
+                if (MeasureCaption(caption) <= max) text = caption;
                 else
                 {
                     int count = WaypointManager.Queue.Count;
                     string suffix = count > 1 ? string.Format(CultureInfo.InvariantCulture, "  ({0} left)", count) : "";
-                    _fitText = CaptionFit.Fit(wp.DisplayName, suffix, max, _measureFn);
+                    text = CaptionFit.Fit(wp.DisplayName, suffix, max, _measureFn);
                 }
-                _fitWidth = MeasureCaption(_fitText) + 2f;
+                float fitted = MeasureCaption(text) + 2f;
+                _fitText = text;
+                _fitWidth = fitted;
+                _fitSource = caption;
+                _fitMaxWidth = max;
             }
             width = _fitWidth;
             return _fitText;
@@ -336,7 +357,7 @@ namespace Waypointer
             string name = wp.DisplayName;
             int count = WaypointManager.Queue.Count;
             if (count <= 1) return name;
-            if (!ReferenceEquals(name, _nameSource) || count != _nameCount || _nameCaption == null)
+            if (!string.Equals(name, _nameSource) || count != _nameCount || _nameCaption == null)
             {
                 _nameSource = name;
                 _nameCount = count;

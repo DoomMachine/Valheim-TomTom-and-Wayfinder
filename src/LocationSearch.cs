@@ -23,7 +23,7 @@ namespace Waypointer
     ///   catches this mod's answers first, and no request is ever sent unless that interception is confirmed active
     ///   (AnswersIntercepted). A final request with exactly one answer (the closest StartTemple) marks the end of the
     ///   answers, since routed calls keep their order. World objects then come from the ZDOs the client holds:
-    ///   only what is loaded near the player.
+    ///   only what its game has been sent since it joined (near where the player has been).
     ///
     /// Work that grows with the world runs a little each frame (SearchBudget), so a large search takes longer rather
     /// than making the game stutter. TomTom logs how long each search took. Wayfinder keeps only places whose centre
@@ -521,7 +521,7 @@ namespace Waypointer
                 : string.Format(CultureInfo.InvariantCulture, "{0} answers from the server", _answers);
             Plugin.Log.LogInfo(string.Format(CultureInfo.InvariantCulture,
                 "Search '{0}' within {1:0} m: {2} found, {3} queued, {4} possible; {5}; {6} objects read, {7} {12}, {8} skipped; {9:0.0} ms of work over {10} frames, {11:0.00} s in all.",
-                _query.Name, _range, count, placed, possible, source,
+                _query.Title, _range, count, placed, possible, source,
                 _objectsRead, _chestPlacesChecked, _chestPlacesSkipped, _workMs, _workFrames, _elapsed.Elapsed.TotalSeconds,
                 _query.PlacesHoldObjects ? "places checked for a nest" : "places' chests checked"));
 #endif

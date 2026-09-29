@@ -126,6 +126,11 @@ namespace Waypointer
             return result;
         }
 
+        // A comma with a digit on both sides: a separator between two values, or a decimal comma (TryParseOne).
+        private static readonly Regex CommaBetweenDigits = new Regex(@"(?<=\d),(?=\d)");
+        // A word that starts the way a number does ("1234m", "1e39", ".5km"): a mistyped number, not a name.
+        private static readonly Regex NumberLike = new Regex(@"^[+-]?\.?\d");
+
         /// <summary>Parses a single entry such as "123, 456", "(123 456 -20)" or "Camp: 123, 456".</summary>
         public static bool TryParseOne(string line, out ParsedCoord result, out string error)
         {
@@ -167,6 +172,45 @@ namespace Waypointer
                 }
             }
 
+            ParsedCoord parsed;
+            string fieldsError;
+            bool read = ParseFields(work, out parsed, out fieldsError);
+
+            // A comma between two digits separates two values or is a decimal comma ("12,5 30" is x 12, z 5 and 30 up -
+            // or 12.5, 30). When nothing else on the line shows which (no comma used as a bare separator, no number written
+            // with a dot), the line is read once more with those commas as decimal points; if that reading is also valid
+            // and names another place, the line is refused, remedy first, rather than guessed at.
+            if (MayHoldDecimalComma(work))
+            {
+                ParsedCoord asDecimal;
+                string ignored;
+                if (ParseFields(CommaBetweenDigits.Replace(work, "."), out asDecimal, out ignored) && (!read || !SamePlace(parsed, asDecimal)))
+                {
+                    error = "use a dot for decimals (12.5), or a space after a comma that separates two values (12, 5) - "
+                          + "a comma between two digits could be either";
+                    return false;
+                }
+            }
+
+            if (!read)
+            {
+                error = fieldsError;
+                return false;
+            }
+            if (!string.IsNullOrEmpty(leadingName))
+                parsed.Name = leadingName;
+            result = parsed;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads the fields of one entry, after any "Name:" before a colon was split off: the numbers, axis labels and
+        /// words. TryParseOne may call it twice (a comma between digits read as a separator, then as a decimal comma).
+        /// </summary>
+        private static bool ParseFields(string work, out ParsedCoord result, out string error)
+        {
+            result = null;
+            error = null;
             string[] tokens = Strip(work).Split(Separators, StringSplitOptions.RemoveEmptyEntries);
             if (tokens.Length == 0) { error = "no coordinates found"; return false; }
 
@@ -208,12 +252,29 @@ namespace Waypointer
                 }
                 else if (numbers.Count == 0)
                 {
+                    // A word that starts like a number ("1234m, -567, 20") is a mistyped number, not a name: read as a
+                    // name it would shift every axis. A name that starts with a digit goes before a colon.
+                    if (NumberLike.IsMatch(token))
+                    {
+                        error = "'" + token + "' is not a number - correct it, or put a name that starts with a digit "
+                              + "before a colon (2nd camp: 1234, -567)";
+                        return false;
+                    }
                     // Words before any number are part of the name, not the end of the coordinates,
                     // so "Silver vein 1234 -567" reads correctly.
                     leadingWords.Add(token);
                 }
                 else
                 {
+                    // A fourth number is not a name: it is a value split by a decimal comma ("1234,5,-567,25"), or a
+                    // number meant as a name, which goes before a colon.
+                    float extra;
+                    if (!numbersDone && numbers.Count >= 3 && TryParseNumber(token, out extra))
+                    {
+                        error = "use a dot for decimals (12.5); a name that is a number goes before a colon "
+                              + "(7: 1234, -567, 30) - more than three numbers";
+                        return false;
+                    }
                     // Once numbers have started, the first non-numeric token ends them.
                     numbersDone = true;
                     trailingWords.Add(token);
@@ -256,9 +317,7 @@ namespace Waypointer
 
             string trailingName = string.Join(" ", trailingWords.ToArray()).Trim();
             string leadingWordName = string.Join(" ", leadingWords.ToArray()).Trim();
-            if (!string.IsNullOrEmpty(leadingName))
-                parsed.Name = leadingName;
-            else if (trailingName.Length > 0)
+            if (trailingName.Length > 0)
                 parsed.Name = trailingName;
             else if (leadingWordName.Length > 0)
                 parsed.Name = leadingWordName;
@@ -271,6 +330,39 @@ namespace Waypointer
 
             result = parsed;
             return true;
+        }
+
+        /// <summary>
+        /// Whether a line may hold a decimal comma: a comma sits between two digits, and nothing else shows how the player
+        /// writes numbers - no comma used as a bare separator (",-567", ",+5") and no number written with a dot.
+        /// </summary>
+        private static bool MayHoldDecimalComma(string work)
+        {
+            string s = Strip(work);
+            bool between = false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] != ',') continue;
+                bool digitBefore = i > 0 && s[i - 1] >= '0' && s[i - 1] <= '9';
+                bool digitAfter = i + 1 < s.Length && s[i + 1] >= '0' && s[i + 1] <= '9';
+                if (digitBefore && digitAfter) between = true;
+                else if (i + 1 < s.Length && !char.IsWhiteSpace(s[i + 1])) return false;
+            }
+            if (!between) return false;
+            string[] parts = s.Split(Separators, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                float ignored;
+                if (parts[i].IndexOf('.') >= 0 && TryParseNumber(parts[i], out ignored)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Two readings of one line name the same place (the name aside).</summary>
+        private static bool SamePlace(ParsedCoord a, ParsedCoord b)
+        {
+            return a.A == b.A && a.B == b.B && a.HasElevation == b.HasElevation && a.Labelled == b.Labelled
+                && (!a.HasElevation || a.Elevation == b.Elevation);
         }
 
         /// <summary>A lone x, y or z, which people often paste as an axis label rather than a name.</summary>

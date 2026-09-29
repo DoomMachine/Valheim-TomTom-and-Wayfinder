@@ -95,6 +95,33 @@ namespace Waypointer
             Expect("1234\t-567\tCamp", 1234f, -567f, false, 0f, "Camp");
             Expect("1234, -567, nan", 1234f, -567f, false, 0f, "nan");
 
+            // A comma between two digits that could be a decimal comma (1.4.1): refused when reading it as one names
+            // another place; everything that parsed before and is not ambiguous reads as before.
+            ExpectFail("1234,5; -567,25"); ExpectFail("1234,5 -567,25"); ExpectFail("1234,5\t-567,25\t30");
+            ExpectFail("12,5 30"); ExpectFail("1234 -567,30"); ExpectFail("100,20, 30"); ExpectFail("(1234,57, -567,25, 30,12)");
+            ExpectFail("Camp: 1234,5; -567,25"); ExpectFail("Mine 1,2 1234 -567"); ExpectFail("x 12,5 z 30");
+            Expect("1234,-567,30", 1234f, -567f, true, 30f, ""); Expect("12,34", 12f, 34f, false, 0f, "");
+            Expect("100,20,30", 100f, 20f, true, 30f, ""); Expect("12.5,13", 12.5f, 13f, false, 0f, "");
+            Expect("1,5 12.5", 1f, 5f, true, 12.5f, ""); Expect("12, 5 30", 12f, 5f, true, 30f, "");
+            Expect("1234 -567 Tower 1,2", 1234f, -567f, false, 0f, "Tower 1 2"); Expect("Camp 1,2: 100, 200", 100f, 200f, false, 0f, "Camp 1,2");
+            ParsedCoord pcComma;
+            string errComma;
+            Check("parse: the decimal-comma refusal gives the remedy first",
+                !CoordinateParser.TryParseOne("12,5 30", out pcComma, out errComma) && errComma != null && errComma.StartsWith("use a dot", StringComparison.Ordinal), errComma);
+            Check("parse: a comma that could be a decimal comma is refused as such, not as a fourth number",
+                !CoordinateParser.TryParseOne("1234,5; -567,25", out pcComma, out errComma) && errComma != null
+                && errComma.Contains("a comma between two digits could be either"), errComma);
+            // More than three numbers: a value split by a decimal comma, or a number meant as a name (1.4.1).
+            ExpectFail("1, 2, 3, 4"); ExpectFail("1234, -567, 30, 2"); ExpectFail("1234,5,-567,25");
+            Expect("2: 1234, -567, 30", 1234f, -567f, true, 30f, "2");
+            // A leading word that starts like a number is a mistyped number, not a name (1.4.1).
+            ExpectFail("1234m, -567, 20"); ExpectFail("-1234m, 567, 20"); ExpectFail("1e39, 1, 2"); ExpectFail("1.2.3 100 200"); ExpectFail("12a 34 56");
+            ExpectFail(".5km 100 200"); ExpectFail("Camp: 1234m, -567, 20"); ExpectFail("x 1234m y 30 z -567"); ExpectFail("2nd camp 1234 -567");
+            Expect("2nd camp: 1234, -567", 1234f, -567f, false, 0f, "2nd camp"); Expect("Camp2 1234 -567", 1234f, -567f, false, 0f, "Camp2");
+            Expect("T2 portal 1234 -567", 1234f, -567f, false, 0f, "T2 portal"); Expect("Area51 1234 -567", 1234f, -567f, false, 0f, "Area51");
+            Expect("Infinity Tower 100 200", 100f, 200f, false, 0f, "Infinity Tower"); Expect("-Infinity 100 200", 100f, 200f, false, 0f, "-Infinity");
+            Expect("1234, -567, 2nd camp", 1234f, -567f, false, 0f, "2nd camp");
+
             // List parsing
             string block = "# a comment\n"
                          + "1234, -567\n"
@@ -155,6 +182,7 @@ namespace Waypointer
             Check("format 2D", formatted == "100, 200", "got " + formatted);
 
             SafeFileTests();
+            RouteReadTests();
             HotkeysTests();
             SearchTests();
             ProtocolTests();
@@ -230,6 +258,21 @@ namespace Waypointer
                 Check("recover: renames .old back", got == f && File.ReadAllText(f) == "fifth" && !File.Exists(fOld), Leftovers(f));
                 File.Delete(f);
                 Check("read and recover: nothing saved", SafeFile.ReadablePath(f) == null && SafeFile.RecoverInterrupted(f) == null, Leftovers(f));
+
+                // .old2, where the file steps aside when a .old left by an earlier save is held by another program:
+                // read before .old, renamed back like the other copies, and tidied up by the next save.
+                string fSpare = f + SafeFile.SpareSuffix;
+                File.WriteAllText(fSpare, "spare");
+                File.WriteAllText(fOld, "older");
+                Check("read: .old2 before .old when only they are left", SafeFile.ReadablePath(f) == fSpare, "got " + SafeFile.ReadablePath(f));
+                got = SafeFile.RecoverInterrupted(f);
+                Check("recover: renames .old2 back", got == f && File.ReadAllText(f) == "spare" && !File.Exists(fSpare) && File.Exists(fOld), Leftovers(f));
+                SafeFile.WriteAllText(f, "tidied");
+                Check("safe write: a leftover .old is tidied up", Only(f, "tidied"), Leftovers(f));
+                File.WriteAllText(fSpare, "stale spare");
+                SafeFile.WriteAllText(f, "tidied again");
+                Check("safe write: a leftover .old2 is tidied up", Only(f, "tidied again"), Leftovers(f));
+                File.Delete(f);
 
                 File.WriteAllText(fNew, "complete new");
                 File.WriteAllText(fOld, "old");
@@ -313,6 +356,39 @@ namespace Waypointer
                                 && Encoding.UTF8.GetString(buf, 0, n) == "only copy",
                             Leftovers(f) + (threwWhat != null ? " threw " + threwWhat : ""));
                     }
+
+                    // A .old left by an earlier save and held open by another program: the file steps aside as .old2
+                    // instead, and the save goes through (in 1.4.0 it failed until that program let go).
+                    File.WriteAllText(fOld, "stale");
+                    string heldWhat = null;
+                    using (new FileStream(fOld, FileMode.Open, FileAccess.Read, FileShare.None))
+                    {
+                        try { SafeFile.WriteAllText(f, "past a held .old"); }
+                        catch (Exception e) { heldWhat = e.GetType().Name; }
+                        Check("safe write: a .old held by another program does not stop the save (the file steps aside as .old2)",
+                            heldWhat == null && File.ReadAllText(f) == "past a held .old" && !File.Exists(fNew)
+                                && !File.Exists(f + SafeFile.SpareSuffix) && File.Exists(fOld),
+                            Leftovers(f) + (heldWhat != null ? " threw " + heldWhat : ""));
+                    }
+                    Check("safe write: ...and the held .old is left as it was", File.ReadAllText(fOld) == "stale", Leftovers(f));
+                    SafeFile.WriteAllText(f, "let go");
+                    Check("safe write: once it is let go, the next save tidies it up", Only(f, "let go"), Leftovers(f));
+
+                    // .old and .old2 both held: the save fails (the caller keeps the change and retries), the file untouched.
+                    File.WriteAllText(fOld, "stale");
+                    File.WriteAllText(f + SafeFile.SpareSuffix, "stale too");
+                    bool bothHeld = false;
+                    using (new FileStream(fOld, FileMode.Open, FileAccess.Read, FileShare.None))
+                    using (new FileStream(f + SafeFile.SpareSuffix, FileMode.Open, FileAccess.Read, FileShare.None))
+                    {
+                        try { SafeFile.WriteAllText(f, "not saved"); }
+                        catch (IOException) { bothHeld = true; }
+                        catch (UnauthorizedAccessException) { bothHeld = true; }
+                    }
+                    Check("safe write: with .old and .old2 both held, the save fails and the file is untouched",
+                        bothHeld && File.ReadAllText(f) == "let go" && SafeFile.ReadablePath(f) == f, Leftovers(f));
+                    SafeFile.WriteAllText(f, "after both");
+                    Check("safe write: ...and the next save after they are let go tidies both up", Only(f, "after both"), Leftovers(f));
                 }
             }
             catch (Exception e)
@@ -381,9 +457,17 @@ namespace Waypointer
 
                 Check("keys: other keys still read while one cannot be", Hotkeys.Held(modifier) && ZInput.LastRead == "GetKey:LeftAlt:False", ZInput.LastRead);
 
+                Check("keys: a key whose read failed is known as unreadable, others are not",
+                    Hotkeys.IsUnreadable(KeyCode.Plus) && !Hotkeys.IsUnreadable(KeyCode.F11) && !Hotkeys.IsUnreadable(KeyCode.LeftAlt), "");
+
                 skip.Value = KeyCode.Plus;
                 reads = ZInput.Reads;
-                Check("keys: the unreadable key is skipped in every setting", !Hotkeys.Pressed(skip) && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 1,
+                Check("keys: the unreadable key is skipped in every setting, and each setting holding it is named once",
+                    !Hotkeys.Pressed(skip) && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 2
+                        && Plugin.Log.Warnings[1].Contains("SkipWaypointKey") && Plugin.Log.Warnings[1].Contains("ArgumentOutOfRangeException"),
+                    "reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count + ": " + string.Join(" | ", Plugin.Log.Warnings.ToArray()));
+                bool quiet = Hotkeys.Pressed(skip) | Hotkeys.Held(skip) | Hotkeys.Pressed(toggle);
+                Check("keys: ...and not again", !quiet && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 2,
                     "reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
 
                 toggle.Value = KeyCode.F11;
@@ -392,10 +476,11 @@ namespace Waypointer
 
                 // Plugin.BindConfig calls Forget when any key setting changes.
                 Hotkeys.Forget();
+                bool forgotten = !Hotkeys.IsUnreadable(KeyCode.Plus);
                 reads = ZInput.Reads;
                 bool retried = Hotkeys.Pressed(skip);
                 Check("keys: after Forget an unreadable key is tried once more and warned about once more",
-                    !retried && ZInput.Reads == reads + 1 && Plugin.Log.Warnings.Count == 2,
+                    forgotten && !retried && ZInput.Reads == reads + 1 && Plugin.Log.Warnings.Count == 3,
                     "reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
 
                 modifier.Value = KeyCode.WheelUp;
@@ -404,7 +489,7 @@ namespace Waypointer
                 try { held = Hotkeys.Held(modifier); }
                 catch (Exception) { threw = true; }
                 Check("keys: an unreadable modifier reads as not held, with one warning",
-                    !threw && !held && Plugin.Log.Warnings.Count == 3 && Plugin.Log.Warnings[2].Contains("MapModifierKey"),
+                    !threw && !held && Plugin.Log.Warnings.Count == 4 && Plugin.Log.Warnings[3].Contains("MapModifierKey"),
                     "threw " + threw + ", held " + held + ", warnings " + Plugin.Log.Warnings.Count);
 
                 // Any failure of the read is caught, not only the ArgumentOutOfRangeException 1.0.16 throws.
@@ -418,8 +503,8 @@ namespace Waypointer
                 try { later = Hotkeys.Pressed(toggle); }
                 catch (Exception) { threw = true; }
                 Check("keys: a read failing with another exception is caught the same way",
-                    !threw && !first && !later && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 4
-                        && Plugin.Log.Warnings[3].Contains("InvalidOperationException"),
+                    !threw && !first && !later && ZInput.Reads == reads && Plugin.Log.Warnings.Count == 5
+                        && Plugin.Log.Warnings[4].Contains("InvalidOperationException"),
                     "threw " + threw + ", read " + first + "/" + later + ", reads " + (ZInput.Reads - reads) + ", warnings " + Plugin.Log.Warnings.Count);
             }
             catch (Exception e)
@@ -437,13 +522,14 @@ namespace Waypointer
         private static bool Only(string f, string text)
         {
             return File.Exists(f) && File.ReadAllText(f) == text
-                && !File.Exists(f + SafeFile.NewSuffix) && !File.Exists(f + SafeFile.OldSuffix);
+                && !File.Exists(f + SafeFile.NewSuffix) && !File.Exists(f + SafeFile.OldSuffix) && !File.Exists(f + SafeFile.SpareSuffix);
         }
 
         private static string Leftovers(string f)
         {
             return "file=" + (File.Exists(f) ? File.ReadAllText(f) : "(none)")
-                + " new=" + File.Exists(f + SafeFile.NewSuffix) + " old=" + File.Exists(f + SafeFile.OldSuffix);
+                + " new=" + File.Exists(f + SafeFile.NewSuffix) + " old=" + File.Exists(f + SafeFile.OldSuffix)
+                + " old2=" + File.Exists(f + SafeFile.SpareSuffix);
         }
 
         private static void Expect(string input, float a, float b, bool hasElev, float elev, string name)
@@ -661,7 +747,7 @@ namespace Waypointer
                 beeLabelled, "");
             int holding = 0;
             for (int i = 0; i < SearchCatalog.Queries.Length; i++) if (SearchCatalog.Queries[i].PlacesHoldObjects) holding++;
-            Check("search: only the Bee Nest keeps its objects inside its places (the Mysterious Rocks lie apart)",
+            Check("search: only the Bee Nest keeps its objects inside its places (the loose Rocks lie apart)",
                 holding == 1 && !SearchCatalog.ByName("Mysterious Rock").PlacesHoldObjects, "");
 
             Check("search: zones are the game's 64 m squares centred on multiples of 64 (ZoneSystem.GetZone)",
@@ -788,12 +874,37 @@ namespace Waypointer
             SearchHit beeHouse = Hit("WoodHouse3", 0, 0, true); beeHouse.Label = "Abandoned House";
             SearchHit beeNest = Hit("Beehive", 0, 0, true); beeNest.Label = "Bee Nest"; beeNest.IsObject = true;
             SearchHit clearing = Hit("BigRockClearing", 0, 0, true); clearing.Label = "Big Rock Clearing";
-            SearchHit looseRock = Hit("Pickable_StoneRock", 0, 0, true); looseRock.Label = "Mysterious Rock"; looseRock.IsObject = true;
             SearchQuery rocks = SearchCatalog.ByName("Mysterious Rock");
-            Check("search: a place that may hold a nest says so, a nest found is just a Bee Nest, and the rocks' names are unchanged",
+            SearchHit looseRock = Hit("Pickable_StoneRock", 0, 0, true); looseRock.Label = rocks.Objects[0].Label; looseRock.IsObject = true;
+            Check("search: a place that may hold a nest says so, a nest found is just a Bee Nest, a loose rock is a Rock, a clearing a Big Rock Clearing",
                 SearchRules.WaypointName(beeHouse, bees) == "Abandoned House (Bee Nest)" && SearchRules.WaypointName(beeNest, bees) == "Bee Nest"
-                && SearchRules.WaypointName(clearing, rocks) == "Big Rock Clearing" && SearchRules.WaypointName(looseRock, rocks) == "Mysterious Rock",
-                SearchRules.WaypointName(beeHouse, bees));
+                && SearchRules.WaypointName(clearing, rocks) == "Big Rock Clearing" && SearchRules.WaypointName(looseRock, rocks) == "Rock",
+                SearchRules.WaypointName(looseRock, rocks));
+
+            // --- the rocks (1.4.1): the game's name, and never a rock a player made
+            Check("search: the rock Find keeps its key 'Mysterious Rock' (servers look it up by it) and shows the game's name, Rock",
+                rocks != null && rocks.Title == "Rock" && rocks.Locations.Length == 1 && rocks.Locations[0].Prefab == "BigRockClearing"
+                && rocks.Locations[0].Label == "Big Rock Clearing" && rocks.Objects.Length == 1 && rocks.Objects[0].Prefab == "Pickable_StoneRock"
+                && rocks.Objects[0].Label == "Rock" && rocks.Items.Length == 0 && !rocks.PlacesHoldObjects, "");
+            bool noPlayerRocks = true, titlesOk = true;
+            HashSet<string> titles = new HashSet<string>();
+            string[] playerMade = { "Placeable_HardRock", "Pickable_HardRockOffspring", "StoneRock" };
+            for (int i = 0; i < SearchCatalog.Queries.Length; i++)
+            {
+                SearchQuery q = SearchCatalog.Queries[i];
+                if (string.IsNullOrEmpty(q.Title) || !titles.Add(q.Title)) titlesOk = false;
+                if (q != rocks && q.Title != q.Name) titlesOk = false;
+                for (int k = 0; k < playerMade.Length; k++)
+                {
+                    for (int j = 0; j < q.Locations.Length; j++) if (q.Locations[j].Prefab == playerMade[k]) noPlayerRocks = false;
+                    for (int j = 0; j < q.Objects.Length; j++) if (q.Objects[j].Prefab == playerMade[k]) noPlayerRocks = false;
+                }
+            }
+            Check("search: no Find lists a player's pet rock (Placeable_HardRock), the stones it lays, or a dropped Rock item", noPlayerRocks, "");
+            Check("search: every Find shows a unique title, its own name except the rocks'", titlesOk, "");
+            Check("search: only what the world made is listed - not a piece a player placed (creator) nor a console spawn (cheated)",
+                SearchRules.WorldMade(0L, false) && !SearchRules.WorldMade(123L, false) && !SearchRules.WorldMade(-5L, false)
+                && !SearchRules.WorldMade(0L, true) && !SearchRules.WorldMade(7L, true), "");
 
             // --- the route
             float[] xs = { 100, 10, 50, -20, 200 };
@@ -860,6 +971,152 @@ namespace Waypointer
 
             Check("caption: when not even the count fits, the ellipsis and the count remain (the box clips them)",
                 CaptionFit.Fit(name, suffix, 10f, m) == CaptionFit.Ellipsis + suffix, CaptionFit.Fit(name, suffix, 10f, m));
+
+            // Trailing spaces are not part of the name: one complete but for them is shown whole, without "...".
+            Check("caption: a name complete but for trailing spaces gets no ellipsis",
+                CaptionFit.Fit("Home     ", "  (3 left)", 140f, m) == "Home  (3 left)", CaptionFit.Fit("Home     ", "  (3 left)", 140f, m));
+
+            // An emoji is one character in two UTF-16 halves; a cut between them would leave half of it.
+            string emoji = "Ab\uD83D\uDE00cdefghij";
+            string emojiCut = CaptionFit.Fit(emoji, "", 48f, m);
+            Check("caption: a cut never splits a surrogate pair", emojiCut == "Ab..." && WholePairs(emojiCut), emojiCut);
+            Check("caption: ...and keeps the pair whole when it fits",
+                CaptionFit.Fit(emoji, "", 56f, m) == "Ab\uD83D\uDE00...", CaptionFit.Fit(emoji, "", 56f, m));
+
+            // A width sweep against brute force (the 1.3.1 review's proposed test, rewritten for the rules above): at
+            // every width the longest start of the name that fits is kept. It catches the off-by-one cuts the checks
+            // above let through (keeping one character fewer than fits).
+            string[] names = { "Abandoned House (Mysterious Axe Head)", "Sealed Tower (Wooden Atgeir)", "", "Home     ", emoji, "A  B" };
+            string[] suffixes = { "  (2 left)", "" };
+            int bad = 0;
+            string firstBad = null;
+            for (int a = 0; a < names.Length; a++)
+                for (int b = 0; b < suffixes.Length; b++)
+                    for (int px = 0; px <= (names[a].Length + suffixes[b].Length + 1) * 8; px++)
+                    {
+                        string got = CaptionFit.Fit(names[a], suffixes[b], px, m);
+                        string want = FitOracle(names[a], suffixes[b], px, m);
+                        if (got != want || !WholePairs(got))
+                        {
+                            bad++;
+                            if (firstBad == null) firstBad = "'" + names[a] + "' '" + suffixes[b] + "' " + px + " px: got '" + got + "', want '" + want + "'";
+                        }
+                    }
+            Check("caption: at every width the longest start of the name that fits is kept (width sweep against brute force)",
+                bad == 0, bad + " widths wrong; first " + firstBad);
+        }
+
+        // The caption rules by brute force, written apart from CaptionFit: the whole caption; else the name without its
+        // trailing spaces; else the longest cut that fits, never inside a surrogate pair; else "..." and the suffix.
+        private static string FitOracle(string name, string suffix, float px, Func<string, float> m)
+        {
+            if (m(name + suffix) <= px) return name + suffix;
+            string trimmed = name.TrimEnd();
+            if (m(trimmed + suffix) <= px) return trimmed + suffix;
+            for (int j = trimmed.Length; j >= 0; j--)
+            {
+                if (j > 0 && j < trimmed.Length && char.IsHighSurrogate(trimmed[j - 1])) continue;
+                string s = trimmed.Substring(0, j).TrimEnd() + CaptionFit.Ellipsis + suffix;
+                if (m(s) <= px) return s;
+            }
+            return CaptionFit.Ellipsis + suffix;
+        }
+
+        private static bool WholePairs(string s)
+        {
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (char.IsHighSurrogate(s[i]) && (i + 1 >= s.Length || !char.IsLowSurrogate(s[i + 1]))) return false;
+                if (char.IsLowSurrogate(s[i]) && (i == 0 || !char.IsHighSurrogate(s[i - 1]))) return false;
+            }
+            return true;
+        }
+
+        // ---------------------------------------------------------------- a route that could not be read (1.4.1)
+
+        private static RouteEntry Entry(string name, float x, float z, bool borrowed)
+        {
+            RouteEntry e = new RouteEntry();
+            e.Name = name; e.X = x; e.Z = z; e.Borrowed = borrowed;
+            return e;
+        }
+
+        // RouteReadGate (saving refused while a route could not be read, the retry delays, one warning) and RouteMerge
+        // (what was queued meanwhile stays first; the restored route follows, without twins).
+        private static void RouteReadTests()
+        {
+            RouteReadGate g = new RouteReadGate();
+            Check("route read: nothing pending at first - saving allowed, nothing to retry or warn about",
+                !g.Pending && !g.Due(0f) && !g.WarnSaveRefused(), "");
+            g.Failed(10f);
+            Check("route read: after a failed read saving is refused, and the read is due again 2 s later",
+                g.Pending && g.Failures == 1 && !g.Due(11.9f) && g.Due(12f), "");
+            Check("route read: a refused save is warned about once", g.WarnSaveRefused() && !g.WarnSaveRefused() && !g.WarnSaveRefused(), "");
+            g.Failed(12f);
+            Check("route read: each further failure waits 2 s longer (4 s after the second)", g.Failures == 2 && !g.Due(15.9f) && g.Due(16f), "");
+            for (int i = 0; i < 40; i++) g.Failed(100f);
+            Check("route read: never more than 30 s between reads", !g.Due(129.9f) && g.Due(130f) && RouteReadGate.RetryDelay(1000) == 30f, "");
+            Check("route read: still pending, and still warned about only once", g.Pending && !g.WarnSaveRefused(), "");
+            g.Succeeded();
+            Check("route read: a read that succeeds lets saving resume", !g.Pending && g.Failures == 0 && !g.Due(1000f), "");
+            g.Failed(0f);
+            Check("route read: a later failure is warned about again", g.WarnSaveRefused(), "");
+            g.Reset();
+            Check("route read: moving to another world forgets it", !g.Pending && !g.WarnSaveRefused(), "");
+            g.NotRead(50f);
+            Check("route read: a route not read at all (PersistWaypoints off) is not saved over, is read at once, and is no warning",
+                g.Pending && g.Due(50f) && !g.WarnSaveRefused() && g.Failures == 0, "");
+            g.Failed(50f);
+            Check("route read: ...and a read of it that fails then counts as the first failure", g.Pending && g.Failures == 1 && g.Due(52f) && !g.Due(51.9f), "");
+            g.Reset();
+
+            Check("route read: two waypoints exactly 1 m apart are the same, a little more is not",
+                RouteMerge.Same(Entry("a", 0, 0, false), Entry("a", 1, 0, false)) && !RouteMerge.Same(Entry("a", 0, 0, false), Entry("a", 1.01f, 0, false)), "");
+            List<RouteEntry> queued = new List<RouteEntry>();
+            List<RouteEntry> restored = new List<RouteEntry>();
+            restored.Add(Entry("Camp", 100, 200, false));
+            restored.Add(Entry("", 5, 5, false));
+            restored.Add(Entry("Bed", -40, 30, true));
+            List<int> add = RouteMerge.ToAppend(queued, restored);
+            Check("route read: with nothing queued meanwhile, the whole route comes back, in order",
+                add.Count == 3 && add[0] == 0 && add[1] == 1 && add[2] == 2, add.Count.ToString());
+            queued.Add(Entry("Bed", -40.6f, 30.7f, true));    // the same followed pin, queued again meanwhile (0.92 m off)
+            queued.Add(Entry("Camp", 100, 201.01f, false));    // same name, 1.01 m off: another place
+            queued.Add(Entry("camp", 100, 200, false));        // another name (case counts)
+            queued.Add(Entry("Camp", 100, 200, true));         // same spot and name, but a followed pin
+            add = RouteMerge.ToAppend(queued, restored);
+            Check("route read: a restored waypoint matching one queued meanwhile (same name and kind, within 1 m) is not added twice",
+                add.Count == 2 && add[0] == 0 && add[1] == 1,
+                string.Join(",", Array.ConvertAll<int, string>(add.ToArray(), delegate (int v) { return v.ToString(); })));
+            restored.Add(Entry("Bed", -40, 30, true));         // the file held it twice
+            add = RouteMerge.ToAppend(queued, restored);
+            Check("route read: one queued waypoint stands in for one restored twin only", add.Count == 3 && add[2] == 3, add.Count.ToString());
+            Check("route read: nothing restored, nothing added; no queue is the same as an empty one",
+                RouteMerge.ToAppend(queued, new List<RouteEntry>()).Count == 0 && RouteMerge.ToAppend(null, restored).Count == restored.Count
+                && RouteMerge.ToAppend(queued, null).Count == 0, "");
+
+            // The case RouteReadGate is for: on Windows a route file another program holds with FileShare.None cannot be read.
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+            {
+                string dir = Path.Combine(Path.GetTempPath(), "waypointer-routeread-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(dir);
+                try
+                {
+                    string f = Path.Combine(dir, "waypoints_1.txt");
+                    File.WriteAllText(f, "1|2|3|1|1|Camp\n");
+                    string what = null;
+                    using (new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.None))
+                    {
+                        try { File.ReadAllLines(f); }
+                        catch (Exception e) { what = e.GetType().Name; }
+                    }
+                    Check("route read: a route file held with FileShare.None cannot be read", what == "IOException", what ?? "it was read");
+                }
+                finally
+                {
+                    try { Directory.Delete(dir, true); } catch (Exception) { }
+                }
+            }
         }
 
         // ---------------------------------------------------------------- the server protocol (1.3.0)

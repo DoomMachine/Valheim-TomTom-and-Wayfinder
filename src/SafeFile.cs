@@ -19,6 +19,12 @@ namespace Waypointer
         internal const string OldSuffix = ".old";
 
         /// <summary>
+        /// Where the current file steps aside instead of .old, when a .old left by an earlier save cannot be deleted
+        /// because another program (a backup, sync or antivirus tool) holds it open.
+        /// </summary>
+        internal const string SpareSuffix = ".old2";
+
+        /// <summary>
         /// Writes text to path.new and flushes it to disk; only then does the current file step aside as
         /// path.old, path.new take its name, and path.old go. If path is missing because an earlier save was
         /// cut short, its surviving copy is renamed back first, so once the file exists, path.new is only ever
@@ -30,6 +36,7 @@ namespace Waypointer
         {
             string fresh = path + NewSuffix;
             string previous = path + OldSuffix;
+            string spare = path + SpareSuffix;
 
             if (!File.Exists(path))
             {
@@ -48,6 +55,7 @@ namespace Waypointer
 
             ClearReadOnly(fresh);
             ClearReadOnly(previous);
+            ClearReadOnly(spare);
 
             byte[] bytes = new UTF8Encoding(false).GetBytes(text);
             using (FileStream fs = new FileStream(fresh, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -58,32 +66,50 @@ namespace Waypointer
 
             if (File.Exists(path))
             {
-                if (File.Exists(previous)) File.Delete(previous);   // left by an earlier interrupted save
-                File.Move(path, previous);
+                // The current file steps aside as .old. A .old left by an earlier save is deleted first; when another
+                // program holds it open, the current file steps aside as .old2 instead, rather than the save waiting
+                // for that program to let go. (If .old2 is held too, this throws and the caller retries later.)
+                string aside = previous;
+                if (!TryDelete(previous))
+                {
+                    aside = spare;
+                    if (File.Exists(spare)) File.Delete(spare);
+                }
+                File.Move(path, aside);
             }
             File.Move(fresh, path);
 
-            // The new file is in place; the previous copy is only clutter now. Failing to remove it is harmless:
+            // The new file is in place; the previous copies are only clutter now. Failing to remove one is harmless:
             // the next save removes it first.
+            TryDelete(previous);
+            TryDelete(spare);
+        }
+
+        /// <summary>Deletes the file if it is there; false, without throwing, when another program keeps it.</summary>
+        private static bool TryDelete(string file)
+        {
             try
             {
-                if (File.Exists(previous)) File.Delete(previous);
+                if (File.Exists(file)) File.Delete(file);
+                return true;
             }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
         }
 
         /// <summary>
         /// The file that holds the latest complete text for path: path itself; or, when a save was cut short
         /// after the current file had stepped aside, the new copy (path.new - complete, because once path exists
         /// .new is only written while it does, and it is flushed before anything is moved), else the previous one
-        /// (path.old).
+        /// (path.old2, then path.old: a .old2 is made only while a .old is held by another program, so it holds the
+        /// later text of the two; a save never leaves either without path or path.new beside it).
         /// Null when there is nothing. A path.new beside an existing path is an unfinished save and is ignored.
         /// </summary>
         internal static string ReadablePath(string path)
         {
             if (File.Exists(path)) return path;
             if (File.Exists(path + NewSuffix)) return path + NewSuffix;
+            if (File.Exists(path + SpareSuffix)) return path + SpareSuffix;
             if (File.Exists(path + OldSuffix)) return path + OldSuffix;
             return null;
         }

@@ -38,6 +38,7 @@
     <Compile Include="..\src\SearchRules.cs" />
     <Compile Include="..\src\FindProtocol.cs" />
     <Compile Include="..\src\CaptionFit.cs" />
+    <Compile Include="..\src\RouteRead.cs" />
   </ItemGroup>
 
 </Project>

@@ -32,8 +32,9 @@ namespace Waypointer
     /// rather than making the game stutter. It fills the list it is given.
     ///
     /// On a server it knows everything: every location instance and whether it is placed, and every generated
-    /// object and chest (ZDOMan holds them all). On a client only the objects synced near the player are known,
-    /// and chests are not read at all: an unseen chest holding the item could not stop the skip.
+    /// object and chest (ZDOMan holds them all). On a client only the objects its game has been sent since it joined
+    /// (near where the player has been) are known, and chests are not read at all: an unseen chest holding the item
+    /// could not stop the skip.
     /// </summary>
     internal sealed class SearchJob
     {
@@ -115,7 +116,7 @@ namespace Waypointer
             // For a query whose objects grow inside its places: the zone of every such object read, in range or not.
             HashSet<long> objectZones = Query.PlacesHoldObjects ? new HashSet<long>() : null;
 
-            // World objects within range (the scattered Mysterious Rocks, the Bee Nests).
+            // World objects within range (the loose Rocks, the Bee Nests).
             for (int t = 0; t < Query.Objects.Length; t++)
             {
                 SearchTarget target = Query.Objects[t];
@@ -134,6 +135,9 @@ namespace Waypointer
                             ZDO zdo = zdos[i];
                             ObjectsRead++;
                             if (zdo == null || !zdo.IsValid() || zdo.GetPrefab() != hash) continue;
+                            // Leave out a rock or nest a player placed through the build system (s_creator) or spawned
+                            // with the console's spawn command (s_cheated).
+                            if (!SearchRules.WorldMade(zdo.GetLong(ZDOVars.s_creator, 0L), zdo.GetBool(ZDOVars.s_cheated, false))) continue;
                             Vector3 p = zdo.GetPosition();
                             if (IsPicked(zdo, target.Prefab)) continue;
                             if (!SearchRules.NoteObject(objectZones, p.x, p.z, Origin.x, Origin.z, Range)) continue;

@@ -2,7 +2,8 @@
 #
 # Confirms, without launching the game, that:
 #   1. the plugin identifies itself as the expected edition, and excludes its sibling edition
-#   2. every [HarmonyPatch] target type and method still exists in the shipped game assemblies
+#   2. every [HarmonyPatch] target type and method still exists in the shipped game assemblies, and every [HarmonyPatch]
+#      class is applied by Plugin.ApplyPatches
 #   3. every private member reached by reflection still exists
 #   4. map markers can only ever be created local-only (never shared through a Cartography Table)
 #   5. a pin the player promotes is never modified or removed - only the mod's own markers are
@@ -10,13 +11,16 @@
 #   7. every assembly the plugin references can be resolved from the game folder
 #   8. every game, Unity, BepInEx and Harmony type and member the plugin uses resolves with its exact signature
 #   9. the Chat.HasFocus postfix still runs last (Chatter's postfix overwrites the result and loads later)
-#  10. routes are saved only through SafeFile.WriteAllText, which flushes the new file to disk before swapping it in
+#  10. routes are saved only through SafeFile.WriteAllText, which flushes the new file to disk before swapping it in,
+#      and a route that could not be read when its world loaded is not saved over
 #  11. a key Valheim cannot read cannot stop the waypoint tick: configurable keys are read only through Hotkeys,
 #      whose reads are caught (and not rethrown), no literal key the game cannot read is used anywhere, and the
 #      tick runs in a try block of its own that reads no key
 #  12. a location search cannot make a shared pin: the server's answers are caught before vanilla turns them into
 #      saved pins, and no request is sent unless that catch is in place
-#  13. Wayfinder's search keeps only places whose centre is explored; TomTom's keeps everything in range
+#  13. Wayfinder's search reads MinimapAccess.IsExplored and TomTom's does not; LocationSearch.Finish hands the search's
+#      places and query to SearchRules.FinishHits once, TomTom's with no filter (13b); and the server's known-empty drop
+#      in SearchJob's scan is wired to the request (13c), and the scan counts only what the world made (13d)
 #  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
 #      requests, knows a player by the connection their call came on, and every place in range is sent back
 #  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
@@ -43,8 +47,13 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.4.0"
+$expectedVersion = "1.4.1"
 
+if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
+    Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
+    Write-Output "      Pass the game folder: preflight.ps1 -ValheimDir <the folder holding valheim.exe>"
+    exit 1
+}
 Add-Type -Path (Join-Path $core "Mono.Cecil.dll")
 
 if (-not (Test-Path $Plugin)) { Write-Output "FAIL  plugin not found: $Plugin"; exit 1 }
@@ -133,6 +142,46 @@ foreach ($t in $plug.GetTypes()) {
         }
     }
 }
+
+# Every [HarmonyPatch] class must be applied. Plugin.ApplyPatches patches the classes named in two explicit arrays (the
+# dedicated server's, then the game's), so a class left out would never run, and only the log line "Applied N of N
+# patches." in play would show it. The game's array must name each such class once, the server's exactly the two server
+# patches, and each array must be filled to its length (an empty slot would fail PatchAll).
+$checks++
+$hpClasses = @($plug.GetTypes() | Where-Object { @($_.CustomAttributes | Where-Object { $_.AttributeType.Name -eq "HarmonyPatch" }).Count -gt 0 } | ForEach-Object { $_.FullName } | Sort-Object)
+$serverPatchClasses = @("Waypointer.Game_RPC_DiscoverClosestLocation_Patch", "Waypointer.ZRoutedRpc_RPC_RoutedRPC_Patch")
+$apWhy = @()
+$apm = $null
+if ($pluginType) { $apm = $pluginType.Methods | Where-Object { $_.Name -eq "ApplyPatches" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $apm) { $apWhy += "Waypointer.Plugin.ApplyPatches not found" }
+else {
+    $ai = @($apm.Body.Instructions)
+    $patchArrays = @(); $cur = $null
+    for ($k = 1; $k -lt $ai.Count; $k++) {
+        if ($ai[$k].OpCode.Name -eq "newarr" -and "$($ai[$k].Operand)" -eq "System.Type") {
+            $p = $ai[$k - 1]; $size = $null
+            if ($p.OpCode.Name -match '^ldc\.i4\.([0-8])$') { $size = [int]$Matches[1] }
+            elseif ($p.OpCode.Name -eq "ldc.i4" -or $p.OpCode.Name -eq "ldc.i4.s") { $size = [int]"$($p.Operand)" }
+            $cur = @{ Size = $size; Types = @() }; $patchArrays += ,$cur; continue
+        }
+        if ($cur -and ($k + 2) -lt $ai.Count -and $ai[$k].OpCode.Name -eq "ldtoken" -and $ai[$k + 1].OpCode.Name -like "call*" -and
+            "$($ai[$k + 1].Operand)" -like "*Type::GetTypeFromHandle*" -and $ai[$k + 2].OpCode.Name -eq "stelem.ref") { $cur.Types += $ai[$k].Operand.FullName }
+    }
+    if ($patchArrays.Count -ne 2) { $apWhy += ("ApplyPatches builds {0} arrays of patch classes, expected 2 (the server's, then the game's)" -f $patchArrays.Count) }
+    else {
+        foreach ($a in $patchArrays) { if ($a.Size -ne $a.Types.Count) { $apWhy += ("an array of {0} patch classes is given {1}" -f $a.Size, $a.Types.Count) } }
+        if ((@($patchArrays[0].Types | Sort-Object) -join ",") -ne (@($serverPatchClasses | Sort-Object) -join ",")) { $apWhy += ("the server's array names {0}, expected exactly {1}" -f ($patchArrays[0].Types -join ", "), ($serverPatchClasses -join ", ")) }
+        $gameArray = $patchArrays[1].Types
+        $twice = @($gameArray | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+        if ($twice.Count) { $apWhy += "named twice in the game's array: " + ($twice -join ", ") }
+        $left = @($hpClasses | Where-Object { $gameArray -notcontains $_ })
+        if ($left.Count) { $apWhy += "[HarmonyPatch] classes Plugin.ApplyPatches never applies: " + ($left -join ", ") }
+        $notPatch = @($gameArray | Where-Object { $hpClasses -notcontains $_ })
+        if ($notPatch.Count) { $apWhy += "in the game's array without [HarmonyPatch]: " + ($notPatch -join ", ") }
+    }
+}
+if ($apWhy.Count -eq 0) { Write-Output ("  ok    Plugin.ApplyPatches applies all {0} [HarmonyPatch] classes; on a dedicated server only the 2 server patches" -f $hpClasses.Count) }
+else { foreach ($w in $apWhy) { Write-Output "  FAIL  $w" }; $failures++ }
 
 Write-Output ""
 Write-Output "== private members reached by reflection =="
@@ -486,7 +535,7 @@ foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
     $readsXZ = $false; $toText = $false; $vecText = $false
     foreach ($i in $m.Body.Instructions) {
         $n = $i.OpCode.Name; $op = "$($i.Operand)"
-        if (($n -eq "ldfld" -or $n -eq "ldflda") -and $op -match "UnityEngine\.Vector3::(x|z)$") { $readsXZ = $true }
+        if (($n -eq "ldfld" -or $n -eq "ldflda") -and $op -match "(UnityEngine\.Vector3::(x|z)|Waypointer\.RouteEntry::(X|Z))$") { $readsXZ = $true }
         if ($n -eq "box" -and $op -match "^System\.(Single|Double|Decimal|U?Int(16|32|64))$") { $toText = $true }
         if ($n -like "call*" -and $op -match "System\.(Single|Double|Decimal|Int32|Int64)::ToString|StringBuilder::Append\(System\.(Single|Double|Decimal|Int32|Int64)\)") { $toText = $true }
         if (($n -eq "box" -and $op -match "^UnityEngine\.Vector[234]$") -or ($n -like "call*" -and $op -match "UnityEngine\.Vector[234]::ToString")) { $vecText = $true }
@@ -623,6 +672,94 @@ else {
 if ($null -eq $why) { Write-Output "  ok    SafeFile.WriteAllText flushes the new file to disk (FileStream.Flush(true)) before any File.Move swaps it in" }
 else { Write-Output "  FAIL  $why"; $failures++ }
 
+# A route that could not be read when its world loaded (another program held it) is never saved over: SaveIfDirty asks
+# RouteReadGate.Pending before SafeFile.WriteAllText and, when it is true, returns (the brfalse right after the call
+# jumps over a block that holds a ret and no SafeFile call); Load and RetryRead record a failed read
+# (RouteReadGate.Failed); and SaveIfDirty is the only caller of SafeFile.WriteAllText. A tripwire on the calls: that
+# ReadRoute returns false from its catch is logic, and not seen here.
+$checks++
+$rrWhy = @()
+$wmType = $plug.GetType("Waypointer.WaypointManager")
+$sid = $null
+if ($wmType) { $sid = $wmType.Methods | Where-Object { $_.Name -eq "SaveIfDirty" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $sid) { $rrWhy += "WaypointManager.SaveIfDirty not found" }
+else {
+    $si = @($sid.Body.Instructions)
+    $wat = -1; $pat = -1
+    for ($k = 0; $k -lt $si.Count; $k++) {
+        $o = $si[$k].Operand
+        if (-not ($o -is [Mono.Cecil.MethodReference])) { continue }
+        if ($wat -lt 0 -and $o.DeclaringType.FullName -eq "Waypointer.SafeFile" -and $o.Name -eq "WriteAllText") { $wat = $k }
+        if ($pat -lt 0 -and $o.DeclaringType.FullName -eq "Waypointer.RouteReadGate" -and $o.Name -eq "get_Pending") { $pat = $k }
+    }
+    if ($pat -lt 0 -or $wat -lt 0 -or $pat -gt $wat) { $rrWhy += "SaveIfDirty does not ask RouteReadGate.Pending before SafeFile.WriteAllText" }
+    else {
+        $br = $si[$pat + 1]
+        $to = if ($br.OpCode.Name -like "brfalse*") { [array]::IndexOf($si, $br.Operand) } else { -1 }
+        $rets = 0; $leaks = 0
+        for ($k = $pat + 2; $k -lt $to; $k++) {
+            if ($si[$k].OpCode.Name -eq "ret") { $rets++ }
+            $o = $si[$k].Operand
+            if ($o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "Waypointer.SafeFile") { $leaks++ }
+        }
+        if ($to -le $pat -or $to -gt $wat -or $rets -eq 0 -or $leaks -gt 0) { $rrWhy += "when RouteReadGate.Pending is true, SaveIfDirty does not return before SafeFile.WriteAllText" }
+    }
+}
+foreach ($mn in @("Load", "RetryRead")) {
+    $mm = $null
+    if ($wmType) { $mm = $wmType.Methods | Where-Object { $_.Name -eq $mn -and $_.HasBody } | Select-Object -First 1 }
+    $records = $mm -and @($mm.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "Waypointer.RouteReadGate" -and $_.Operand.Name -eq "Failed" }).Count -gt 0
+    if (-not $records) { $rrWhy += ("WaypointManager.{0} does not record a failed read (RouteReadGate.Failed)" -f $mn) }
+}
+# The glue around the gate: RetryRead returns right after recording a failed read (a failed retry must not count as
+# read); ReadRoute's catch returns false, never true (an unreadable file must not be taken for an empty route);
+# LoadForCurrentWorldIfNeeded marks the route not read when PersistWaypoints is off (RouteReadGate.NotRead); and
+# RetryRead sets _dirty only from a comparison (queued meanwhile > 0), so a merged route is saved.
+$rri = $null; $rdr = $null; $lfc = $null
+if ($wmType) {
+    $rri = $wmType.Methods | Where-Object { $_.Name -eq "RetryRead" -and $_.HasBody } | Select-Object -First 1
+    $rdr = $wmType.Methods | Where-Object { $_.Name -eq "ReadRoute" -and $_.HasBody } | Select-Object -First 1
+    $lfc = $wmType.Methods | Where-Object { $_.Name -eq "LoadForCurrentWorldIfNeeded" -and $_.HasBody } | Select-Object -First 1
+}
+if (-not ($rri -and $rdr -and $lfc)) { $rrWhy += "WaypointManager.RetryRead, ReadRoute or LoadForCurrentWorldIfNeeded not found" }
+else {
+    $ri = @($rri.Body.Instructions)
+    $failedCalls = 0; $retAfter = 0
+    for ($k = 0; $k -lt $ri.Count - 1; $k++) {
+        $o = $ri[$k].Operand
+        if ($o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "Waypointer.RouteReadGate" -and $o.Name -eq "Failed") {
+            $failedCalls++
+            $nx = $ri[$k + 1]
+            if ($nx.OpCode.Name -eq "ret" -or ("$($nx.OpCode.FlowControl)" -eq "Branch" -and $nx.Operand -is [Mono.Cecil.Cil.Instruction] -and $nx.Operand.OpCode.Name -eq "ret")) { $retAfter++ }
+        }
+    }
+    if ($failedCalls -eq 0 -or $retAfter -ne $failedCalls) { $rrWhy += "RetryRead does not return right after recording a failed read (a failed retry would count as read)" }
+    $dirtyFrom = @(); for ($k = 1; $k -lt $ri.Count; $k++) { if ($ri[$k].OpCode.Name -eq "stsfld" -and $ri[$k].Operand.Name -eq "_dirty") { $dirtyFrom += $ri[$k - 1].OpCode.Name } }
+    if ($dirtyFrom.Count -eq 0 -or @($dirtyFrom | Where-Object { $_ -ne "cgt" }).Count -gt 0) { $rrWhy += "RetryRead does not set _dirty from 'queued meanwhile > 0' (a merged route would not be saved)" }
+    $rdi = @($rdr.Body.Instructions); $catches = 0
+    foreach ($h in $rdr.Body.ExceptionHandlers) {
+        if ("$($h.HandlerType)" -ne "Catch") { continue }
+        $catches++
+        $s0 = [array]::IndexOf($rdi, $h.HandlerStart); $e0 = if ($h.HandlerEnd) { [array]::IndexOf($rdi, $h.HandlerEnd) } else { $rdi.Count }
+        $one = $false; $zero = $false
+        for ($k = $s0; $k -lt $e0; $k++) { if ($rdi[$k].OpCode.Name -eq "ldc.i4.1") { $one = $true }; if ($rdi[$k].OpCode.Name -eq "ldc.i4.0") { $zero = $true } }
+        if ($one -or -not $zero) { $rrWhy += "ReadRoute's catch does not return false (an unreadable file would be taken for an empty route)" }
+    }
+    if ($catches -eq 0) { $rrWhy += "ReadRoute catches nothing (a read that throws would not be recorded as failed)" }
+    $notRead = @($lfc.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "Waypointer.RouteReadGate" -and $_.Operand.Name -eq "NotRead" }).Count
+    if ($notRead -eq 0) { $rrWhy += "LoadForCurrentWorldIfNeeded does not mark the route not read when PersistWaypoints is off (RouteReadGate.NotRead)" }
+}
+$writeSites = @()
+foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
+    if (-not $m.HasBody) { continue }
+    foreach ($i in $m.Body.Instructions) {
+        if ($i.Operand -is [Mono.Cecil.MethodReference] -and $i.Operand.DeclaringType.FullName -eq "Waypointer.SafeFile" -and $i.Operand.Name -eq "WriteAllText") { $writeSites += ("{0}.{1}" -f $t.Name, $m.Name) }
+    }
+} }
+if ($writeSites.Count -ne 1 -or $writeSites[0] -ne "WaypointManager.SaveIfDirty") { $rrWhy += ("SafeFile.WriteAllText must be called only from WaypointManager.SaveIfDirty; called from: {0}" -f ($writeSites -join ", ")) }
+if ($rrWhy.Count -eq 0) { Write-Output "  ok    a route that could not be read is not saved over (SaveIfDirty returns while RouteReadGate.Pending; Load and RetryRead record the failure, RetryRead returns then, ReadRoute's catch returns false, NotRead when PersistWaypoints is off, a merge is saved)" }
+else { foreach ($w in $rrWhy) { Write-Output "  FAIL  $w" }; $failures++ }
+
 Write-Output ""
 Write-Output "== a key Valheim cannot read cannot stop the waypoint tick =="
 # Valheim 1.0.16's ZInput throws ArgumentOutOfRangeException on every read of 30 KeyCodes that BepInEx still
@@ -711,11 +848,16 @@ $documentedUnreadable = @("Clear", "Exclaim", "DoubleQuote", "Hash", "Dollar", "
     "LeftCurlyBracket", "Pipe", "RightCurlyBracket", "Tilde", "F13", "F14", "F15", "Help", "SysReq", "Break",
     "WheelUp", "WheelDown")
 if ($null -eq $keyDerivation) {
+    # A failure, not a note, so the lists cannot drift after a game update: $documentedUnreadable, the Keys paragraph of
+    # both package READMEs and Hotkeys.cs's summary are updated together. (Not counted when the set cannot be worked out:
+    # the next check fails for that.)
+    $checks++
     $unreadableNames = @($unreadableKeys.Values | Sort-Object)
     if (Compare-Object @($documentedUnreadable | Sort-Object) $unreadableNames) {
-        Write-Output ("  note  the game now cannot read {0} KeyCodes, not the 30 of Valheim 1.0.16 - update the Keys paragraph of both package READMEs and Hotkeys.cs: {1}" -f $unreadableNames.Count, ($unreadableNames -join ", "))
+        Write-Output ("  FAIL  the KeyCodes the game cannot read are no longer the 30 listed for Valheim 1.0.16 (now {0}: {1}) - update `$documentedUnreadable here, the Keys paragraph of both package READMEs and Hotkeys.cs" -f $unreadableNames.Count, ($unreadableNames -join ", "))
+        $failures++
     } else {
-        Write-Output "  note  the game cannot read the same 30 KeyCodes as Valheim 1.0.16 (the list in both package READMEs)"
+        Write-Output "  ok    the game cannot read the same 30 KeyCodes as Valheim 1.0.16 (the list this script holds; Hotkeys.cs and both package READMEs follow it)"
     }
 }
 
@@ -1007,10 +1149,212 @@ if ($ls) {
     }
 }
 if (-not $ls) { Write-Output "  FAIL  Waypointer.LocationSearch not found"; $failures++ }
-elseif ($Edition -eq "Wayfinder" -and $readsExplored) { Write-Output "  ok    Wayfinder's search keeps only places whose centre is explored (reads MinimapAccess.IsExplored)" }
+elseif ($Edition -eq "Wayfinder" -and $readsExplored) { Write-Output "  ok    Wayfinder's search reads MinimapAccess.IsExplored (that its filter reaches SearchRules.FinishHits is not checked yet)" }
 elseif ($Edition -eq "Wayfinder") { Write-Output "  FAIL  Wayfinder's search does not read MinimapAccess.IsExplored - it would place unexplored places"; $failures++ }
 elseif (-not $readsExplored) { Write-Output "  ok    TomTom's search places everything in range (does not read MinimapAccess.IsExplored)" }
 else { Write-Output "  FAIL  TomTom's search reads MinimapAccess.IsExplored - the explored filter belongs to Wayfinder"; $failures++ }
+
+# 13b and 13c follow what is handed to Find's Unity-free decisions (SearchRules), which the tests check only with
+# stand-in arguments. Get-ArgumentSources gives up on a call that follows a ?: in the same method (SearchJob's scan makes
+# its zone set with one), so these trace arguments with a tolerant replay instead: a value consumed across a ?: join
+# starts a new statement rather than failing.
+function Get-StackBefore($ins, [int]$upto, $handlers = $null) {
+    $stack = New-Object System.Collections.ArrayList
+    for ($k = 0; $k -lt $upto; $k++) {
+        $i = $ins[$k]
+        if ($handlers) {
+            foreach ($h in $handlers) {
+                $ht = "$($h.HandlerType)"
+                if ((($ht -eq "Catch" -or $ht -eq "Filter") -and $h.HandlerStart -eq $i) -or ($ht -eq "Filter" -and $h.FilterStart -eq $i)) { $stack.Clear(); [void]$stack.Add($k) }
+                elseif (($ht -eq "Finally" -or $ht -eq "Fault") -and $h.HandlerStart -eq $i) { $stack.Clear() }
+            }
+        }
+        $pop = "$($i.OpCode.StackBehaviourPop)"; $push = "$($i.OpCode.StackBehaviourPush)"
+        $flow = "$($i.OpCode.FlowControl)"
+        if ($flow -eq "Branch" -or $flow -eq "Cond_Branch" -or $flow -eq "Return" -or $flow -eq "Throw") { $stack.Clear(); continue }
+        $nPop = 0
+        if ($pop -eq "Varpop") { $nPop = $i.Operand.Parameters.Count; if ($i.Operand.HasThis -and $i.OpCode.Name -ne "newobj") { $nPop++ } }
+        elseif ($pop -ne "Pop0") { $nPop = @($pop -split "_").Count }
+        if ($nPop -gt $stack.Count) { $stack.Clear(); $nPop = 0 }
+        $src = $k
+        if ($nPop -gt 0) { $stack.RemoveRange($stack.Count - $nPop, $nPop) }
+        $nPush = 1
+        if ($push -eq "Push0") { $nPush = 0 }
+        elseif ($push -eq "Push1_push1") { $nPush = 2 }
+        elseif ($push -eq "Varpush" -and $i.Operand.ReturnType.FullName -eq "System.Void") { $nPush = 0 }
+        for ($j = 0; $j -lt $nPush; $j++) { [void]$stack.Add($src) }
+    }
+    return ,@($stack)
+}
+function Get-CallArgs($ins, [int]$callAt, $handlers = $null) {
+    $st = Get-StackBefore $ins $callAt $handlers
+    $c = $ins[$callAt].Operand; $n = $c.Parameters.Count; if ($c.HasThis) { $n++ }
+    if ($st.Count -lt $n) { return $null }
+    return ,@($st[($st.Count - $n)..($st.Count - 1)])
+}
+function Find-Calls($insList, [string]$declType, [string]$name) {
+    $found = @()
+    for ($k = 0; $k -lt $insList.Count; $k++) {
+        $o = $insList[$k].Operand
+        if ($insList[$k].OpCode.Name -like "call*" -and $o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq $declType -and $o.Name -eq $name) { $found += $k }
+    }
+    return ,$found
+}
+function Get-InstructionText($p) {
+    if ($p.Operand -is [Mono.Cecil.MemberReference]) { return ("{0} {1}::{2}" -f $p.OpCode.Name, $p.Operand.DeclaringType.Name, $p.Operand.Name) }
+    return $p.OpCode.Name
+}
+# The value an argument stands for: the instruction itself or, through a local, what every store into that local stores.
+function Resolve-Value($insList, [int]$at, $handlers) {
+    $p = $insList[$at]
+    $li = Get-LocalIndex $p
+    if ($p.OpCode.Name -like "ldloc*" -and $li -ge 0) {
+        $vals = @()
+        for ($k = 0; $k -lt $insList.Count; $k++) {
+            if ($insList[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $insList[$k]) -eq $li) {
+                $st = Get-StackBefore $insList $k $handlers
+                if ($st.Count -lt 1) { return "(?)" }
+                $vals += (Get-InstructionText $insList[$st[$st.Count - 1]])
+            }
+        }
+        $u = @($vals | Select-Object -Unique)
+        if ($u.Count -eq 1) { return $u[0] } else { return "(" + ($u -join " | ") + ")" }
+    }
+    return (Get-InstructionText $p)
+}
+
+# 13b (both editions): LocationSearch.Finish hands the search's own places (_hits) and query (_query) to
+# SearchRules.FinishHits, once - without the query a nest found would no longer replace its place - and TomTom hands it
+# no filter (ldnull), so TomTom keeps every place in range. Wayfinder's filter argument is not checked here yet.
+# Find's catalogue (SearchCatalog) was derived from Valheim 1.0.16's own data; no check can see whether a newer build
+# moved its chests or nests, so a different game build gets a note (not counted as a check).
+$catalogueBuild = "96cfc004f7f4a6f30d070bef39eafd79c466a137121c4665a2f19fb9c15c6127"
+try {
+    $avPath = Join-Path $ValheimDir "valheim_Data\Managed\assembly_valheim.dll"
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $fs = [IO.File]::OpenRead($avPath)
+    try { $avHash = ([BitConverter]::ToString($sha.ComputeHash($fs)) -replace "-", "").ToLowerInvariant() } finally { $fs.Dispose() }
+    if ($avHash -ne $catalogueBuild) { Write-Output "  NOTE  this game is not Valheim 1.0.16 (assembly_valheim.dll differs): Find's catalogue was derived for 1.0.16 - derive it again for this build" }
+} catch { Write-Output ("  NOTE  could not read assembly_valheim.dll to compare the game build: {0}" -f $_.Exception.Message) }
+
+$checks++
+$b13 = @()
+$finish = $null
+if ($ls) { $finish = $ls.Methods | Where-Object { $_.Name -eq "Finish" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $finish) { $b13 += "LocationSearch.Finish not found" }
+else {
+    $fins = @($finish.Body.Instructions); $fhd = $finish.Body.ExceptionHandlers
+    $fh = Find-Calls $fins "Waypointer.SearchRules" "FinishHits"
+    if ($fh.Count -ne 1) { $b13 += ("LocationSearch.Finish calls SearchRules.FinishHits {0} times, expected once" -f $fh.Count) }
+    else {
+        $a = Get-CallArgs $fins $fh[0] $fhd
+        if ($null -eq $a) { $b13 += "FinishHits' arguments cannot be traced" }
+        else {
+            $v0 = Resolve-Value $fins $a[0] $fhd; $v1 = Resolve-Value $fins $a[1] $fhd; $v2 = Resolve-Value $fins $a[2] $fhd
+            if ($v0 -ne "ldsfld LocationSearch::_hits") { $b13 += "FinishHits is handed '$v0', not LocationSearch._hits" }
+            if ($v1 -ne "ldsfld LocationSearch::_query") { $b13 += "FinishHits' query is '$v1', not LocationSearch._query" }
+            if ($Edition -eq "TomTom" -and $v2 -ne "ldnull") { $b13 += "TomTom's FinishHits filter is '$v2', not null" }
+        }
+    }
+}
+if ($b13.Count -eq 0) { Write-Output ("  ok    LocationSearch.Finish hands its places and query to SearchRules.FinishHits once{0}" -f $(if ($Edition -eq "TomTom") { ", with no filter" } else { " (Wayfinder's filter argument is not checked yet)" })) }
+else { foreach ($p in $b13) { Write-Output "  FAIL  13b: $p" }; $failures++ }
+
+# 13c: the server's known-empty drop (SkipCheckedChests for a Bee Nest) is wired in SearchJob's Scan iterator:
+# KnownEmptyApplies gets OnServer, CheckChests and Query, and DropPlacesKnownEmpty is reached only when it is true;
+# NoteObject gets the zone set and its false result skips the object; DropPlacesKnownEmpty gets that same zone set; and
+# the zone set is made (a new HashSet<Int64>) under SearchQuery.PlacesHoldObjects.
+$checks++
+$c13 = @()
+$sjType = $plug.GetType("Waypointer.SearchJob")
+$scanIter = $null; if ($sjType) { $scanIter = $sjType.NestedTypes | Where-Object { $_.Name -like "<Scan>*" } | Select-Object -First 1 }
+$mn = $null; if ($scanIter) { $mn = $scanIter.Methods | Where-Object { $_.Name -eq "MoveNext" } | Select-Object -First 1 }
+if (-not $mn) { $c13 += "SearchJob's Scan iterator (MoveNext) not found" }
+else {
+    $si = @($mn.Body.Instructions); $hd = $mn.Body.ExceptionHandlers
+    $kea = Find-Calls $si "Waypointer.SearchRules" "KnownEmptyApplies"
+    $dke = Find-Calls $si "Waypointer.SearchRules" "DropPlacesKnownEmpty"
+    $nob = Find-Calls $si "Waypointer.SearchRules" "NoteObject"
+    if ($kea.Count -ne 1 -or $dke.Count -ne 1 -or $nob.Count -ne 1) { $c13 += ("Scan calls KnownEmptyApplies {0}x, DropPlacesKnownEmpty {1}x, NoteObject {2}x; expected once each" -f $kea.Count, $dke.Count, $nob.Count) }
+    else {
+        $a = Get-CallArgs $si $kea[0] $hd
+        $want = @("ldfld SearchJob::OnServer", "ldfld SearchJob::CheckChests", "ldfld SearchJob::Query")
+        for ($q = 0; $q -lt 3; $q++) {
+            $got = if ($a) { Get-InstructionText $si[$a[$q]] } else { "(?)" }
+            if ($got -ne $want[$q]) { $c13 += ("KnownEmptyApplies argument {0} is '{1}', not {2}" -f $q, $got, $want[$q]) }
+        }
+        $br = $si[$kea[0] + 1]
+        if (-not ($br.OpCode.Name -like "brfalse*" -and $br.Operand.Offset -gt $si[$dke[0]].Offset -and $dke[0] -gt $kea[0])) { $c13 += "DropPlacesKnownEmpty is not reached only when KnownEmptyApplies is true (no brfalse past it right after the call)" }
+        $na = Get-CallArgs $si $nob[0] $hd
+        $da = Get-CallArgs $si $dke[0] $hd
+        $zn = if ($na) { $si[$na[0]] } else { $null }
+        $zd = if ($da) { $si[$da[1]] } else { $null }
+        if (-not ($zn -and $zn.OpCode.Name -eq "ldfld" -and $zd -and $zd.OpCode.Name -eq "ldfld" -and "$($zn.Operand)" -eq "$($zd.Operand)")) {
+            $c13 += ("NoteObject's zone set ('{0}') and DropPlacesKnownEmpty's ('{1}') are not the same field" -f $(if ($zn) { Get-InstructionText $zn } else { "?" }), $(if ($zd) { Get-InstructionText $zd } else { "?" }))
+        }
+        if (-not ($si[$nob[0] + 1].OpCode.Name -like "brfalse*")) { $c13 += "NoteObject's result is not branched on (brfalse, skip the object) right after the call" }
+        if ($zn -and $zn.OpCode.Name -eq "ldfld") {
+            $st = @(); for ($k = 0; $k -lt $si.Count; $k++) { if ($si[$k].OpCode.Name -eq "stfld" -and "$($si[$k].Operand)" -eq "$($zn.Operand)") { $st += $k } }
+            if ($st.Count -ne 1) { $c13 += ("the zone set is stored {0} times, expected once" -f $st.Count) }
+            else {
+                $seenNew = $false; $seenGate = $false
+                for ($k = $st[0] - 1; $k -ge [Math]::Max(0, $st[0] - 8); $k--) {
+                    if ($si[$k].OpCode.Name -eq "newobj" -and "$($si[$k].Operand.DeclaringType)" -like "System.Collections.Generic.HashSet*Int64*") { $seenNew = $true }
+                    if ($si[$k].OpCode.Name -eq "ldfld" -and $si[$k].Operand.Name -eq "PlacesHoldObjects") { $seenGate = $true; break }
+                }
+                if (-not ($seenNew -and $seenGate)) { $c13 += "the zone set is not made (a new HashSet<Int64>) under SearchQuery.PlacesHoldObjects" }
+            }
+        }
+    }
+}
+if ($c13.Count -eq 0) { Write-Output "  ok    the server's known-empty drop is wired: KnownEmptyApplies(OnServer, CheckChests, Query) gates it, and it uses the zone set NoteObject fills" }
+else { foreach ($p in $c13) { Write-Output "  FAIL  13c: $p" }; $failures++ }
+
+# 13d (1.4.1): Find leaves out what a player placed or spawned. SearchJob's Scan iterator calls SearchRules.WorldMade
+# once, with ZDO.GetLong(ZDOVars.s_creator, 0) and ZDO.GetBool(ZDOVars.s_cheated, false), and its false result skips the
+# object (a brfalse to where NoteObject's false result goes), before NoteObject (so a spawned nest neither lists nor
+# counts for its place).
+$checks++
+$d13 = @()
+if (-not $mn) { $d13 += "SearchJob's Scan iterator (MoveNext) not found" }
+else {
+    $si = @($mn.Body.Instructions); $hd = $mn.Body.ExceptionHandlers
+    $wm = Find-Calls $si "Waypointer.SearchRules" "WorldMade"
+    $nob = Find-Calls $si "Waypointer.SearchRules" "NoteObject"
+    if ($wm.Count -ne 1) { $d13 += ("Scan calls SearchRules.WorldMade {0} times, expected once" -f $wm.Count) }
+    else {
+        $a = Get-CallArgs $si $wm[0] $hd
+        $want = @(@("GetLong", "s_creator"), @("GetBool", "s_cheated"))
+        $argsOk = $true
+        for ($q = 0; $q -lt 2; $q++) {
+            $ok = $false
+            if ($a) {
+                $ci = $a[$q]; $c = $si[$ci]
+                if ($c.OpCode.Name -like "call*" -and $c.Operand -is [Mono.Cecil.MethodReference] -and $c.Operand.DeclaringType.Name -eq "ZDO" -and $c.Operand.Name -eq $want[$q][0]) {
+                    $ca = Get-CallArgs $si $ci $hd
+                    if ($ca -and (Get-InstructionText $si[$ca[1]]) -eq ("ldsfld ZDOVars::" + $want[$q][1])) { $ok = $true }
+                }
+            }
+            if (-not $ok) { $d13 += ("WorldMade argument {0} is not ZDO.{1}(ZDOVars.{2}, ...)" -f $q, $want[$q][0], $want[$q][1]); $argsOk = $false }
+        }
+        if ("$($si[$wm[0] + 1].OpCode.FlowControl)" -ne "Cond_Branch") { $d13 += "WorldMade's result is not branched on right after the call" }
+        if ($argsOk) {
+            $gl = Get-CallArgs $si $a[0] $hd; $gb = Get-CallArgs $si $a[1] $hd
+            $defOk = $false
+            if ($gl -and $gb) {
+                $d0 = $si[$gl[2]]; $d1 = $si[$gb[2]]
+                $zeroLong = ($d0.OpCode.Name -eq "conv.i8" -and $si[$gl[2] - 1].OpCode.Name -eq "ldc.i4.0") -or ($d0.OpCode.Name -eq "ldc.i8" -and [long]$d0.Operand -eq 0)
+                $defOk = $zeroLong -and $d1.OpCode.Name -eq "ldc.i4.0"
+            }
+            if (-not $defOk) { $d13 += "WorldMade's ZDO reads do not default to 0 and false" }
+        }
+        $wbr = $si[$wm[0] + 1]
+        if (-not ($wbr.OpCode.Name -like "brfalse*" -and $nob.Count -eq 1 -and $si[$nob[0] + 1].OpCode.Name -like "brfalse*" -and [object]::ReferenceEquals($wbr.Operand, $si[$nob[0] + 1].Operand))) { $d13 += "WorldMade's false result does not skip the object (a brfalse to where NoteObject's false result goes)" }
+        if ($nob.Count -eq 1 -and $nob[0] -lt $wm[0]) { $d13 += "WorldMade is called after NoteObject (a console-spawned nest would count for its place)" }
+    }
+}
+if ($d13.Count -eq 0) { Write-Output "  ok    Find leaves out what a player placed or spawned: SearchRules.WorldMade(creator, cheated) is checked before an object counts" }
+else { foreach ($p in $d13) { Write-Output "  FAIL  13d: $p" }; $failures++ }
 
 Write-Output ""
 Write-Output "== the server side =="

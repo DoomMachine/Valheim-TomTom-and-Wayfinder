@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.4.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.4.1 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -36,11 +36,19 @@ X: 1234  Y: 56  Z: -789
 - Two numbers are required; a third is the elevation.
 - Words after the numbers (or before a colon) become the waypoint's name. Words before the numbers also
   work without a colon, unless the name ends in a number: `Camp 2 1234, -567` is read as x 2, y 1234,
-  elevation −567. Write `Camp 2: 1234, -567` or `1234, -567, Camp 2` instead.
+  elevation −567. Write `Camp 2: 1234, -567` or `1234, -567, Camp 2` instead. A first word that starts
+  with a digit is refused (`2nd camp 1234, -567` could be a mistyped number such as `1234m`): write
+  `2nd camp: 1234, -567`.
+- A fourth number straight after the third is refused. A name that is a number goes before a colon (`7: 1234, -567, 30`).
 - One waypoint per line — paste a whole list at once. A line that can't be read is skipped and reported.
-- Use a **dot** for decimals (`12.5`); a comma separates fields. One exception: a comma followed by
-  exactly three digits with no space (`1,234`) looks like digit grouping, so the line is refused rather
-  than guessed at — write `1, 234` if you really mean two fields. A no-break or thin space inside a
+- Use a **dot** for decimals (`12.5`); a comma separates fields. A comma with a digit on both sides
+  (`12,5`) could also be a decimal comma, so a line that would mean another place read that way (`12,5 30`,
+  `1234,5; -567,25`) is refused rather than guessed at: use a dot, or put a space after the comma
+  (`12, 5 30`). A line that shows how it writes numbers - a number with a dot, or a comma straight before a
+  minus or plus sign (`12,5,-30` reads as 12, 5, −30) - is read the usual way, and so are lines such as `12,34`
+  and `1234,-567,30`. A comma followed by
+  exactly three digits with no space (`1,234`) looks like digit grouping, so the line is refused as well
+  — write `1, 234` if you really mean two fields. A no-break or thin space inside a
   number (how some languages group thousands, often copied from web pages) is refused the same way; an
   ordinary space always separates two values, so `1 234` typed with the space bar is x 1, y 234.
 - Text pasted from web pages and documents works: a minus sign, dash or hyphen in front of a number
@@ -66,7 +74,8 @@ unexplored target whose height can't be known in advance.
 While it's open, the game ignores your keyboard, so you can type freely: Tab doesn't open the
 inventory and the mouse wheel scrolls the list instead of zooming the camera. The exception is key
 bindings you made with the console's `bind` command: they still run, even while you type. **Esc** — or
-**B** on a controller — closes it. The window needs a keyboard and mouse.
+**B** on a controller — closes it. The window needs a keyboard and mouse. Other mods' hotkeys may not
+work while it is open, and F11 may not open it while another mod's window has the keyboard.
 
 ## Finding places
 
@@ -83,7 +92,7 @@ with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (
 | Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
 | Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
-| Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
+| Rock | Big Rock Clearings, and loose Rocks where the land has been generated |
 | Bee Nest | most kinds of Abandoned House, Contested Towers, Bear Caves, Abandoned Villages (the fenced Meadows farms) and Draugr Villages |
 | Haldor, Hildir, Bog Witch | the merchant |
 
@@ -96,8 +105,8 @@ needs a plugin update.
 - **Places whose chests are known not to hold the item are left out**: the game fills a chest when its area is
   first generated, and a place whose chests have all been filled and none of which holds the item any more
   (emptied, or it never had it) is skipped. This works as the host (or in single player), and when you join a
-  server that runs this plugin too (see Servers); joining any other server it does nothing, since only chests
-  near you are known. `SkipCheckedChests` turns it off.
+  server that runs this plugin too (see Servers); joining any other server it does nothing, since your game
+  knows only the chests it has been sent since you joined. `SkipCheckedChests` turns it off.
 - **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
   Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
   Draugr Village - decided when the place's area is first generated. A nest found is queued as **Bee Nest**, in
@@ -111,13 +120,18 @@ needs a plugin update.
   "(possible)". Once one is fixed - or only one spot is left - only that one is queued, as the real place. (When
   you join a game and the server does not answer every request in time, it stays "(possible)" unless a merchant's
   map icon settles it.)
-- **Loose Mysterious Rocks exist only where the land has been generated**: anywhere someone has been, as the
-  host or on a server with this plugin; near you, when you join any other server. Rocks already picked are left
-  out.
+  After a Valheim update, run Find again for the merchants: a saved "(possible)" spot may no longer be one.
+- **Loose Rocks** (the ones you pick up by hand) **exist only where the land has been generated**:
+  anywhere someone has been, as the host or on a server with this plugin; when you join any other server, only
+  the ones your game has seen since you joined (near where you have been). Rocks already picked are left out.
+  The Mysterious Rock a player builds and the stones it lays are never listed, nor is a rock or nest placed through
+  the build system or spawned with the console's `spawn` command (when a server's plugin answers, only if that server
+  runs 1.4.1 or later).
 - **It works whether you host or join.** When you join a server that runs this plugin too, the server answers
   from its own knowledge, as it would for the host (see Servers). Joining any other server, TomTom asks it with
   the same request a Vegvisir makes, spaced out so as not to load the server, so a large search takes a few
-  seconds. Either way, the server's answers never become map pins (see Multiplayer).
+  seconds; that server's log then records which kinds of place were asked for (`Found 12 locations of type
+  ...`). Either way, the server's answers never become map pins (see Multiplayer).
 - `MaxSearchWaypoints` (default 50) caps how many are queued; the first part of the route is kept. The status
   line says what was found, and `BepInEx/LogOutput.log` how long it took.
 
@@ -141,12 +155,23 @@ If you have hidden the waypoint marker's icon type with the map's icon filter, a
 again: the game re-enables an icon type whenever a pin of that type is added. Pick a different
 `PinType` in the config if you keep that icon hidden.
 
+In a world with the **No Map** setting there is no map, so there are no markers to see and nothing to Alt-click;
+the arrow still leads the way. Not tested: on some Linux desktops Alt+click is taken for moving windows - if
+Alt-click on the map does nothing there, set `MapModifierKey` to another key.
+
 ## Install
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.4.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.4.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
+
+## Uninstall
+
+Delete the plugin's folder (`BepInEx/plugins/DoomMachine-TomTom/`). Its settings
+(`BepInEx/config/DoomMachine.TomTom.cfg`) and saved routes (`BepInEx/config/DoomMachine.TomTom/`, one file per world,
+shared by every character on this PC) stay until you delete them as well. The markers are never saved into your map,
+so nothing is left there.
 
 ## Console
 
@@ -164,7 +189,8 @@ waypoint clear                     empty the queue
 waypoint gui                       toggle the window
 ```
 
-These commands work only inside a world.
+These commands work only inside a world. In the console, separate the values with commas or spaces: some
+console mods (Server Devcommands) take `;` as the start of a new command.
 
 ## The arrow
 
@@ -191,7 +217,7 @@ TomTom is a player's mod and needs nothing on the server. Installing it on the s
 server, or the game of whoever hosts with **Start Server** - adds two things:
 
 - **The server answers Find itself.** A player who joins then gets the same answer the host gets: only the
-  real merchant or Big Rock Clearing once it is fixed, loose Mysterious Rocks anywhere already generated, and
+  real merchant or Big Rock Clearing once it is fixed, loose Rocks anywhere already generated, and
   places whose chests are known not to hold the item left out (`SkipCheckedChests`). Without it, a joining
   player's Find asks the server the way a Vegvisir does (see Finding places).
 - **`WhoMayFind`**, the server's rule for which of the joining players may use Find: `Everyone` (the default),
@@ -208,7 +234,8 @@ locations the way a Vegvisir does.
 **Start Server.** Nothing more to install: the host's own TomTom is the server's. Set `WhoMayFind` in-game through
 ConfigurationManager, where it takes effect at once and the players' windows follow; or quit the game, edit
 `BepInEx/config/DoomMachine.TomTom.cfg`, and start it again. (An edit made while the game runs is not read, and the
-game's next save of its settings writes the old value back.)
+plugin rewrites its settings file, with the old value, whenever one of its settings changes - for example when you
+start a Find with a new range.)
 
 **A dedicated server on Windows**, step by step:
 
@@ -222,9 +249,9 @@ game's next save of its settings writes the old value back.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.4.0]
+   Loading [TomTom 1.4.1]
    Applied 2 of 2 patches.
-   TomTom 1.4.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.4.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.
@@ -244,7 +271,7 @@ for Valheim (usually `~/.config/unity3d/IronGate/Valheim`).
 
 **A rented server:** many Valheim hosting services can install BepInEx for you (see your host's help). Then
 upload this zip's contents to `BepInEx/plugins/DoomMachine-TomTom/`, and change `WhoMayFind` in
-`BepInEx/config/DoomMachine.TomTom.cfg` through the host's file manager.
+`BepInEx/config/DoomMachine.TomTom.cfg` through the host's file manager, then restart the server.
 
 Tested so far: a Windows dedicated server with BepInEx loads the plugin and gets ready as above. A player joining
 such a server has not been tested in play yet.
@@ -275,7 +302,7 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `MapModifierKey` | `LeftAlt` | hold while clicking the map |
 | `SkipWaypointKey` | `None` | optional |
 | `ArrivalRadius` | `10` | metres before a waypoint counts as reached |
-| `Use3DDistance` | `false` | include altitude in the arrival test |
+| `Use3DDistance` | `false` | include altitude in the arrival test, for waypoints whose height is known (a map click on open ground has none) |
 | `InputIsRawValheimXYZ` | `false` | read input as Valheim's own x/y/z |
 | `PersistWaypoints` | `true` | remember the queue per world |
 | `PinType` / `PinLabel` | `Icon3` / `Waypoint` | marker icon and label |
@@ -285,12 +312,16 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
 | `SearchRange` | `1000` | metres Find looks around you (the slider sets it) |
 | `MaxSearchWaypoints` | `50` | the most waypoints one Find queues |
-| `SkipCheckedChests` | `true` | leave out places whose chests are known not to hold the item (as the host, or joining a server with this plugin) |
+| `SkipCheckedChests` | `true` | leave out places known not to hold what you look for: chests already filled without the item, and places generated without a Bee Nest (as the host, or joining a server with this plugin) |
 | `WhoMayFind` | `Everyone` | used only when this game is the server: which joining players may use Find (see Servers) |
 
 Saved queues: `BepInEx/config/DoomMachine.TomTom/waypoints_<worldUID>.txt`, one per world.
-The file is replaced safely. If a save is interrupted, a `.new` or `.old` copy may be left beside it;
-when the file itself is missing, the next start puts that copy back, and the next save tidies up.
+The file is replaced safely. If a save is interrupted, a `.new`, `.old` or `.old2` copy may be left beside it;
+when the file itself is missing, the next start puts that copy back, and the next save tidies up. If the file
+cannot be read when you enter a world (another program, such as a backup or sync tool, holds it), it is never
+saved over: your changes are kept, the file is read again every few seconds, and once it can be read what you
+queued meanwhile comes first and the saved waypoints follow. Turning `PersistWaypoints` on in a world works the
+same way: the saved route is read and joined with what is queued, not replaced by it.
 
 ---
 

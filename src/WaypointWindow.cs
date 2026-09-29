@@ -60,6 +60,7 @@ namespace Waypointer
         private static readonly List<string> _rowPrefixes = new List<string>();
         private static string _modifierHint, _modifierHintBefore, _modifierHintAfter;
         private static KeyCode _modifierHintKey = KeyCode.None;
+        private static bool _modifierHintUnreadable;
 
         private static GUIStyle _headerStyle;
         private static GUIStyle _smallStyle;
@@ -321,7 +322,7 @@ namespace Waypointer
 
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("<", _stepWidth)) Defer(PreviousQuery);
-            GUILayout.Label(queries[_queryIndex].Name, _centredStyle);
+            GUILayout.Label(queries[_queryIndex].Title, _centredStyle);
             if (GUILayout.Button(">", _stepWidth)) Defer(NextQuery);
             GUILayout.EndHorizontal();
 
@@ -502,17 +503,23 @@ namespace Waypointer
             return _rowPrefixes[i];
         }
 
-        /// <summary>before + the map modifier key + after, rebuilt only when one of them changes.</summary>
+        /// <summary>
+        /// before + the map modifier key + after, and a note when Valheim has failed to read that key (Hotkeys), rebuilt
+        /// only when one of them changes.
+        /// </summary>
         private static string ModifierHint(string before, string after)
         {
             KeyCode key = Plugin.MapModifierKey.Value;
-            if (_modifierHint == null || key != _modifierHintKey
+            bool unreadable = Hotkeys.IsUnreadable(key);
+            if (_modifierHint == null || key != _modifierHintKey || unreadable != _modifierHintUnreadable
                 || !ReferenceEquals(before, _modifierHintBefore) || !ReferenceEquals(after, _modifierHintAfter))
             {
                 _modifierHintKey = key;
+                _modifierHintUnreadable = unreadable;
                 _modifierHintBefore = before;
                 _modifierHintAfter = after;
-                _modifierHint = before + key + after;
+                _modifierHint = before + key + after
+                    + (unreadable ? "\n(Valheim cannot read " + key + " - choose another MapModifierKey.)" : "");
             }
             return _modifierHint;
         }

@@ -14,9 +14,23 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 GAME="${VALHEIM_DIR:-E:/SteamLibrary/steamapps/common/Valheim}"
 STATUS=0
 
+# A test that never ends would hang the run, so each run gets TEST_TIMEOUT seconds (default 300); running out is a
+# failure. GNU timeout exits 124 and also ends the program's own children. /usr/bin/timeout is named outright:
+# Windows' own timeout.exe (a "wait N seconds" prompt) can come first on PATH. Without it, runs are not limited.
+LIMIT="${TEST_TIMEOUT:-300}"
+TIMEOUT_BIN=""
+if [ -x /usr/bin/timeout ]; then TIMEOUT_BIN=/usr/bin/timeout; fi
+limited() {
+  if [ -z "$TIMEOUT_BIN" ]; then "$@"; return $?; fi
+  local rc=0
+  "$TIMEOUT_BIN" "$LIMIT" "$@" || rc=$?
+  if [ "$rc" -eq 124 ]; then echo "  FAIL timed out after $LIMIT s (TEST_TIMEOUT) - a test that never ends?"; fi
+  return $rc
+}
+
 if command -v dotnet >/dev/null 2>&1; then
   echo "== tests on .NET =="
-  dotnet run --project "$HERE/tests/Waypointer.Tests.csproj" -v quiet || STATUS=1
+  limited dotnet run --project "$HERE/tests/Waypointer.Tests.csproj" -v quiet || STATUS=1
 fi
 
 CSC="/c/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
@@ -40,6 +54,7 @@ build_partest() {
     echo "\"$(cygpath -w "$HERE/src/SearchRules.cs")\""
     echo "\"$(cygpath -w "$HERE/src/FindProtocol.cs")\""
     echo "\"$(cygpath -w "$HERE/src/CaptionFit.cs")\""
+    echo "\"$(cygpath -w "$HERE/src/RouteRead.cs")\""
   } > "$RSP"
   "$CSC" "@$(cygpath -w "$RSP")"
 }
@@ -58,14 +73,14 @@ if [ -n "$MONO" ]; then
   build_partest
   if [ -f "$GAME/valheim_Data/Managed/mscorlib.dll" ]; then
     echo "== tests on Mono, with the game's mscorlib ($MONO) =="
-    MONO_PATH="$(cygpath -w "$GAME/valheim_Data/Managed")" "$MONO" "$(cygpath -w "$OUT/partest.exe")" || STATUS=1
+    MONO_PATH="$(cygpath -w "$GAME/valheim_Data/Managed")" limited "$MONO" "$(cygpath -w "$OUT/partest.exe")" || STATUS=1
   else
     echo "== tests on Mono, with the Editor's mscorlib - game not found at '$GAME' ($MONO) =="
-    "$MONO" "$(cygpath -w "$OUT/partest.exe")" || STATUS=1
+    limited "$MONO" "$(cygpath -w "$OUT/partest.exe")" || STATUS=1
   fi
 elif ! command -v dotnet >/dev/null 2>&1; then
   echo "(no .NET SDK and no Unity Mono found - falling back to .NET Framework and the C# 5 compiler)"
   build_partest
-  "$OUT/partest.exe" || STATUS=1
+  limited "$OUT/partest.exe" || STATUS=1
 fi
 exit $STATUS

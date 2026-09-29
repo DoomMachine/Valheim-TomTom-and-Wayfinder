@@ -18,7 +18,10 @@ namespace Waypointer
     /// </summary>
     internal sealed class SearchQuery
     {
+        /// <summary>The key a server looks a Find up by (FindServer, SearchCatalog.ByName): never rename one.</summary>
         public readonly string Name;
+        /// <summary>What the window and the waypoint names show: Name, unless the game's own word differs.</summary>
+        public readonly string Title;
         public readonly SearchTarget[] Locations;
         public readonly SearchTarget[] Objects;
         public readonly string[] Items;
@@ -27,18 +30,24 @@ namespace Waypointer
         /// The Objects grow only inside the Locations (a Bee Nest in an Abandoned House), so a place and the objects
         /// in its 64 m zone are one find: an object found replaces its place (SearchRules.DropPlacesWithObjectsInZone),
         /// and a place whose zone the game has generated without one holds none (SearchRules.DropPlacesKnownEmpty).
-        /// False when the objects are found apart from the places (the loose Mysterious Rocks).
+        /// False when the objects are found apart from the places (the loose Rocks).
         /// </summary>
         public readonly bool PlacesHoldObjects;
 
         public SearchQuery(string name, SearchTarget[] locations, SearchTarget[] objects, string[] items)
-            : this(name, locations, objects, items, false)
+            : this(name, null, locations, objects, items, false)
         {
         }
 
         public SearchQuery(string name, SearchTarget[] locations, SearchTarget[] objects, string[] items, bool placesHoldObjects)
+            : this(name, null, locations, objects, items, placesHoldObjects)
+        {
+        }
+
+        public SearchQuery(string name, string title, SearchTarget[] locations, SearchTarget[] objects, string[] items, bool placesHoldObjects)
         {
             Name = name;
+            Title = string.IsNullOrEmpty(title) ? name : title;
             Locations = locations ?? new SearchTarget[0];
             Objects = objects ?? new SearchTarget[0];
             Items = items ?? new string[0];
@@ -120,10 +129,14 @@ namespace Waypointer
                 new SearchQuery("Mysterious Axe Head",
                     new[] { T("WoodHouse2", "Abandoned House") }, null,
                     new[] { "AxeHead2" }),
-                new SearchQuery("Mysterious Rock",
+                // The key "Mysterious Rock" stays: servers look a Find up by it. The game calls these rocks "Rock":
+                // Pickable_StoneRock gives the StoneRock item ($item_stonerock) and has no m_overrideName. The game's
+                // "Mysterious Rock" ($item_hardrock) is the pet rock a player builds (Placeable_HardRock), which lays
+                // Pickable_HardRockOffspring; neither is ever listed (other prefabs, and SearchRules.WorldMade).
+                new SearchQuery("Mysterious Rock", "Rock",
                     new[] { T("BigRockClearing", "Big Rock Clearing") },
-                    new[] { T("Pickable_StoneRock", "Mysterious Rock") },
-                    null),
+                    new[] { T("Pickable_StoneRock", "Rock") },
+                    null, false),
                 // A wild nest (Beehive, not the player's own piece_beehive) grows only as a child of these places,
                 // each with a chance rolled when its zone is generated: eleven Abandoned Houses (25%; WoodHouse8 and
                 // WoodHouse12 hold none), the Contested Tower (81.8% x 28.1%), the Bear Cave (50%, on its fir tree),

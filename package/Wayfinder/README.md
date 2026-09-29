@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.4.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.4.1 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
@@ -43,6 +43,10 @@ If you have hidden the waypoint marker's icon type with the map's icon filter, a
 again: the game re-enables an icon type whenever a pin of that type is added. Pick a different
 `PinType` in the config if you keep that icon hidden.
 
+In a world with the **No Map** setting there is no map, so there are no markers to see and nothing to Alt-click;
+the arrow still leads the way. Not tested: on some Linux desktops Alt+click is taken for moving windows - if
+Alt-click on the map does nothing there, set `MapModifierKey` to another key.
+
 ## The window
 
 - **Add my position** — marks where you stand. It won't count as reached until you've walked away once.
@@ -53,7 +57,8 @@ again: the game re-enables an icon type whenever a pin of that type is added. Pi
 
 While it's open, the game ignores your keyboard: Tab doesn't open the inventory and the mouse wheel
 scrolls the list instead of zooming the camera. Key bindings you made with the console's `bind` command
-still run. **Esc** — or **B** on a controller — closes it. The window needs a keyboard and mouse.
+still run. **Esc** — or **B** on a controller — closes it. The window needs a keyboard and mouse. Other
+mods' hotkeys may not work while it is open, and F11 may not open it while another mod's window has the keyboard.
 
 ## Finding places
 
@@ -72,7 +77,7 @@ or **Find (add to queue)**. The route starts at the nearest one and is then plan
 | Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
 | Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
-| Mysterious Rock | Big Rock Clearings, and loose Mysterious Rocks where the land has been generated |
+| Rock | Big Rock Clearings, and loose Rocks where the land has been generated |
 | Bee Nest | most kinds of Abandoned House, Contested Towers, Bear Caves, Abandoned Villages (the fenced Meadows farms) and Draugr Villages |
 | Haldor, Hildir, Bog Witch | the merchant |
 
@@ -87,7 +92,11 @@ needs a plugin update.
 - **Merchants and the Big Rock Clearing exist once per world.** The first of their possible spots anyone reaches
   becomes the real one. Wayfinder queues them only once they are fixed, or when only one spot is left - and when
   you join a game, only if the server answered every request in time or a merchant's map icon settles it.
-- **Loose Mysterious Rocks exist only where the land has been generated**, and picked ones are left out.
+  After a Valheim update, run Find again for the merchants: a saved spot may no longer be the place.
+- **Loose Rocks** (the ones you pick up by hand) **exist only where the land has been generated**, and
+  picked ones are left out. The Mysterious Rock a player builds and the stones it lays are never listed, nor is a
+  rock or nest placed through the build system or spawned with the console's `spawn` command (when a server's plugin
+  answers, only if that server runs 1.4.1 or later).
 - **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
   Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
   Draugr Village - decided when the place's area is first generated. A nest found where the land has been
@@ -97,7 +106,7 @@ needs a plugin update.
   have been) are known.
 - **It works whether you host or join.** When you join a server that runs this plugin too, the server answers
   from its own knowledge (see Servers); joining any other server, Wayfinder asks it with the same request a
-  Vegvisir makes. Either way, the answers never become map pins (see Multiplayer), and only what your map shows
+  Vegvisir makes, and that server's log then records which kinds of place were asked for. Either way, the answers never become map pins (see Multiplayer), and only what your map shows
   as explored is queued.
 - `MaxSearchWaypoints` (default 50) caps how many are queued; the first part of the route is kept.
 
@@ -105,8 +114,15 @@ needs a plugin update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.4.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.4.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
+
+## Uninstall
+
+Delete the plugin's folder (`BepInEx/plugins/DoomMachine-Wayfinder/`). Its settings
+(`BepInEx/config/DoomMachine.Wayfinder.cfg`) and saved routes (`BepInEx/config/DoomMachine.Wayfinder/`, one file per world,
+shared by every character on this PC) stay until you delete them as well. The markers are never saved into your map,
+so nothing is left there.
 
 ## Console
 
@@ -151,7 +167,7 @@ Wayfinder is a player's mod and needs nothing on the server. Installing it on th
 server, or the game of whoever hosts with **Start Server** - adds two things:
 
 - **The server answers Find itself.** A player who joins then gets the same answer the host gets: only the
-  real merchant or Big Rock Clearing once it is fixed, loose Mysterious Rocks anywhere already generated.
+  real merchant or Big Rock Clearing once it is fixed, loose Rocks anywhere already generated.
   Without it, a joining player's Find asks the server the way a Vegvisir does (see Finding places).
 - **`WhoMayFind`**, the server's rule for which of the joining players may use Find: `Everyone` (the default),
   `AdminsOnly` (players in the server's `adminlist.txt`) or `Nobody`. The host's own Find is never limited. A
@@ -167,7 +183,8 @@ locations the way a Vegvisir does.
 **Start Server.** Nothing more to install: the host's own Wayfinder is the server's. Set `WhoMayFind` in-game through
 ConfigurationManager, where it takes effect at once and the players' windows follow; or quit the game, edit
 `BepInEx/config/DoomMachine.Wayfinder.cfg`, and start it again. (An edit made while the game runs is not read, and the
-game's next save of its settings writes the old value back.)
+plugin rewrites its settings file, with the old value, whenever one of its settings changes - for example when you
+start a Find with a new range.)
 
 **A dedicated server on Windows**, step by step:
 
@@ -181,9 +198,9 @@ game's next save of its settings writes the old value back.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.4.0]
+   Loading [Wayfinder 1.4.1]
    Applied 2 of 2 patches.
-   Wayfinder 1.4.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.4.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.
@@ -203,7 +220,7 @@ for Valheim (usually `~/.config/unity3d/IronGate/Valheim`).
 
 **A rented server:** many Valheim hosting services can install BepInEx for you (see your host's help). Then
 upload this zip's contents to `BepInEx/plugins/DoomMachine-Wayfinder/`, and change `WhoMayFind` in
-`BepInEx/config/DoomMachine.Wayfinder.cfg` through the host's file manager.
+`BepInEx/config/DoomMachine.Wayfinder.cfg` through the host's file manager, then restart the server.
 
 Tested so far: a Windows dedicated server with BepInEx loads the plugin and gets ready as above. A player joining
 such a server has not been tested in play yet.
@@ -245,7 +262,7 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `MapModifierKey` | `LeftAlt` | hold while clicking the map |
 | `SkipWaypointKey` | `None` | optional |
 | `ArrivalRadius` | `10` | metres before a waypoint counts as reached |
-| `Use3DDistance` | `false` | include altitude in the arrival test |
+| `Use3DDistance` | `false` | include altitude in the arrival test, for waypoints whose height is known (a map click on open ground has none) |
 | `PersistWaypoints` | `true` | remember the queue per world |
 | `PinType` / `PinLabel` | `Icon3` / `Waypoint` | marker icon and label |
 | `ShowArrow`, `ArrowSize`, `ArrowScreenX/Y`, `ArrowOpacity` | | arrow placement |
@@ -258,8 +275,12 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 
 Saved queues: `BepInEx/config/DoomMachine.Wayfinder/waypoints_<worldUID>.txt`, one per world — kept
 apart from TomTom's, so coordinates entered in TomTom never carry over into Wayfinder.
-The file is replaced safely. If a save is interrupted, a `.new` or `.old` copy may be left beside it;
-when the file itself is missing, the next start puts that copy back, and the next save tidies up.
+The file is replaced safely. If a save is interrupted, a `.new`, `.old` or `.old2` copy may be left beside it;
+when the file itself is missing, the next start puts that copy back, and the next save tidies up. If the file
+cannot be read when you enter a world (another program, such as a backup or sync tool, holds it), it is never
+saved over: your changes are kept, the file is read again every few seconds, and once it can be read what you
+queued meanwhile comes first and the saved waypoints follow. Turning `PersistWaypoints` on in a world works the
+same way: the saved route is read and joined with what is queued, not replaced by it.
 
 ---
 

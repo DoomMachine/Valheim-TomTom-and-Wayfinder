@@ -189,9 +189,10 @@ namespace Waypointer
                 "Only used when this game is the server: a dedicated server, or the host of a game started with Start "
                 + "Server. Which of the players who join may use Find: Everyone, AdminsOnly (players in the server's "
                 + "adminlist.txt) or Nobody. The host's own Find is never limited. A refused player whose plugin is "
-                + "older than 1.3.0 gets no answer from the server: after about 15 seconds their Find keeps only what "
-                + "their own game has loaded nearby (loose Mysterious Rocks). This is a rule for players who "
-                + "use this plugin, not a lock: any game can ask a server for locations the way a Vegvisir does.");
+                + "older than 1.3.0 gets no answer from the server: after 15 to 20 seconds their Find keeps only what "
+                + "their own game has been sent since they joined (loose Rocks near where they have been). This is a rule "
+                + "for players who use this plugin, not a lock: any game can ask a server for locations the way a "
+                + "Vegvisir does.");
             WhoMayFind.SettingChanged += OnPolicyChanged;
         }
 
@@ -226,7 +227,9 @@ namespace Waypointer
                     new AcceptableValueRange<float>(1f, 100f)));
             Use3DDistance = Config.Bind("2 - Behaviour", "Use3DDistance", false,
                 "Off by default: arrival is measured on the horizontal plane, which is what you want " +
-                "when no elevation was supplied. Turn on to include altitude in the distance.");
+                "when no elevation was supplied. Turn on to include altitude in the distance, for waypoints whose " +
+                "height is known; a waypoint clicked on open ground on the map has none, so it is still measured on the " +
+                "horizontal plane.");
 #if !WAYFINDER
             RawValheimOrder = Config.Bind("2 - Behaviour", "InputIsRawValheimXYZ", false,
                 "Off (default): you type X, Y and an optional third value that means ELEVATION. " +
