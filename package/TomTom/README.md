@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.4.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.5.0 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -44,9 +44,9 @@ X: 1234  Y: 56  Z: -789
 - Use a **dot** for decimals (`12.5`); a comma separates fields. A comma with a digit on both sides
   (`12,5`) could also be a decimal comma, so a line that would mean another place read that way (`12,5 30`,
   `1234,5; -567,25`) is refused rather than guessed at: use a dot, or put a space after the comma
-  (`12, 5 30`). A line that shows how it writes numbers - a number with a dot, or a comma straight before a
-  minus or plus sign (`12,5,-30` reads as 12, 5, −30) - is read the usual way, and so are lines such as `12,34`
-  and `1234,-567,30`. A comma followed by
+  (`12, 5 30`). A line that shows how it writes numbers - a number with a dot, or a comma with no space after it
+  that is not between two digits (`12,5,-30` reads as 12, 5, −30; `Camp,12,5 30` as 12, 5, 30) - is read the usual
+  way, and so are lines such as `12,34` and `1234,-567,30`. A comma followed by
   exactly three digits with no space (`1,234`) looks like digit grouping, so the line is refused as well
   — write `1, 234` if you really mean two fields. A no-break or thin space inside a
   number (how some languages group thousands, often copied from web pages) is refused the same way; an
@@ -58,9 +58,13 @@ X: 1234  Y: 56  Z: -789
   means x 1234, z −789, 56 m up (with `InputIsRawValheimXYZ` on as well). With only `X` and `Y`, they are
   the two map axes, read by label in whichever order they are written.
 - To paste Valheim's raw `x y z` instead, turn on `InputIsRawValheimXYZ`.
+- The `pos` console line can be pasted whole, in either mode, and is read in the axis order it names: Valheim's
+  `Player position (X,Y,Z): (1234, 30, -567) , Zone: ...` and Server Devcommands' `Player position (X,Z,Y): (1234,
+  -567, 30)`, a decimal comma in its values included.
 
 When you give no elevation, arrival is judged on horizontal distance, which is what you want for a far,
-unexplored target whose height can't be known in advance.
+unexplored target whose height can't be known in advance - unless `Use3DDistance` is on: then such a waypoint is
+measured at the ground under it once that ground is loaded near you.
 
 ## The window
 
@@ -91,6 +95,7 @@ with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (
 | Wooden Spear | Greydwarf Ruins and Towers, Skeleton Towers (sunken ones too), Contested Towers and Abandoned Huts |
 | Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
 | Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
+| Wooden Greatsword | Infested Mines (in their treasure rooms), ruined Dvergr towers and the Mistlands rock spires |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
 | Rock | Big Rock Clearings, and loose Rocks where the land has been generated |
 | Bee Nest | most kinds of Abandoned House, Contested Towers, Bear Caves, Abandoned Villages (the fenced Meadows farms) and Draugr Villages |
@@ -107,6 +112,9 @@ needs a plugin update.
   (emptied, or it never had it) is skipped. This works as the host (or in single player), and when you join a
   server that runs this plugin too (see Servers); joining any other server it does nothing, since your game
   knows only the chests it has been sent since you joined. `SkipCheckedChests` turns it off.
+- **The Wooden Greatsword** is found in the Mistlands: in the treasure room of an Infested Mine - the waypoint is the
+  mine's entrance, and not every mine has a treasure room - and in the chests of ruined Dvergr towers and of the rock
+  spires (that chest sits on top of the spire, about 60 m up, and only some spires have one).
 - **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
   Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
   Draugr Village - decided when the place's area is first generated. A nest found is queued as **Bee Nest**, in
@@ -163,7 +171,7 @@ Alt-click on the map does nothing there, set `MapModifierKey` to another key.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.4.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.5.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -249,9 +257,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.4.1]
+   Loading [TomTom 1.5.0]
    Applied 2 of 2 patches.
-   TomTom 1.4.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.5.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.
@@ -302,7 +310,7 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `MapModifierKey` | `LeftAlt` | hold while clicking the map |
 | `SkipWaypointKey` | `None` | optional |
 | `ArrivalRadius` | `10` | metres before a waypoint counts as reached |
-| `Use3DDistance` | `false` | include altitude in the arrival test, for waypoints whose height is known (a map click on open ground has none) |
+| `Use3DDistance` | `false` | include altitude in the arrival test: a waypoint with a height of its own uses it; a map click on open ground, a place Find found and a waypoint without a height use the ground under it once it is loaded near you (horizontal over water) |
 | `InputIsRawValheimXYZ` | `false` | read input as Valheim's own x/y/z |
 | `PersistWaypoints` | `true` | remember the queue per world |
 | `PinType` / `PinLabel` | `Icon3` / `Waypoint` | marker icon and label |
@@ -319,7 +327,8 @@ Saved queues: `BepInEx/config/DoomMachine.TomTom/waypoints_<worldUID>.txt`, one 
 The file is replaced safely. If a save is interrupted, a `.new`, `.old` or `.old2` copy may be left beside it;
 when the file itself is missing, the next start puts that copy back, and the next save tidies up. If the file
 cannot be read when you enter a world (another program, such as a backup or sync tool, holds it), it is never
-saved over: your changes are kept, the file is read again every few seconds, and once it can be read what you
+saved over: your changes are kept (if it is still unreadable when you leave the world, they are not saved), the
+file is read again every few seconds, and once it can be read what you
 queued meanwhile comes first and the saved waypoints follow. Turning `PersistWaypoints` on in a world works the
 same way: the saved route is read and joined with what is queued, not replaced by it.
 

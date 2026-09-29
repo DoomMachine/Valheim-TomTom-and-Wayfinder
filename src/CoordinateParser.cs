@@ -30,7 +30,7 @@ namespace Waypointer
     /// <summary>
     /// Parses free-form coordinate text. Deliberately liberal: accepts commas, spaces (including
     /// no-break, thin and ideographic spaces), semicolons, tabs and newlines, tolerates brackets, and
-    /// allows an optional per-entry name.
+    /// allows an optional per-entry name. The game's own 'pos' console line is read whole, in the axis order it names.
     /// </summary>
     public static class CoordinateParser
     {
@@ -130,6 +130,14 @@ namespace Waypointer
         private static readonly Regex CommaBetweenDigits = new Regex(@"(?<=\d),(?=\d)");
         // A word that starts the way a number does ("1234m", "1e39", ".5km"): a mistyped number, not a name.
         private static readonly Regex NumberLike = new Regex(@"^[+-]?\.?\d");
+        // The 'pos' console line. Valheim's (Terminal.InitTerminal): "Player position (X,Y,Z): (1234, 30, -567) , Zone:
+        // 19,-9, Center dist: ..."; Server Devcommands' (PosCommand): "Player position (X,Z,Y): (1234, -567, 30)". The
+        // header names the axis order.
+        private static readonly Regex PosLine = new Regex(
+            @"player\s+position\s*\(\s*([xyz])\s*,\s*([xyz])\s*,\s*([xyz])\s*\)\s*:\s*\(([^()]*)\)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        // One value of a pos line written with a decimal comma (Server Devcommands formats with the machine's culture).
+        private static readonly Regex DecimalCommaValue = new Regex(@"^[+-]?\d+,\d+$");
 
         /// <summary>Parses a single entry such as "123, 456", "(123 456 -20)" or "Camp: 123, 456".</summary>
         public static bool TryParseOne(string line, out ParsedCoord result, out string error)
@@ -140,6 +148,10 @@ namespace Waypointer
 
             string work = Normalise(line).Trim();
             if (work.Length == 0) { error = "empty"; return false; }
+
+            // The game's 'pos' line is read before the grouping checks, which its zone and distance would trip.
+            Match pos = PosLine.Match(work);
+            if (pos.Success) return TryParsePosLine(work, pos, out result, out error);
 
             // Digit grouping such as "1,234,567" would otherwise be read as three separate fields and
             // send the player somewhere completely different, so it is rejected rather than guessed at.
@@ -358,6 +370,50 @@ namespace Waypointer
             return true;
         }
 
+        /// <summary>
+        /// Reads a 'pos' console line: the three header letters must differ and give the order of the three values; the
+        /// text before it (up to a colon) is the name, and what follows the vector (zone, distance) is ignored. Only
+        /// here is a decimal comma certain: both producers separate the values with ", ", and Server Devcommands
+        /// formats them with the machine's culture ("pos 2" on a German Windows: "1234,57").
+        /// </summary>
+        private static bool TryParsePosLine(string work, Match m, out ParsedCoord result, out string error)
+        {
+            result = null;
+            error = "this looks like the game's 'pos' output, but its position could not be read";
+            char[] axes = new char[3];
+            for (int k = 0; k < 3; k++) axes[k] = char.ToLowerInvariant(m.Groups[k + 1].Value[0]);
+            if (axes[0] == axes[1] || axes[0] == axes[2] || axes[1] == axes[2]) return false;
+
+            string inside = m.Groups[4].Value;
+            string[] parts = inside.Split(new string[] { ", " }, StringSplitOptions.None);
+            bool machineSeparators = parts.Length == 3;
+            if (!machineSeparators) parts = inside.Split(',');
+            if (parts.Length != 3) return false;
+
+            ParsedCoord parsed = new ParsedCoord();
+            for (int k = 0; k < 3; k++)
+            {
+                string p = parts[k].Trim();
+                if (machineSeparators && DecimalCommaValue.IsMatch(p)) p = p.Replace(',', '.');
+                float v;
+                if (!TryParseNumber(p, out v)) return false;
+                if (axes[k] == 'x') parsed.A = v;
+                else if (axes[k] == 'z') parsed.B = v;
+                else parsed.Elevation = v;
+            }
+            parsed.HasElevation = true;
+            parsed.Labelled = true;
+            parsed.Name = work.Substring(0, m.Index).Trim().TrimEnd(':').Trim();
+            if (!IsSane(parsed.A) || !IsSane(parsed.B) || !IsSane(parsed.Elevation))
+            {
+                error = "coordinate out of range";
+                return false;
+            }
+            error = null;
+            result = parsed;
+            return true;
+        }
+
         /// <summary>Two readings of one line name the same place (the name aside).</summary>
         private static bool SamePlace(ParsedCoord a, ParsedCoord b)
         {
@@ -381,7 +437,8 @@ namespace Waypointer
 
         /// <summary>
         /// Parses with the invariant culture so that a dot is always the decimal separator, whatever the
-        /// machine locale is. A comma is always a field separator here, never a decimal comma.
+        /// machine locale is. A comma is a field separator here: a decimal comma is read only inside a recognised pos
+        /// line (TryParsePosLine), and a line where one could change the place is refused (TryParseOne).
         ///
         /// Words like "NaN" and "Infinity" parse as floats under these rules, so they are rejected here
         /// and fall through to the name instead - otherwise a waypoint called "Infinity Tower" could

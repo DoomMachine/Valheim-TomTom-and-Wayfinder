@@ -1,17 +1,94 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Waypointer
 {
-    /// <summary>
-    /// What RouteMerge compares of a waypoint, without Unity types: its place on the map (x = east/west, z =
-    /// north/south), its kind (Borrowed: it follows a pin of the player's) and its name.
-    /// </summary>
+    /// <summary>One waypoint as the route file holds it, without Unity types (x = east/west, y = altitude, z = north/south).</summary>
     internal struct RouteEntry
     {
-        public float X, Z;
+        public float X, Y, Z;
+        public bool HasElevation;
+        public bool HeightIsEstimate;
         public bool Borrowed;
         public string Name;
+    }
+
+    /// <summary>
+    /// The route file's lines: a header, then one waypoint per line, x|altitude|z|hasElevation|ownsMarker|name, numbers
+    /// in the invariant culture (older files have no ownsMarker column). Unity-free, so the tests read and write it.
+    /// </summary>
+    internal static class RouteFile
+    {
+        public static string Header(string edition)
+        {
+            return "# " + edition + " queue - x|altitude|z|hasElevation|ownsMarker|name";
+        }
+
+        /// <summary>
+        /// ownsMarker records intent (Borrowed), never whether a stand-in marker is showing now, so a followed pin that
+        /// was briefly missing is still followed after the next load.
+        /// </summary>
+        public static string FormatLine(RouteEntry e)
+        {
+            return string.Format(CultureInfo.InvariantCulture, "{0}|{1}|{2}|{3}|{4}|{5}",
+                e.X, e.Y, e.Z, e.HasElevation ? (e.HeightIsEstimate ? "2" : "1") : "0", e.Borrowed ? "0" : "1", SanitizeName(e.Name));
+        }
+
+        /// <summary>False for a blank line, a comment (#), and a line that cannot be read, which is skipped.</summary>
+        public static bool TryParseLine(string raw, out RouteEntry e)
+        {
+            e = new RouteEntry();
+            string line = raw == null ? "" : raw.Trim();
+            if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) return false;
+
+            string[] parts = line.Split('|');
+            if (parts.Length < 4) return false;
+
+            float x, y, z;
+            if (!float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out x)) return false;
+            if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out y)) return false;
+            if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out z)) return false;
+
+            // "NaN" and "Infinity" parse as floats; a position that is not a real place is skipped like any other
+            // unreadable line (CoordinateParser refuses them for the same reason).
+            if (!IsFinite(x) || !IsFinite(z)) return false;
+
+            // 1: a height of its own; 2 (since 1.5.0): the world generator's estimate, a place Find found. A reader
+            // before 1.5.0 takes 2 as no height, which only makes its arrival test horizontal.
+            string heightFlag = parts[3].Trim();
+            bool hasElev = heightFlag == "1" || heightFlag == "2";
+            bool estimate = heightFlag == "2";
+            if (!IsFinite(y)) { y = 0f; hasElev = false; estimate = false; }   // altitude unusable: treat as not given
+
+            bool owns = true;
+            string name = "";
+            if (parts.Length >= 6)
+            {
+                owns = parts[4].Trim() != "0";   // only an explicit 0 means "follows a player's pin"
+                name = parts[5];
+            }
+            else if (parts.Length == 5)
+            {
+                name = parts[4];
+            }
+
+            e.X = x; e.Y = y; e.Z = z;
+            e.HasElevation = hasElev;
+            e.HeightIsEstimate = estimate;
+            e.Borrowed = !owns;
+            e.Name = name;
+            return true;
+        }
+
+        /// <summary>One waypoint per line, '|'-separated: a name must not contain either separator.</summary>
+        public static string SanitizeName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            return name.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ');
+        }
+
+        private static bool IsFinite(float v) { return !float.IsNaN(v) && !float.IsInfinity(v); }
     }
 
     /// <summary>

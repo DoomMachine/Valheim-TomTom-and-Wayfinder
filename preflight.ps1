@@ -20,7 +20,10 @@
 #      saved pins, and no request is sent unless that catch is in place
 #  13. Wayfinder's search reads MinimapAccess.IsExplored and TomTom's does not; LocationSearch.Finish hands the search's
 #      places and query to SearchRules.FinishHits once, TomTom's with no filter (13b); and the server's known-empty drop
-#      in SearchJob's scan is wired to the request (13c), and the scan counts only what the world made (13d)
+#      in SearchJob's scan is wired to the request (13c), and the scan skips an object with a creator or the cheat
+#      flag (13d)
+#  16. Wayfinder places a waypoint from a map click only on explored land; TomTom's map click does not read it
+#  17. every code path that makes a waypoint is a known one
 #  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
 #      requests, knows a player by the connection their call came on, and every place in range is sent back
 #  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
@@ -47,7 +50,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.4.1"
+$expectedVersion = "1.5.0"
 
 if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
     Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
@@ -525,7 +528,7 @@ if ($Edition -eq "Wayfinder") {
 
 # A coordinate readout has to read a world x or z and turn a number into text in the same method, or turn a
 # whole vector into text. The distance readouts get a scalar from HorizontalDistance and never touch x/z;
-# the save file (SaveIfDirty) is the one sanctioned place. LocationSearch.Ask is exempt too: it boxes the search
+# the save file (SaveIfDirty, through RouteFile.FormatLine, which nothing else may call) is the one sanctioned place. LocationSearch.Ask is exempt too: it boxes the search
 # origin only because ZRoutedRpc.InvokeRoutedRPC takes params object[] - the vector goes to the server, never to
 # text (check 12 pins down what Ask does). A tripwire, not a proof: a helper handed bare floats that formats them
 # elsewhere is not caught. TomTom is checked the other way round (non-vacuous).
@@ -541,7 +544,10 @@ foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
         if (($n -eq "box" -and $op -match "^UnityEngine\.Vector[234]$") -or ($n -like "call*" -and $op -match "UnityEngine\.Vector[234]::ToString")) { $vecText = $true }
     }
     $w = $t.Name + "." + $m.Name
-    if ($w -ne "WaypointManager.SaveIfDirty" -and $w -ne "LocationSearch.Ask" -and ($vecText -or ($readsXZ -and $toText))) { $numericText += $w }
+    # RouteFile.FormatLine is the save file's own formatter (reading RouteEntry's X and Z); only SaveIfDirty may call it (below).
+    if ($w -ne "WaypointManager.SaveIfDirty" -and $w -ne "RouteFile.FormatLine" -and $w -ne "LocationSearch.Ask" -and ($vecText -or ($readsXZ -and $toText))) { $numericText += $w }
+    # The route file's own formatter turns bare floats into text (blind spot above), so only the save may use it.
+    if ($w -ne "WaypointManager.SaveIfDirty" -and @($m.Body.Instructions | Where-Object { $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq "Waypointer.RouteFile" -and $_.Operand.Name -eq "FormatLine" }).Count -gt 0) { $numericText += ($w + " (calls RouteFile.FormatLine, the save file's formatter)") }
 } }
 $checks++
 if ($Edition -eq "Wayfinder") {
@@ -675,8 +681,7 @@ else { Write-Output "  FAIL  $why"; $failures++ }
 # A route that could not be read when its world loaded (another program held it) is never saved over: SaveIfDirty asks
 # RouteReadGate.Pending before SafeFile.WriteAllText and, when it is true, returns (the brfalse right after the call
 # jumps over a block that holds a ret and no SafeFile call); Load and RetryRead record a failed read
-# (RouteReadGate.Failed); and SaveIfDirty is the only caller of SafeFile.WriteAllText. A tripwire on the calls: that
-# ReadRoute returns false from its catch is logic, and not seen here.
+# (RouteReadGate.Failed); and SaveIfDirty is the only caller of SafeFile.WriteAllText.
 $checks++
 $rrWhy = @()
 $wmType = $plug.GetType("Waypointer.WaypointManager")
@@ -734,8 +739,46 @@ else {
         }
     }
     if ($failedCalls -eq 0 -or $retAfter -ne $failedCalls) { $rrWhy += "RetryRead does not return right after recording a failed read (a failed retry would count as read)" }
-    $dirtyFrom = @(); for ($k = 1; $k -lt $ri.Count; $k++) { if ($ri[$k].OpCode.Name -eq "stsfld" -and $ri[$k].Operand.Name -eq "_dirty") { $dirtyFrom += $ri[$k - 1].OpCode.Name } }
-    if ($dirtyFrom.Count -eq 0 -or @($dirtyFrom | Where-Object { $_ -ne "cgt" }).Count -gt 0) { $rrWhy += "RetryRead does not set _dirty from 'queued meanwhile > 0' (a merged route would not be saved)" }
+    # _dirty = meanwhile > 0: "ldloc V; ldc.i4.0; cgt; stsfld _dirty", V stored only from _queue.Count.
+    $dirtyOk = $true; $dirtySeen = 0
+    for ($k = 3; $k -lt $ri.Count; $k++) {
+        if (-not ($ri[$k].OpCode.Name -eq "stsfld" -and $ri[$k].Operand.Name -eq "_dirty")) { continue }
+        $dirtySeen++
+        $lv = $ri[$k - 3]
+        if (-not ($ri[$k - 1].OpCode.Name -eq "cgt" -and $ri[$k - 2].OpCode.Name -eq "ldc.i4.0" -and $lv.OpCode.Name -like "ldloc*")) { $dirtyOk = $false; continue }
+        $vi = Get-LocalIndex $lv; $stores = 0; $fromCount = 0
+        for ($j = 2; $j -lt $ri.Count; $j++) {
+            if ($ri[$j].OpCode.Name -like "stloc*" -and (Get-LocalIndex $ri[$j]) -eq $vi) {
+                $stores++
+                if ($ri[$j - 1].OpCode.Name -like "call*" -and $ri[$j - 1].Operand.Name -eq "get_Count" -and $ri[$j - 2].OpCode.Name -eq "ldsfld" -and $ri[$j - 2].Operand.Name -eq "_queue") { $fromCount++ }
+            }
+        }
+        if ($stores -eq 0 -or $stores -ne $fromCount) { $dirtyOk = $false }
+    }
+    if ($dirtySeen -eq 0 -or -not $dirtyOk) { $rrWhy += "RetryRead does not set _dirty from 'the waypoints queued before the merge > 0' (a merged route would not be saved)" }
+    # m1: in Load and RetryRead, the branch on ReadRoute's result: its false edge records the failed read before any
+    # ret, and its true edge does not.
+    foreach ($bm in @(@("Load", $null), @("RetryRead", $rri))) {
+        $meth = $bm[1]
+        if (-not $meth) { $meth = $wmType.Methods | Where-Object { $_.Name -eq $bm[0] -and $_.HasBody } | Select-Object -First 1 }
+        if (-not $meth) { $rrWhy += ("WaypointManager.{0} not found" -f $bm[0]); continue }
+        $bi = @($meth.Body.Instructions)
+        $rc = @(); for ($k = 0; $k -lt $bi.Count; $k++) { if ($bi[$k].OpCode.Name -like "call*" -and $bi[$k].Operand -is [Mono.Cecil.MethodReference] -and $bi[$k].Operand.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and $bi[$k].Operand.Name -eq "ReadRoute") { $rc += $k } }
+        if ($rc.Count -ne 1 -or "$($bi[$rc[0] + 1].OpCode.FlowControl)" -ne "Cond_Branch") { $rrWhy += ("WaypointManager.{0} does not branch at once on one call to ReadRoute" -f $bm[0]); continue }
+        $cb = $bi[$rc[0] + 1]; $target = [array]::IndexOf($bi, $cb.Operand); $fall = $rc[0] + 2
+        if ($cb.OpCode.Name -like "brfalse*") { $falseAt = $target; $trueAt = $fall } else { $falseAt = $fall; $trueAt = $target }
+        $edge = @{}
+        foreach ($pair in @(@("false", $falseAt), @("true", $trueAt))) {
+            $calls = $false
+            for ($k = $pair[1]; $k -ge 0 -and $k -lt $bi.Count; $k++) {
+                $x = $bi[$k]
+                if ($x.OpCode.Name -like "call*" -and $x.Operand -is [Mono.Cecil.MethodReference] -and $x.Operand.DeclaringType.FullName -eq "Waypointer.RouteReadGate" -and $x.Operand.Name -eq "Failed") { $calls = $true; break }
+                if ($x.OpCode.Name -eq "ret" -or "$($x.OpCode.FlowControl)" -eq "Branch") { break }
+            }
+            $edge[$pair[0]] = $calls
+        }
+        if (-not $edge["false"] -or $edge["true"]) { $rrWhy += ("WaypointManager.{0} does not record a failed read exactly when ReadRoute returns false" -f $bm[0]) }
+    }
     $rdi = @($rdr.Body.Instructions); $catches = 0
     foreach ($h in $rdr.Body.ExceptionHandlers) {
         if ("$($h.HandlerType)" -ne "Catch") { continue }
@@ -757,7 +800,7 @@ foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
     }
 } }
 if ($writeSites.Count -ne 1 -or $writeSites[0] -ne "WaypointManager.SaveIfDirty") { $rrWhy += ("SafeFile.WriteAllText must be called only from WaypointManager.SaveIfDirty; called from: {0}" -f ($writeSites -join ", ")) }
-if ($rrWhy.Count -eq 0) { Write-Output "  ok    a route that could not be read is not saved over (SaveIfDirty returns while RouteReadGate.Pending; Load and RetryRead record the failure, RetryRead returns then, ReadRoute's catch returns false, NotRead when PersistWaypoints is off, a merge is saved)" }
+if ($rrWhy.Count -eq 0) { Write-Output "  ok    a route that could not be read is not saved over (SaveIfDirty returns while RouteReadGate.Pending; Load and RetryRead record the failure, RetryRead returns then, only on ReadRoute's false branch; ReadRoute's catch returns false; NotRead is called; _dirty is set from the count queued before the merge)" }
 else { foreach ($w in $rrWhy) { Write-Output "  FAIL  $w" }; $failures++ }
 
 Write-Output ""
@@ -1310,7 +1353,7 @@ else {
 if ($c13.Count -eq 0) { Write-Output "  ok    the server's known-empty drop is wired: KnownEmptyApplies(OnServer, CheckChests, Query) gates it, and it uses the zone set NoteObject fills" }
 else { foreach ($p in $c13) { Write-Output "  FAIL  13c: $p" }; $failures++ }
 
-# 13d (1.4.1): Find leaves out what a player placed or spawned. SearchJob's Scan iterator calls SearchRules.WorldMade
+# 13d (1.4.1): Find leaves out an object a player placed or spawned with `spawn`. SearchJob's Scan iterator calls SearchRules.WorldMade
 # once, with ZDO.GetLong(ZDOVars.s_creator, 0) and ZDO.GetBool(ZDOVars.s_cheated, false), and its false result skips the
 # object (a brfalse to where NoteObject's false result goes), before NoteObject (so a spawned nest neither lists nor
 # counts for its place).
@@ -1353,8 +1396,76 @@ else {
         if ($nob.Count -eq 1 -and $nob[0] -lt $wm[0]) { $d13 += "WorldMade is called after NoteObject (a console-spawned nest would count for its place)" }
     }
 }
-if ($d13.Count -eq 0) { Write-Output "  ok    Find leaves out what a player placed or spawned: SearchRules.WorldMade(creator, cheated) is checked before an object counts" }
+if ($d13.Count -eq 0) { Write-Output "  ok    Find leaves out an object a player placed or spawned with spawn: SearchRules.WorldMade(creator, cheated) is checked before an object counts" }
 else { foreach ($p in $d13) { Write-Output "  FAIL  13d: $p" }; $failures++ }
+
+# 16 (1.5.0): Wayfinder places a waypoint from a map click only on explored land. In
+# Minimap_OnMapLeftClick_Patch.HandleWaypointClick it calls MinimapAccess.IsExplored once, branches on the result at once,
+# before its single call to WaypointManager.Add, and on the same local (the click's world position) that Add is given.
+# TomTom's does not call it there.
+$checks++
+$f16 = @()
+$mlc = $plug.GetType("Waypointer.Minimap_OnMapLeftClick_Patch")
+$hwc = $null; if ($mlc) { $hwc = $mlc.Methods | Where-Object { $_.Name -eq "HandleWaypointClick" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $hwc) { $f16 += "Minimap_OnMapLeftClick_Patch.HandleWaypointClick not found" }
+else {
+    $hi = @($hwc.Body.Instructions); $hh = $hwc.Body.ExceptionHandlers
+    $ie = Find-Calls $hi "Waypointer.MinimapAccess" "IsExplored"
+    $ad = Find-Calls $hi "Waypointer.WaypointManager" "Add"
+    if ($Edition -eq "TomTom") {
+        if ($ie.Count -ne 0) { $f16 += "TomTom's map click reads MinimapAccess.IsExplored - the fog rule belongs to Wayfinder" }
+    }
+    elseif ($ie.Count -ne 1 -or $ad.Count -ne 1) { $f16 += ("HandleWaypointClick calls MinimapAccess.IsExplored {0}x and WaypointManager.Add {1}x; expected once each" -f $ie.Count, $ad.Count) }
+    else {
+        if ("$($hi[$ie[0] + 1].OpCode.FlowControl)" -ne "Cond_Branch") { $f16 += "IsExplored's result is not branched on right after the call" }
+        if ($ie[0] -gt $ad[0]) { $f16 += "IsExplored is called after WaypointManager.Add" }
+        $ea = Get-CallArgs $hi $ie[0] $hh; $aa = Get-CallArgs $hi $ad[0] $hh
+        $el = -1; $al = -2
+        if ($ea -and $hi[$ea[0]].OpCode.Name -like "ldloc*") { $el = Get-LocalIndex $hi[$ea[0]] }
+        if ($aa -and $hi[$aa[0]].OpCode.Name -like "ldloc*") { $al = Get-LocalIndex $hi[$aa[0]] }
+        if ($el -lt 0 -or $el -ne $al) { $f16 += "IsExplored is not given the same local (the click's position) as WaypointManager.Add" }
+    }
+}
+if ($f16.Count -eq 0) { Write-Output ("  ok    {0}" -f $(if ($Edition -eq "TomTom") { "TomTom's map click places a waypoint anywhere (does not read MinimapAccess.IsExplored)" } else { "Wayfinder's map click places a waypoint only where MinimapAccess.IsExplored says the map is explored" })) }
+else { foreach ($p in $f16) { Write-Output "  FAIL  16: $p" }; $failures++ }
+
+# 17 (1.5.0): every code path that makes a waypoint is a known one. WaypointManager.Add, AddFromPin, AddMany and AddRange
+# are called only from the methods listed here, and a Waypoint is constructed only in WaypointManager's Add, AddMany,
+# AddFromPin and FromEntry. A new path must be added here, with a check of what it may create.
+$checks++
+$g17 = @()
+$allowed17 = @{
+    "Add" = @("Waypointer.Minimap_OnMapLeftClick_Patch::HandleWaypointClick", "Waypointer.WaypointWindow::AddHere", "Waypointer.Terminal_InitTerminal_Patch::AddHere")
+    "AddFromPin" = @("Waypointer.Minimap_OnMapLeftClick_Patch::HandleWaypointClick")
+    "AddMany" = @("Waypointer.LocationSearch::Finish")
+    "AddRange" = @()
+}
+if ($Edition -eq "TomTom") {
+    $allowed17["Add"] += @("Waypointer.WaypointManager::AddRange", "Waypointer.Terminal_InitTerminal_Patch::AddFromArgs")
+    $allowed17["AddRange"] = @("Waypointer.WaypointWindow::ApplyInput")
+}
+$ctorAllowed17 = @("Waypointer.WaypointManager::Add", "Waypointer.WaypointManager::AddMany", "Waypointer.WaypointManager::AddFromPin", "Waypointer.WaypointManager::FromEntry")
+function Get-TypesDeep17($t) { $t; foreach ($n in $t.NestedTypes) { Get-TypesDeep17 $n } }
+$sites17 = @()
+foreach ($t in @($plug.Types | ForEach-Object { Get-TypesDeep17 $_ })) {
+    foreach ($m in $t.Methods) {
+        if (-not $m.HasBody) { continue }
+        $site = "{0}::{1}" -f $t.FullName, $m.Name
+        foreach ($i in $m.Body.Instructions) {
+            $o = $i.Operand
+            if (-not ($o -is [Mono.Cecil.MethodReference])) { continue }
+            if ($i.OpCode.Name -like "call*" -and $o.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and $allowed17.ContainsKey($o.Name)) {
+                if ($allowed17[$o.Name] -notcontains $site) { $sites17 += ("WaypointManager.{0} is called from {1}, not a known place to make a waypoint" -f $o.Name, $site) }
+            }
+            if ($i.OpCode.Name -eq "newobj" -and $o.DeclaringType.FullName -eq "Waypointer.Waypoint") {
+                if ($ctorAllowed17 -notcontains $site) { $sites17 += ("a Waypoint is constructed in {0}, outside WaypointManager's Add, AddMany, AddFromPin and FromEntry" -f $site) }
+            }
+        }
+    }
+}
+$g17 = @($sites17 | Select-Object -Unique)
+if ($g17.Count -eq 0) { Write-Output "  ok    every code path that makes a waypoint is a known one (WaypointManager.Add, AddFromPin, AddMany, AddRange and the Waypoint constructor)" }
+else { foreach ($p in $g17) { Write-Output "  FAIL  17: $p" }; $failures++ }
 
 Write-Output ""
 Write-Output "== the server side =="

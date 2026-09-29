@@ -39,6 +39,7 @@
     <Compile Include="..\src\FindProtocol.cs" />
     <Compile Include="..\src\CaptionFit.cs" />
     <Compile Include="..\src\RouteRead.cs" />
+    <Compile Include="..\src\ArrivalRules.cs" />
   </ItemGroup>
 
 </Project>

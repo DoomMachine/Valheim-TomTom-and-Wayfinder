@@ -111,7 +111,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 248 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
+./run-tests.sh                                                         # 292 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Valheim"   # a game folder elsewhere
@@ -139,10 +139,10 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   method's one `FileStream` may open a file for writing (whether the drive honours the flush is beyond any
   check); and a route that could not be read must not be saved over: `WaypointManager.SaveIfDirty` must ask
   `RouteReadGate.Pending` before `SafeFile.WriteAllText` and return while it is true, `Load` and `RetryRead` must
-  record a failed read (and `RetryRead` return right after it), `ReadRoute`'s catch must return false,
-  `LoadForCurrentWorldIfNeeded` must mark the route not read when `PersistWaypoints` is off, `RetryRead` must set
-  `_dirty` from whether anything was queued meanwhile, and `SaveIfDirty` must be the only caller of
-  `SafeFile.WriteAllText`
+  record a failed read on the branch where `ReadRoute` returned false (and `RetryRead` return right after it),
+  `ReadRoute`'s catch must return false, `LoadForCurrentWorldIfNeeded` must call `RouteReadGate.NotRead` (that it sits
+  on the `PersistWaypoints`-off path is not checked), `RetryRead` must set `_dirty` from the count of waypoints queued
+  before the merge being above 0, and `SaveIfDirty` must be the only caller of `SafeFile.WriteAllText`
 - a key the player chooses could stop the waypoint tick: Valheim throws on every read of 30 of the keys
   BepInEx offers, so every configurable key must be read through `Hotkeys`, whose reads are caught (and not
   rethrown), a hard-coded key must be one the game can read (the 30 are worked out from the game itself),
@@ -168,6 +168,13 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   the known-empty drop with `SearchRules.KnownEmptyApplies(OnServer, CheckChests, Query)` and give it the zone set
   `SearchRules.NoteObject` fills; and it must check `SearchRules.WorldMade` (the object's creator and cheat flag,
   read with the defaults 0 and false) before an object counts, skipping the object when it is false
+- a waypoint could be made by a code path nobody checked: `WaypointManager.Add`, `AddFromPin`, `AddMany` and
+  `AddRange` may be called only from the known places (the map click, the window's and the console's own-position
+  and typed entries, Find), and a `Waypoint` may be constructed only in `WaypointManager`'s own `Add`, `AddMany`,
+  `AddFromPin` and `FromEntry`
+- Wayfinder's map click places a waypoint without asking `MinimapAccess.IsExplored` first (once, branching on the
+  result at once, with the click's own position, before `WaypointManager.Add`) - and, conversely, TomTom's map click
+  asks it
 - a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
   and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
   each checked by the literal name the call sends
@@ -272,10 +279,26 @@ Run it after every Valheim update.
   leaves out a place whose zone it has generated with no nest left in it (`SearchRules.DropPlacesKnownEmpty`, from
   the zones of every nest it read, in range or not). These decisions are Unity-free, so the tests check their
   order and rules; preflight checks what the game code hands them. An object is left out when a player placed it
-  through the build system (`s_creator`) or spawned it with the console's `spawn` or `location` command
-  (`s_cheated`) (`SearchRules.WorldMade`); the console's `vegetation` command marks neither, so what it makes
-  counts. The rock Find keeps its key, `Mysterious Rock`, which servers look a Find up by, and shows the game's own
+  through the build system (`s_creator`) or spawned it with the console's `spawn` command (`s_cheated`)
+  (`SearchRules.WorldMade`). The `location` command marks only a place's own objects, not the rooms its generator
+  adds (a nest in an Abandoned Village or Draugr Village room counts), and the `vegetation` command marks nothing, so
+  what they make counts. The rock Find keeps its key, `Mysterious Rock`, which servers look a Find up by, and shows the game's own
   name, Rock (`SearchQuery.Title`); the game's "Mysterious Rock" is the pet rock a player builds, never listed.
+  The Wooden Greatsword's Infested Mines keep their chests in treasure rooms the generator builds about 5000 m above
+  the entrance but inside the entrance's own 64 m zone, so the chest check's horizontal 64 m covers them.
+- **The 3D arrival test** (`Use3DDistance`) measures a waypoint that has a height of its own at that height. One
+  without (a map click, two typed numbers, a pin placed on the map) and a place Find found - whose height is the world
+  generator's estimate, before the terrain is built and levelled, and more than 10 m off the ground at about 1% of
+  places - is measured at the loaded ground under it (`Heightmap.GetHeight`, terrain edits included; the rule is the
+  Unity-free `ArrivalRules`), and horizontally over water or where the ground is not loaded. Only arrival is affected:
+  nothing is stored, and TomTom's readout is unchanged. A Find place's height is saved as `2` in the route file's
+  hasElevation column, which a plugin before 1.5.0 reads as no height.
+- **TomTom reads the game's `pos` console line** (Valheim's `Player position (X,Y,Z): ...` and Server Devcommands'
+  `(X,Z,Y)`) in the axis order its header names, before the digit-grouping checks its zone and distance would trip;
+  only inside its vector, whose values both write with `", "` between them, is a decimal comma read.
+- **Wayfinder's map click places a waypoint only on explored land** (`MinimapAccess.IsExplored`, as Find uses): a
+  click in the fog is consumed and does nothing, with no message. Removing a marker and following a pin work
+  anywhere.
 - **Find needs nothing beyond BepInEx and the running game; it does not use SeedLab.** Every result comes
   from the game as it runs: the location list (as the host) or the server's answers (when joining), the world
   objects the game has loaded, and the chests' saved contents. What is fixed in the plugin is the catalogue
@@ -304,6 +327,25 @@ Run it after every Valheim update.
   for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
 
 ## History
+
+**1.5.0** — Find: the Wooden Greatsword; `pos` lines; arrival on the ground; Wayfinder clicks only on explored land.
+
+- new: Find looks for the **Wooden Greatsword**, in the chests of the six kinds of Mistlands place Valheim 1.0.16's
+  own data lists: the two kinds of Infested Mine (their treasure rooms, built high above the entrance - the waypoint
+  is the entrance), three kinds of ruined Dvergr tower and the rock spire. The game names only the mines; the others
+  are "Ruined Dvergr Tower" and "Rock Spire" here
+- new (TomTom): the game's `pos` console line can be pasted whole - Valheim's and Server Devcommands' - and is read
+  in the axis order its header names, a decimal comma in its values included
+- new: with `Use3DDistance` on, a waypoint without a height of its own (a map click, two typed numbers, a pin placed
+  on the map) and a place Find found are measured at the ground under them once it is loaded near the player, and
+  stay horizontal over water; before, such a waypoint was always horizontal, and a Find place's generator height could
+  sit more than 10 m from the real ground
+- new (Wayfinder): a map click places a waypoint only on land the map shows as explored; a click in the fog does
+  nothing. Removing a marker and following a pin work anywhere
+- refactored: the arrow's caption cache (`CaptionCache`, `CaptionWidth`) and the route file's reader and writer
+  (`RouteFile`) are Unity-free, so the tests reach them
+- 44 new tests (248 → 292), and preflight checks that every code path making a waypoint is a known one and Wayfinder's
+  fog rule for a map click (59 → 61 checks per edition)
 
 **1.4.1** — fixes: an unreadable saved route is never overwritten, rocks have their own name, safer coordinate input.
 

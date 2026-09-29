@@ -123,6 +123,22 @@ namespace Waypointer
                         T("Hildir_plainsfortress", "Sealed Tower")
                     }, null,
                     new[] { "AtgeirWood" }),
+                // The Wooden Greatsword (THSwordWood) is in two loot tables: the Dvergr treasure chest of three ruined
+                // Mistlands guard towers and of the rock spire (TreasureChest_dvergrtower; the spire's sits on its top),
+                // and the one in an Infested Mine's treasure rooms (TreasureChest_dvergrtown in dvergr_room_TREASURE and
+                // _TREASURE2, which only the mines' generators build). A mine's rooms stand about 5000 m above its entrance
+                // but inside the entrance's own 64 m zone - the entrance is placed at its zone's centre (its radius 32
+                // leaves no room to move) and the generator keeps every room it tests inside that zone
+                // (DungeonGenerator.IsInsideDungeon) - so their chests are within 45.3 m horizontally: the usual 64 m.
+                // The game names the mines only; the towers and the spire have no name of their own.
+                new SearchQuery("Wooden Greatsword",
+                    new[]
+                    {
+                        T("Mistlands_DvergrTownEntrance1", "Infested Mine"), T("Mistlands_DvergrTownEntrance2", "Infested Mine"),
+                        T("Mistlands_GuardTower1_ruined_new", "Ruined Dvergr Tower"), T("Mistlands_GuardTower1_ruined_new2", "Ruined Dvergr Tower"),
+                        T("Mistlands_GuardTower3_ruined_new", "Ruined Dvergr Tower"), T("Mistlands_RockSpire1", "Rock Spire")
+                    }, null,
+                    new[] { "THSwordWood" }),
                 new SearchQuery("Curious Axe Head",
                     new[] { T("WoodHouse6", "Abandoned House") }, null,
                     new[] { "AxeHead1" }),
@@ -167,7 +183,9 @@ namespace Waypointer
         /// of 64 m. That is generous: the generator keeps every room it tests inside its zone
         /// (DungeonGenerator.IsInsideDungeon), about 48 m from the centre at most, and the ones it does not test (a
         /// dungeon's start room, zero-depth end caps) sit at the centre or attach to tested rooms. A neighbour's chest in
-        /// reach can never drop a place whose own chest still holds, or may still hold, the item.
+        /// reach can never drop a place whose own chest still holds, or may still hold, the item. Not the Infested
+        /// Mines: their generator builds rooms high above the entrance but inside the entrance's own 64 m zone, so their
+        /// chests are within 45.3 m.
         /// </summary>
         public static readonly string[] WideLocations = { "WoodVillage1", "WoodVillage2", "GoblinCamp2", "GoblinCamp2_1", "Hildir_plainsfortress" };
 

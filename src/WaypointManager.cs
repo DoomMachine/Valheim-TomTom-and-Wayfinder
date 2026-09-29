@@ -19,6 +19,13 @@ namespace Waypointer
         public bool HasElevation;
 
         /// <summary>
+        /// The altitude is the world generator's estimate, not a measured one: a place Find found (its location's
+        /// height before the terrain is built and levelled). The 3D arrival test measures such a waypoint at the loaded
+        /// ground instead (ArrivalRules). Saved as hasElevation 2.
+        /// </summary>
+        public bool HeightIsEstimate;
+
+        /// <summary>
         /// Persisted intent: true when the waypoint follows a pin that was already on the map (the
         /// player's own, one shared through a Cartography Table, or a vanilla marker such as the bed
         /// spawn point) rather than having a marker of its own. That pin is never modified or removed
@@ -173,7 +180,7 @@ namespace Waypointer
         /// the end (a search can queue dozens). With replace, the queue is cleared first - only when there is
         /// something to put in its place, so a search that finds nothing leaves the queue alone.
         /// </summary>
-        public static int AddMany(List<Vector3> positions, List<string> names, bool replace)
+        public static int AddMany(List<Vector3> positions, List<string> names, List<bool> heightIsEstimate, bool replace)
         {
             if (positions == null || positions.Count == 0) return 0;
             if (replace) Clear();
@@ -184,6 +191,7 @@ namespace Waypointer
                 wp.Name = name == null ? "" : name.Trim();
                 wp.Pos = positions[i];
                 wp.HasElevation = true;
+                wp.HeightIsEstimate = heightIsEstimate != null && i < heightIsEstimate.Count && heightIsEstimate[i];
                 wp.Borrowed = false;
                 _queue.Add(wp);
             }
@@ -426,8 +434,39 @@ namespace Waypointer
         /// </summary>
         private static Vector3 ResolveAltitude(Waypoint wp, Vector3 playerPos)
         {
-            if (wp.HasElevation) return wp.Pos;
-            return new Vector3(wp.Pos.x, playerPos.y, wp.Pos.z);
+            if (wp.HasElevation && !wp.HeightIsEstimate) return wp.Pos;
+            float ground;
+            bool known = TryLoadedGroundHeight(wp.Pos, out ground);
+            float water = ZoneSystem.instance != null ? ZoneSystem.instance.m_waterLevel : 30f;
+            float y = ArrivalRules.TargetAltitude(wp.HasElevation, wp.HeightIsEstimate, wp.Pos.y, known, ground, water, playerPos.y);
+            return new Vector3(wp.Pos.x, y, wp.Pos.z);
+        }
+
+        private static bool _groundWarned;
+
+        /// <summary>
+        /// The built terrain's height under a point where its zone is loaded near the player (Heightmap.GetHeight: the
+        /// loaded heightmaps, terrain edits included; false where none covers the point). No numbers are logged:
+        /// Wayfinder shows none.
+        /// </summary>
+        private static bool TryLoadedGroundHeight(Vector3 pos, out float height)
+        {
+            height = 0f;
+            try
+            {
+                return Heightmap.GetHeight(pos, out height);
+            }
+            catch (Exception e)
+            {
+                // A heightmap joins the list before its heights are filled; never let that stop the tick.
+                if (!_groundWarned)
+                {
+                    _groundWarned = true;
+                    Plugin.Log.LogWarning("Ground height unavailable: " + e.Message);
+                }
+                height = 0f;
+                return false;
+            }
         }
 
         private static void UpdateSpeedEstimate(float distance)
@@ -735,46 +774,8 @@ namespace Waypointer
                 string[] lines = File.ReadAllLines(readPath);
                 for (int i = 0; i < lines.Length; i++)
                 {
-                    string line = lines[i].Trim();
-                    if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
-
-                    // x|altitude|z|hasElevation|ownsMarker|name   (older files omit ownsMarker)
-                    string[] parts = line.Split('|');
-                    if (parts.Length < 4) continue;
-
-                    float x, y, z;
-                    if (!float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out x)) continue;
-                    if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out y)) continue;
-                    if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out z)) continue;
-
-                    // "NaN" and "Infinity" parse as floats; a position that is not a real place is skipped
-                    // like any other unreadable line (CoordinateParser refuses them for the same reason).
-                    if (!IsFinite(x) || !IsFinite(z)) continue;
-
-                    bool hasElev = parts[3].Trim() == "1";
-                    if (!IsFinite(y)) { y = 0f; hasElev = false; }   // altitude unusable: treat as not given
-
-                    bool owns = true;
-                    string name = "";
-                    if (parts.Length >= 6)
-                    {
-                        owns = parts[4].Trim() != "0";   // only an explicit 0 means "follows a player's pin"
-                        name = parts[5];
-                    }
-                    else if (parts.Length == 5)
-                    {
-                        name = parts[4];
-                    }
-
-                    Waypoint wp = new Waypoint();
-                    wp.Name = name;
-                    wp.Pos = new Vector3(x, y, z);
-                    wp.HasElevation = hasElev;
-                    // The file's ownsMarker column records intent: 0 means the waypoint follows one of
-                    // the player's pins, and EnsurePins finds that pin again rather than adding a marker.
-                    wp.Borrowed = !owns;
-                    wp.OwnsPin = false;
-                    into.Add(wp);
+                    RouteEntry entry;
+                    if (RouteFile.TryParseLine(lines[i], out entry)) into.Add(FromEntry(entry));
                 }
                 return true;
             }
@@ -829,10 +830,26 @@ namespace Waypointer
         private static RouteEntry ToEntry(Waypoint wp)
         {
             RouteEntry e = new RouteEntry();
-            e.X = wp.Pos.x; e.Z = wp.Pos.z;
+            e.X = wp.Pos.x; e.Y = wp.Pos.y; e.Z = wp.Pos.z;
+            e.HasElevation = wp.HasElevation;
+            e.HeightIsEstimate = wp.HeightIsEstimate;
             e.Borrowed = wp.Borrowed;
             e.Name = wp.Name;
             return e;
+        }
+
+        private static Waypoint FromEntry(RouteEntry e)
+        {
+            Waypoint wp = new Waypoint();
+            wp.Name = e.Name;
+            wp.Pos = new Vector3(e.X, e.Y, e.Z);
+            wp.HasElevation = e.HasElevation;
+            wp.HeightIsEstimate = e.HeightIsEstimate;
+            // The file's ownsMarker column records intent: a followed pin is found again by EnsurePins rather than
+            // getting a marker of its own.
+            wp.Borrowed = e.Borrowed;
+            wp.OwnsPin = false;
+            return wp;
         }
 
         public static void SaveIfDirty()
@@ -861,18 +878,8 @@ namespace Waypointer
             {
                 Directory.CreateDirectory(SaveDirectory());
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("# " + Edition.Name + " queue - x|altitude|z|hasElevation|ownsMarker|name");
-                for (int i = 0; i < _queue.Count; i++)
-                {
-                    Waypoint wp = _queue[i];
-                    // ownsMarker records intent (Borrowed), never the runtime stand-in state, so a
-                    // followed pin that was briefly missing is still followed after the next load.
-                    sb.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0}|{1}|{2}|{3}|{4}|{5}",
-                        wp.Pos.x, wp.Pos.y, wp.Pos.z,
-                        wp.HasElevation ? "1" : "0",
-                        wp.Borrowed ? "0" : "1",
-                        SanitizeName(wp.Name)));
-                }
+                sb.AppendLine(RouteFile.Header(Edition.Name));
+                for (int i = 0; i < _queue.Count; i++) sb.AppendLine(RouteFile.FormatLine(ToEntry(_queue[i])));
                 SafeFile.WriteAllText(SavePath(_loadedWorldUid), sb.ToString());
                 _dirty = false;
                 if (_saveFailures > 0)
@@ -912,13 +919,5 @@ namespace Waypointer
                         + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + "; the last change is lost.");
         }
 
-        private static bool IsFinite(float v) { return !float.IsNaN(v) && !float.IsInfinity(v); }
-
-        /// <summary>One waypoint per line, '|'-separated: a name must not contain either separator.</summary>
-        private static string SanitizeName(string name)
-        {
-            if (string.IsNullOrEmpty(name)) return "";
-            return name.Replace('|', ' ').Replace('\r', ' ').Replace('\n', ' ');
-        }
     }
 }

@@ -236,7 +236,7 @@ namespace Waypointer
         {
             GUILayout.Label("Setting a waypoint", _headerStyle);
             GUILayout.Label(ModifierHint("Open the world map and hold ", " while you click:\n"
-                + "  - an empty spot to place a waypoint there\n"
+                + "  - an explored spot to place a waypoint there\n"
                 + "  - one of your own markers to follow it\n"
                 + "  - a waypoint marker to remove it"), _smallStyle);
         }

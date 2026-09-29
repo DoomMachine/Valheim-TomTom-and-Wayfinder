@@ -226,10 +226,10 @@ namespace Waypointer
                     "How close you must get, in metres, before a waypoint counts as reached.",
                     new AcceptableValueRange<float>(1f, 100f)));
             Use3DDistance = Config.Bind("2 - Behaviour", "Use3DDistance", false,
-                "Off by default: arrival is measured on the horizontal plane, which is what you want " +
-                "when no elevation was supplied. Turn on to include altitude in the distance, for waypoints whose " +
-                "height is known; a waypoint clicked on open ground on the map has none, so it is still measured on the " +
-                "horizontal plane.");
+                "Off by default: arrival is measured on the horizontal plane. Turn on to include altitude: a waypoint " +
+                "with a height of its own (typed, your own position, an object Find found) uses it; one without (a map " +
+                "click on open ground, two typed numbers, a pin placed on the map), and a place Find found, uses the ground under it " +
+                "once that ground is loaded near you. Over water it stays horizontal.");
 #if !WAYFINDER
             RawValheimOrder = Config.Bind("2 - Behaviour", "InputIsRawValheimXYZ", false,
                 "Off (default): you type X, Y and an optional third value that means ELEVATION. " +

@@ -239,10 +239,10 @@ namespace Waypointer
 
         /// <summary>
         /// Whether a world object counts: it was not placed through the build system (Piece.SetCreator writes
-        /// ZDOVars.s_creator - the way mods make a pickable buildable) and not spawned with the console's spawn or
-        /// location command (they set ZDOVars.s_cheated). World generation sets neither - nor does the console's
-        /// vegetation command, whose objects cannot be told from the world's. Player IDs can be negative, so the test is
-        /// != 0.
+        /// ZDOVars.s_creator - the way mods make a pickable buildable) and not spawned with the console's spawn command
+        /// (it sets ZDOVars.s_cheated). World generation sets neither; nor does the vegetation command, nor the location
+        /// command for the rooms a place's generator adds (it flags only the place's own objects), so what they make
+        /// cannot be told from the world's. Player IDs can be negative, so the test is != 0.
         /// </summary>
         public static bool WorldMade(long creator, bool cheated)
         {

@@ -500,13 +500,16 @@ namespace Waypointer
                 int[] order = RoutePlanner.Plan(_origin.x, _origin.z, xs, zs, n, cap, RouteBudgetMs);
                 List<Vector3> positions = new List<Vector3>(order.Length);
                 List<string> names = new List<string>(order.Length);
+                // A place's height is the world generator's estimate; an object's (a rock, a nest) is where it stands.
+                List<bool> estimates = new List<bool>(order.Length);
                 for (int i = 0; i < order.Length; i++)
                 {
                     SearchHit h = _hits[order[i]];
                     positions.Add(new Vector3(h.X, h.Y, h.Z));
                     names.Add(SearchRules.WaypointName(h, _query));
+                    estimates.Add(!h.IsObject);
                 }
-                placed = WaypointManager.AddMany(positions, names, _replace);
+                placed = WaypointManager.AddMany(positions, names, estimates, _replace);
             }
 
 #if !WAYFINDER

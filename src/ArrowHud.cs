@@ -108,8 +108,10 @@ namespace Waypointer
             // ("Abandoned House (Mysterious Axe Head)  (2 left)" once was) or pushed away from the arrow.
             if (Plugin.ShowWaypointName.Value)
             {
+                // The outline draws the text one pixel either side, hence the 2 px kept free.
+                float max = Mathf.Max(0f, Screen.width - 2f * CaptionMargin - 2f);
                 float nameWidth;
-                string name = FittedName(wp, out nameWidth);
+                string name = _captions.FittedName(wp.DisplayName, WaypointManager.Queue.Count, max, out nameWidth);
                 DrawOutlinedLabel(CaptionRect(centre, y, nameWidth), name, Color.white);
                 y += 20f;
             }
@@ -117,7 +119,7 @@ namespace Waypointer
             if (Plugin.ShowDistance.Value)
             {
                 string text = DistanceCaption(distance);
-                DrawOutlinedLabel(CaptionRect(centre, y, TextWidth(text, ref _distanceWidthFor, ref _distanceWidth)), text,
+                DrawOutlinedLabel(CaptionRect(centre, y, _distanceWidth.Of(text, _measureFn)), text,
                     new Color(0.88f, 0.88f, 0.88f, 1f));
                 y += 20f;
             }
@@ -126,27 +128,9 @@ namespace Waypointer
             {
                 string eta = FormatEta(distance, WaypointManager.SmoothedSpeed);
                 if (eta != null)
-                    DrawOutlinedLabel(CaptionRect(centre, y, TextWidth(eta, ref _etaWidthFor, ref _etaWidth)), eta,
+                    DrawOutlinedLabel(CaptionRect(centre, y, _etaWidth.Of(eta, _measureFn)), eta,
                         new Color(0.75f, 0.75f, 0.75f, 1f));
             }
-        }
-
-        // The distance and ETA captions' widths, measured only when their text changes (DistanceCaption and FormatEta
-        // hand back the same string until the shown value changes).
-        private static string _distanceWidthFor, _etaWidthFor;
-        private static float _distanceWidth, _etaWidth;
-
-        private static float TextWidth(string text, ref string measuredFor, ref float width)
-        {
-            // string.Equals, not ReferenceEquals: the same text built again (near a rounding boundary) is not re-measured.
-            if (!string.Equals(text, measuredFor))
-            {
-                // The outline draws the text one pixel either side. The key is set only once measured, so a measure
-                // that throws is tried again next frame instead of leaving the old width in place.
-                width = MeasureCaption(text) + 2f;
-                measuredFor = text;
-            }
-            return width;
         }
 
         /// <summary>
@@ -300,70 +284,23 @@ namespace Waypointer
 
         // Captions are drawn every frame but change far less often; each is rebuilt only when the text
         // it shows would change, which removes a string.Format (and its boxing) per caption per frame.
-        private static string _nameCaption, _nameSource;
-        private static int _nameCount = -1;
         private static string _distanceCaption;
         private static int _distanceKey = int.MinValue;
         private static string _etaCaption;
         private static int _etaKey = int.MinValue;
 
-        // The name caption as drawn, fitted to the screen width (CaptionFit), with its width. Measured only when the
-        // caption or the screen width changes - NameCaption hands back the same string until the name or the queue
-        // count changes - so a frame costs no measuring.
+        // The captions' text and box widths, built and measured only when they change (CaptionCache and CaptionWidth,
+        // Unity-free and tested), so a frame costs no measuring. The measure is cached by hand (C# 5).
         private static readonly GUIContent _measure = new GUIContent();
         private static readonly Func<string, float> _measureFn = MeasureCaption;
-        private static string _fitSource;
-        private static float _fitMaxWidth = -1f;
-        private static string _fitText;
-        private static float _fitWidth;
-
-        private static string FittedName(Waypoint wp, out float width)
-        {
-            string caption = NameCaption(wp);
-            // The outline draws the text one pixel either side, hence the 2 px kept free.
-            float max = Mathf.Max(0f, Screen.width - 2f * CaptionMargin - 2f);
-            // string.Equals, not ReferenceEquals: a name whose translation comes back as a new string on every call (one
-            // that is empty or holds MISSING KEY, which Localization does not cache) is otherwise re-measured every frame.
-            if (!string.Equals(caption, _fitSource) || max != _fitMaxWidth || _fitText == null)
-            {
-                // Measured into locals and remembered last: a measure that throws leaves the cache stale, so the next
-                // frame measures again instead of drawing the old caption until the text changes.
-                string text;
-                if (MeasureCaption(caption) <= max) text = caption;
-                else
-                {
-                    int count = WaypointManager.Queue.Count;
-                    string suffix = count > 1 ? string.Format(CultureInfo.InvariantCulture, "  ({0} left)", count) : "";
-                    text = CaptionFit.Fit(wp.DisplayName, suffix, max, _measureFn);
-                }
-                float fitted = MeasureCaption(text) + 2f;
-                _fitText = text;
-                _fitWidth = fitted;
-                _fitSource = caption;
-                _fitMaxWidth = max;
-            }
-            width = _fitWidth;
-            return _fitText;
-        }
+        private static readonly CaptionCache _captions = new CaptionCache(_measureFn);
+        private static readonly CaptionWidth _distanceWidth = new CaptionWidth();
+        private static readonly CaptionWidth _etaWidth = new CaptionWidth();
 
         private static float MeasureCaption(string text)
         {
             _measure.text = text;
             return _labelStyle.CalcSize(_measure).x;
-        }
-
-        private static string NameCaption(Waypoint wp)
-        {
-            string name = wp.DisplayName;
-            int count = WaypointManager.Queue.Count;
-            if (count <= 1) return name;
-            if (!string.Equals(name, _nameSource) || count != _nameCount || _nameCaption == null)
-            {
-                _nameSource = name;
-                _nameCount = count;
-                _nameCaption = name + string.Format(CultureInfo.InvariantCulture, "  ({0} left)", count);
-            }
-            return _nameCaption;
         }
 
         /// <summary>

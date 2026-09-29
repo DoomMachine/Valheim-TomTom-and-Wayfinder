@@ -220,6 +220,8 @@ namespace Waypointer
                                     ObjectsRead++;
                                     if (zdo == null || !zdo.IsValid() || !_lootChestPrefabs.Contains(zdo.GetPrefab())) continue;
                                     Vector3 p = zdo.GetPosition();
+                                    // Horizontal on purpose: an Infested Mine's chests stand about 5000 m above its
+                                    // entrance, in the rooms its generator builds.
                                     float dx = p.x - hit.X, dz = p.z - hit.Z;
                                     if (dx * dx + dz * dz > radius * radius) continue;
                                     chests++;

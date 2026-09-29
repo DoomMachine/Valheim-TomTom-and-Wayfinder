@@ -4,11 +4,11 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.4.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.5.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
-places you have marked on your own map, are standing on, or that lie on land your map shows as explored (Find),
-so nothing can be looked up outside the game and walked straight to. Waypoints are shown by name and
+places you have marked on your own map, are standing on, or that lie on land your map shows as explored (a click on
+the map, or Find), so nothing can be looked up outside the game and walked straight to. Waypoints are shown by name and
 distance only: a coordinate readout would let a map click be nudged, try by try, onto a looked-up
 location. If you do want coordinates, that's **TomTom** — the same mod with them included. The two cannot
 run together; install one.
@@ -17,7 +17,7 @@ run together; install one.
 
 ## Quick start
 
-1. Open the world map, hold **Left Alt** and click somewhere — or click one of your own markers.
+1. Open the world map, hold **Left Alt** and click somewhere explored — or click one of your own markers.
 2. Close the map and follow the arrow.
 
 Press **F11** for the Wayfinder window. *(F11 is also Valheim's screenshot key — see Keys below.)*
@@ -28,7 +28,7 @@ Hold **Left Alt** and left-click:
 
 | You click | Result |
 | --- | --- |
-| an empty spot | a waypoint there |
+| an explored spot | a waypoint there (a click in unexplored fog does nothing) |
 | a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any pin within reach counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
 | a waypoint marker | the waypoint is removed |
 
@@ -76,6 +76,7 @@ or **Find (add to queue)**. The route starts at the nearest one and is then plan
 | Wooden Spear | Greydwarf Ruins and Towers, Skeleton Towers (sunken ones too), Contested Towers and Abandoned Huts |
 | Wooden Battleaxe | Abandoned Cabins, Mountain Towers and Mountain Inverted Towers |
 | Wooden Atgeir | Fuling Villages, Outposts, Ruins and Huts, and the Sealed Towers of Hildir's quest |
+| Wooden Greatsword | Infested Mines (in their treasure rooms), ruined Dvergr towers and the Mistlands rock spires |
 | Curious Axe Head, Mysterious Axe Head | the kind of Abandoned House that can hold it |
 | Rock | Big Rock Clearings, and loose Rocks where the land has been generated |
 | Bee Nest | most kinds of Abandoned House, Contested Towers, Bear Caves, Abandoned Villages (the fenced Meadows farms) and Draugr Villages |
@@ -97,6 +98,9 @@ needs a plugin update.
   picked ones are left out. The Mysterious Rock a player builds and the stones it lays are never listed, nor is a
   rock or nest placed through the build system or spawned with the console's `spawn` command (when a server's plugin
   answers, only if that server runs 1.4.1 or later).
+- **The Wooden Greatsword** is found in the Mistlands: in the treasure room of an Infested Mine - the waypoint is the
+  mine's entrance, and not every mine has a treasure room - and in the chests of ruined Dvergr towers and of the rock
+  spires (that chest sits on top of the spire, about 60 m up, and only some spires have one).
 - **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
   Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
   Draugr Village - decided when the place's area is first generated. A nest found where the land has been
@@ -114,7 +118,7 @@ needs a plugin update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.4.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.5.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -198,9 +202,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.4.1]
+   Loading [Wayfinder 1.5.0]
    Applied 2 of 2 patches.
-   Wayfinder 1.4.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.5.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.
@@ -262,7 +266,7 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `MapModifierKey` | `LeftAlt` | hold while clicking the map |
 | `SkipWaypointKey` | `None` | optional |
 | `ArrivalRadius` | `10` | metres before a waypoint counts as reached |
-| `Use3DDistance` | `false` | include altitude in the arrival test, for waypoints whose height is known (a map click on open ground has none) |
+| `Use3DDistance` | `false` | include altitude in the arrival test: a waypoint with a height of its own uses it; a map click on open ground, a place Find found and a waypoint without a height use the ground under it once it is loaded near you (horizontal over water) |
 | `PersistWaypoints` | `true` | remember the queue per world |
 | `PinType` / `PinLabel` | `Icon3` / `Waypoint` | marker icon and label |
 | `ShowArrow`, `ArrowSize`, `ArrowScreenX/Y`, `ArrowOpacity` | | arrow placement |
@@ -278,7 +282,8 @@ apart from TomTom's, so coordinates entered in TomTom never carry over into Wayf
 The file is replaced safely. If a save is interrupted, a `.new`, `.old` or `.old2` copy may be left beside it;
 when the file itself is missing, the next start puts that copy back, and the next save tidies up. If the file
 cannot be read when you enter a world (another program, such as a backup or sync tool, holds it), it is never
-saved over: your changes are kept, the file is read again every few seconds, and once it can be read what you
+saved over: your changes are kept (if it is still unreadable when you leave the world, they are not saved), the
+file is read again every few seconds, and once it can be read what you
 queued meanwhile comes first and the saved waypoints follow. Turning `PersistWaypoints` on in a world works the
 same way: the saved route is read and joined with what is queued, not replaced by it.
 

@@ -84,6 +84,12 @@ namespace Waypointer
                 return true;
             }
 
+#if WAYFINDER
+            // Only where the map shows explored land (by the player or through a Cartography Table), as Find does. A click
+            // in the fog does nothing - consumed, so vanilla does not act on a pin nearby, and no message: the fog shows
+            // why. Removing a marker and following a pin (above) work anywhere.
+            if (!MinimapAccess.IsExplored(world)) return true;
+#endif
             Waypoint added = WaypointManager.Add(world, "", false);
 #if WAYFINDER
             WaypointManager.Notify("Waypoint added");   // no coordinates: a readout would let clicks be steered

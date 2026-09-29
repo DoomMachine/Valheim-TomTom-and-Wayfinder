@@ -122,6 +122,24 @@ namespace Waypointer
             Expect("Infinity Tower 100 200", 100f, 200f, false, 0f, "Infinity Tower"); Expect("-Infinity 100 200", 100f, 200f, false, 0f, "-Infinity");
             Expect("1234, -567, 2nd camp", 1234f, -567f, false, 0f, "2nd camp");
 
+            // The game's own 'pos' line and Server Devcommands' (1.5.0): read in the axis order the header names, in either
+            // mode; a decimal comma is read only inside the vector, which both write with ", " between the values.
+            ExpectPos("Player position (X,Y,Z): (1234, 30, -567) , Zone: 19,-9, Center dist: 1358.03", 1234f, 30f, -567f, "");
+            ExpectPos("Player position (X,Y,Z): (1234, 30, 6720) , Zone: 19,105, Center dist: 6832.35", 1234f, 30f, 6720f, "");
+            ExpectPos("Player position (X,Y,Z): (1234, 30, -567) , Zone: 19,-9, Center dist: 1358,03", 1234f, 30f, -567f, "");
+            ExpectPos("Player position (X,Z,Y): (1234, -567, 30)", 1234f, 30f, -567f, "");
+            ExpectPos("Player position (X,Z,Y): (1234,57, -567,25, 30,12)", 1234.57f, 30.12f, -567.25f, "");
+            ExpectPos("Player position (X,Z,Y): (1234.57, -567.25, 30.12)", 1234.57f, 30.12f, -567.25f, "");
+            ExpectPos("Camp: Player position (X,Y,Z): (1234, 30, -567) , Zone: 19,-9, Center dist: 1358.03", 1234f, 30f, -567f, "Camp");
+            ExpectPos("player position (x,y,z): (1234,30,-567)", 1234f, 30f, -567f, "");
+            ExpectFail("Player position (X,Y,Z): (1234, 30)"); ExpectFail("Player position (X,X,Z): (1, 2, 3)");
+            ExpectFail("Player position (X,Z,Y): (25000, 0, 0)");
+            Expect("(1234, 30, -567)", 1234f, 30f, true, -567f, "");   // a bare vector is still positional
+            List<string> posErrors;
+            List<ParsedCoord> posList = CoordinateParser.ParseList("Player position (X,Y,Z): (1234, 30, 6720) , Zone: 19,105, Center dist: 6832.35\n1234, -567\n", out posErrors);
+            Check("parse: a pos line in a pasted list is read, and the next line too", posList.Count == 2 && posErrors.Count == 0,
+                "got " + posList.Count + "/" + posErrors.Count);
+
             // List parsing
             string block = "# a comment\n"
                          + "1234, -567\n"
@@ -187,6 +205,9 @@ namespace Waypointer
             SearchTests();
             ProtocolTests();
             CaptionTests();
+            CaptionCacheTests();
+            RouteFileTests();
+            ArrivalTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
@@ -552,6 +573,27 @@ namespace Waypointer
             Console.WriteLine("  ok   " + input);
         }
 
+        private static void ExpectPos(string input, float x, float alt, float z, string name)
+        {
+            ParsedCoord pc;
+            string error;
+            if (!CoordinateParser.TryParseOne(input, out pc, out error))
+            {
+                Fail(input, "expected a pos line, got error: " + error);
+                return;
+            }
+            Vector3 w = CoordinateParser.ToWorld(pc, false);
+            Vector3 r = CoordinateParser.ToWorld(pc, true);
+            if (!pc.Labelled || !Near(w.x, x) || !Near(w.y, alt) || !Near(w.z, z) || !Near(r.x, x) || !Near(r.y, alt) || !Near(r.z, z))
+            {
+                Fail(input, string.Format("world {0},{1},{2} and raw {3},{4},{5}, expected {6},{7},{8} in both", w.x, w.y, w.z, r.x, r.y, r.z, x, alt, z));
+                return;
+            }
+            if (pc.Name != name)
+            { Fail(input, "name [" + pc.Name + "] expected [" + name + "]"); return; }
+            Console.WriteLine("  ok   " + input);
+        }
+
         private static void ExpectFail(string input)
         {
             ParsedCoord pc;
@@ -612,6 +654,30 @@ namespace Waypointer
             for (int i = 0; spear != null && i < spear.Locations.Length; i++)
                 if (spear.Locations[i].Prefab == "StoneHouse4" || spear.Locations[i].Prefab == "TrollCave02") noStoneHouse4 = false;
             Check("search: Wooden Spear covers the 18 location types the 1.0.16 data lists - not StoneHouse4 (no chest) nor TrollCave02 (its spear chests are switched off)", spearOk && noStoneHouse4, "");
+            SearchQuery greatsword = SearchCatalog.ByName("Wooden Greatsword");
+            string[] gsPlaces = { "Mistlands_DvergrTownEntrance1", "Mistlands_DvergrTownEntrance2", "Mistlands_GuardTower1_ruined_new",
+                "Mistlands_GuardTower1_ruined_new2", "Mistlands_GuardTower3_ruined_new", "Mistlands_RockSpire1" };
+            bool gsListed = greatsword != null && greatsword.Locations.Length == gsPlaces.Length && greatsword.Items.Length == 1
+                && greatsword.Items[0] == "THSwordWood" && greatsword.Objects.Length == 0 && !greatsword.PlacesHoldObjects;
+            for (int i = 0; gsListed && i < gsPlaces.Length; i++)
+            {
+                bool found = false;
+                for (int j = 0; j < greatsword.Locations.Length; j++) if (greatsword.Locations[j].Prefab == gsPlaces[i]) found = true;
+                if (!found) gsListed = false;
+            }
+            for (int j = 0; greatsword != null && j < greatsword.Locations.Length; j++)
+                if (greatsword.Locations[j].Prefab == "Mistlands_DvergrBossEntrance1") gsListed = false;   // the Infested Citadel holds none
+            Check("search: Wooden Greatsword covers the 6 location types the 1.0.16 data lists - the Infested Mines through their treasure rooms, three ruined Dvergr towers and the rock spire; not the Infested Citadel", gsListed, "");
+            bool gsNamed = greatsword != null;
+            for (int j = 0; greatsword != null && j < greatsword.Locations.Length; j++)
+            {
+                string p = greatsword.Locations[j].Prefab, l = greatsword.Locations[j].Label;
+                if (p.StartsWith("Mistlands_DvergrTownEntrance", StringComparison.Ordinal) ? l != "Infested Mine"
+                    : p.StartsWith("Mistlands_GuardTower", StringComparison.Ordinal) ? l != "Ruined Dvergr Tower" : l != "Rock Spire") gsNamed = false;
+                if (SearchCatalog.WideLocation(p)) gsNamed = false;
+            }
+            Check("search: the Greatsword places are named (Infested Mine, Ruined Dvergr Tower, Rock Spire), and their chests are looked for within 64 m",
+                gsNamed && SearchCatalog.WideLocations.Length == 5, "");
 
             // --- unique places, on the server
             List<SearchHit> hits = new List<SearchHit>();
@@ -983,7 +1049,7 @@ namespace Waypointer
             Check("caption: ...and keeps the pair whole when it fits",
                 CaptionFit.Fit(emoji, "", 56f, m) == "Ab\uD83D\uDE00...", CaptionFit.Fit(emoji, "", 56f, m));
 
-            // A width sweep against brute force (the 1.3.1 review's proposed test, rewritten for the rules above): at
+            // A width sweep against brute force, for the rules above: at
             // every width the longest start of the name that fits is kept. It catches the off-by-one cuts the checks
             // above let through (keeping one character fewer than fits).
             string[] names = { "Abandoned House (Mysterious Axe Head)", "Sealed Tower (Wooden Atgeir)", "", "Home     ", emoji, "A  B" };
@@ -1030,6 +1096,129 @@ namespace Waypointer
                 if (char.IsLowSurrogate(s[i]) && (i == 0 || !char.IsHighSurrogate(s[i - 1]))) return false;
             }
             return true;
+        }
+
+        // ---------------------------------------------------------------- the arrow's caption cache (1.5.0)
+
+        // CaptionCache and CaptionWidth, the arrow's caption caching moved out of ArrowHud: what the 1.3.1 review's
+        // hudharness checked outside the repository (steady frames, count and name changes, a name that comes back as a
+        // new string every frame, a measure that throws once).
+        private static void CaptionCacheTests()
+        {
+            int calls = 0;
+            int throwOn = -1;
+            Func<string, float> m = delegate (string s)
+            {
+                if (throwOn == 0) { throwOn = -1; throw new InvalidOperationException("planted measure failure"); }
+                if (throwOn > 0) throwOn--;
+                calls++;
+                return s.Length * 8f;
+            };
+            Check("caption cache: the count suffix - none for one waypoint, '  (N left)' for more",
+                CaptionFit.Suffix(0) == "" && CaptionFit.Suffix(1) == "" && CaptionFit.Suffix(2) == "  (2 left)" && CaptionFit.Suffix(12) == "  (12 left)",
+                CaptionFit.Suffix(2));
+
+            CaptionCache cc = new CaptionCache(m);
+            string name = "Abandoned House (Mysterious Axe Head)";
+            float w;
+            string first = cc.FittedName(name, 3, 1000f, out w);
+            int after = calls;
+            for (int i = 0; i < 50; i++) cc.FittedName(name, 3, 1000f, out w);
+            Check("caption cache: steady frames measure nothing", calls == after && first == name + "  (3 left)" && w == first.Length * 8f + 2f, calls - after + " measures");
+
+            string fresh = new string(name.ToCharArray());   // what Localization hands back for a name it does not cache
+            after = calls;
+            string again = cc.FittedName(fresh, 3, 1000f, out w);
+            Check("caption cache: the same name as a new string is not measured again", calls == after && again == first, calls - after + " measures");
+
+            string two = cc.FittedName(name, 2, 1000f, out w);
+            string one = cc.FittedName(name, 1, 1000f, out w);
+            Check("caption cache: the count changing rebuilds the caption, and one waypoint has no count",
+                two == name + "  (2 left)" && one == name && w == name.Length * 8f + 2f, two + " / " + one);
+
+            string cut = cc.FittedName(name, 2, 200f, out w);
+            Check("caption cache: a narrower screen fits the caption again", cut == CaptionFit.Fit(name, "  (2 left)", 200f, m) && w == cut.Length * 8f + 2f, cut);
+
+            cc.FittedName(name, 2, 1000f, out w);
+            throwOn = 0;
+            bool threw = false;
+            try { cc.FittedName("Sealed Tower (Wooden Atgeir)", 2, 1000f, out w); } catch (InvalidOperationException) { threw = true; }
+            string next = cc.FittedName("Sealed Tower (Wooden Atgeir)", 2, 1000f, out w);
+            Check("caption cache: after a measure that throws, the next frame shows the current caption",
+                threw && next == "Sealed Tower (Wooden Atgeir)  (2 left)" && w == next.Length * 8f + 2f, next);
+
+            CaptionWidth cw = new CaptionWidth();
+            after = calls;
+            float a = cw.Of("123 m", m), b2 = cw.Of("123 m", m), c = cw.Of(new string("123 m".ToCharArray()), m);
+            Check("caption cache: a caption's width is measured once while its text stays the same", calls == after + 1 && a == 42f && b2 == a && c == a, calls - after + " measures");
+            throwOn = 0;
+            threw = false;
+            try { cw.Of("1.23 km", m); } catch (InvalidOperationException) { threw = true; }
+            Check("caption cache: after a width measure that throws, the next call measures again", threw && cw.Of("1.23 km", m) == 7 * 8f + 2f, "");
+        }
+
+        // ---------------------------------------------------------------- the route file (1.5.0)
+
+        private static void RouteFileTests()
+        {
+            RouteEntry e = new RouteEntry();
+            e.X = 1234.5f; e.Y = 30.25f; e.Z = -567.75f; e.HasElevation = true; e.Borrowed = false; e.Name = "Camp";
+            Check("route file: a waypoint is one line, x|altitude|z|hasElevation|ownsMarker|name", RouteFile.FormatLine(e) == "1234.5|30.25|-567.75|1|1|Camp", RouteFile.FormatLine(e));
+            e.Borrowed = true; e.HasElevation = false; e.Name = "a|b\r\nc";
+            Check("route file: a followed pin is ownsMarker 0, and a name cannot break the line", RouteFile.FormatLine(e) == "1234.5|30.25|-567.75|0|0|a b  c", RouteFile.FormatLine(e));
+            Check("route file: the header names the edition", RouteFile.Header("TomTom") == "# TomTom queue - x|altitude|z|hasElevation|ownsMarker|name", RouteFile.Header("TomTom"));
+
+            RouteEntry r;
+            bool ok = RouteFile.TryParseLine("  1|2|3| 1 |0|Bed  ", out r);
+            Check("route file: a line is read back (spaces around it and the flags trimmed)",
+                ok && r.X == 1f && r.Y == 2f && r.Z == 3f && r.HasElevation && r.Borrowed && r.Name == "Bed", r.Name);
+            ok = RouteFile.TryParseLine("1|2|3|1|Old name", out r);
+            Check("route file: a 5-column line from before ownsMarker is a waypoint with its own marker", ok && !r.Borrowed && r.Name == "Old name", "");
+            ok = RouteFile.TryParseLine("1|2|3|0", out r);
+            Check("route file: 4 columns is a waypoint without a name", ok && !r.HasElevation && r.Name == "", "");
+            ok = RouteFile.TryParseLine("1|NaN|3|1|1|x", out r);
+            Check("route file: an unusable altitude is dropped, the waypoint kept", ok && r.Y == 0f && !r.HasElevation, "");
+            Check("route file: blank lines, comments, short lines and unreadable or unreal positions are skipped",
+                !RouteFile.TryParseLine("", out r) && !RouteFile.TryParseLine(null, out r) && !RouteFile.TryParseLine("# TomTom queue", out r)
+                && !RouteFile.TryParseLine("1|2|3", out r) && !RouteFile.TryParseLine("a|2|3|1", out r)
+                && !RouteFile.TryParseLine("NaN|2|3|1", out r) && !RouteFile.TryParseLine("1|2|Infinity|1", out r), "");
+
+            // A round trip, with values the game's Mono prints exactly: it writes a float with 7 significant digits, so
+            // one needing more comes back rounded there (and exactly on .NET).
+            e.X = -10496.25f; e.Y = 0f; e.Z = 8192.5f; e.HasElevation = false; e.Borrowed = true; e.Name = "Den";
+            ok = RouteFile.TryParseLine(RouteFile.FormatLine(e), out r);
+            Check("route file: a followed pin survives the trip", ok && r.X == e.X && r.Z == e.Z && !r.HasElevation && r.Borrowed && r.Name == "Den", RouteFile.FormatLine(e));
+            e.X = 1234.5678f;
+            ok = RouteFile.TryParseLine(RouteFile.FormatLine(e), out r);
+            Check("route file: any float comes back within 1 cm", ok && Math.Abs(r.X - e.X) < 0.01f, RouteFile.FormatLine(e));
+
+            // A place Find found: its height is the world generator's estimate (1.5.0), written as 2; a reader older than
+            // 1.5.0 takes anything but 1 as no height.
+            e.X = 10f; e.Y = 42.5f; e.Z = -20f; e.HasElevation = true; e.HeightIsEstimate = true; e.Borrowed = false; e.Name = "Infested Mine";
+            Check("route file: an estimated height is written as 2", RouteFile.FormatLine(e) == "10|42.5|-20|2|1|Infested Mine", RouteFile.FormatLine(e));
+            ok = RouteFile.TryParseLine("10|42.5|-20|2|1|Infested Mine", out r);
+            bool estimateRead = ok && r.HasElevation && r.HeightIsEstimate && r.Y == 42.5f;
+            ok = RouteFile.TryParseLine("1|2|3|1|1|x", out r);
+            Check("route file: 2 reads back as a height that is an estimate, 1 as a height of its own",
+                estimateRead && ok && r.HasElevation && !r.HeightIsEstimate, "");
+            ok = RouteFile.TryParseLine("1|NaN|3|2|1|x", out r);
+            Check("route file: an unusable estimated altitude is dropped too", ok && !r.HasElevation && !r.HeightIsEstimate, "");
+        }
+
+        // ---------------------------------------------------------------- the 3D arrival test's altitude (1.5.0)
+
+        private static void ArrivalTests()
+        {
+            Check("arrival: a height of the waypoint's own is used whatever the ground", ArrivalRules.TargetAltitude(true, false, 55f, true, 40f, 30f, 10f) == 55f, "");
+            Check("arrival: no height, loaded land - the ground under the waypoint", ArrivalRules.TargetAltitude(false, false, 0f, true, 87f, 30f, 12f) == 87f, "");
+            Check("arrival: no height, ground under water - the player's own altitude (horizontal)", ArrivalRules.TargetAltitude(false, false, 0f, true, 12f, 30f, 28.6f) == 28.6f, "");
+            Check("arrival: ground exactly at the water level counts as land", ArrivalRules.TargetAltitude(false, false, 0f, true, 30f, 30f, 5f) == 30f, "");
+            Check("arrival: no height and the ground not loaded - the player's own altitude", ArrivalRules.TargetAltitude(false, false, 0f, false, 0f, 30f, 44f) == 44f, "");
+            Check("arrival: an unusable ground height is ignored",
+                ArrivalRules.TargetAltitude(false, false, 0f, true, float.NaN, 30f, 7f) == 7f && ArrivalRules.TargetAltitude(false, false, 0f, true, float.PositiveInfinity, 30f, 7f) == 7f, "");
+            Check("arrival: a Find place's estimated height gives way to the loaded ground", ArrivalRules.TargetAltitude(true, true, 60f, true, 48f, 30f, 10f) == 48f, "");
+            Check("arrival: ...keeps its estimate where the ground is not loaded, and is horizontal over water",
+                ArrivalRules.TargetAltitude(true, true, 60f, false, 0f, 30f, 10f) == 60f && ArrivalRules.TargetAltitude(true, true, 60f, true, 20f, 30f, 10f) == 10f, "");
         }
 
         // ---------------------------------------------------------------- a route that could not be read (1.4.1)
