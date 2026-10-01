@@ -208,6 +208,7 @@ namespace Waypointer
             CaptionCacheTests();
             RouteFileTests();
             ArrivalTests();
+            MapClickTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;
@@ -1100,9 +1101,9 @@ namespace Waypointer
 
         // ---------------------------------------------------------------- the arrow's caption cache (1.5.0)
 
-        // CaptionCache and CaptionWidth, the arrow's caption caching moved out of ArrowHud: what the 1.3.1 review's
-        // hudharness checked outside the repository (steady frames, count and name changes, a name that comes back as a
-        // new string every frame, a measure that throws once).
+        // CaptionCache and CaptionWidth, the arrow's caption caching moved out of ArrowHud: what a check outside this
+        // repository used to cover (steady frames, count and name changes, a name that comes back as a new string every
+        // frame, a measure that throws once).
         private static void CaptionCacheTests()
         {
             int calls = 0;
@@ -1219,6 +1220,75 @@ namespace Waypointer
             Check("arrival: a Find place's estimated height gives way to the loaded ground", ArrivalRules.TargetAltitude(true, true, 60f, true, 48f, 30f, 10f) == 48f, "");
             Check("arrival: ...keeps its estimate where the ground is not loaded, and is horizontal over water",
                 ArrivalRules.TargetAltitude(true, true, 60f, false, 0f, 30f, 10f) == 60f && ArrivalRules.TargetAltitude(true, true, 60f, true, 20f, 30f, 10f) == 10f, "");
+
+            // The arrival test itself (1.5.1): armed once away, reached back within the radius, never while dead.
+            Check("arrival: a waypoint is armed once the player is beyond the radius", ArrivalRules.Step(false, false, 10.5f, 10f) == ArrivalStep.Arm, "");
+            Check("arrival: ...and not while still within it (a waypoint added where the player stands)",
+                ArrivalRules.Step(false, false, 3f, 10f) == ArrivalStep.None && ArrivalRules.Step(false, false, 10f, 10f) == ArrivalStep.None, "");
+            Check("arrival: an armed waypoint is reached within the radius, edge included",
+                ArrivalRules.Step(true, false, 9.9f, 10f) == ArrivalStep.Reach && ArrivalRules.Step(true, false, 10f, 10f) == ArrivalStep.Reach, "");
+            Check("arrival: ...and not beyond it", ArrivalRules.Step(true, false, 10.1f, 10f) == ArrivalStep.None, "");
+            Check("arrival: dying next to the followed waypoint is not arriving (the 10 s before the respawn)",
+                ArrivalRules.Step(true, true, 0f, 10f) == ArrivalStep.None && ArrivalRules.Step(true, true, 8f, 10f) == ArrivalStep.None, "");
+            Check("arrival: ...nor is it arming while dead",
+                ArrivalRules.Step(false, true, 500f, 10f) == ArrivalStep.None, "");
+            Check("arrival: an unusable distance does nothing",
+                ArrivalRules.Step(true, false, float.NaN, 10f) == ArrivalStep.None && ArrivalRules.Step(false, false, float.NaN, 10f) == ArrivalStep.None, "");
+        }
+
+        // ---------------------------------------------------------------- the map click (1.5.1)
+
+        // MapClickRules.Decide: the pin nearest the click decides, whichever kind (a marker of ours, a followed pin, a pin
+        // not yet followed). The layouts are the 2026-10-01 report's: identical "Day 3" death pins close together, one of
+        // them followed, the click aimed at another; a marker of ours next to a pin of the player's; and a ping or another
+        // player's marker nearest the click.
+        private static void MapClickTests()
+        {
+            const float none = -1f;
+            Check("map click: nothing within reach - a waypoint on the spot", MapClickRules.Decide(none, none, none, none) == MapClickAction.AddPoint, "");
+            Check("map click: only a followed pin within reach - its waypoint is removed", MapClickRules.Decide(none, 12f, none, none) == MapClickAction.StopFollowing, "");
+            Check("map click: only an unfollowed pin within reach - it is followed", MapClickRules.Decide(none, none, 40f, none) == MapClickAction.Follow, "");
+            Check("map click: a click on a marker of ours removes its waypoint",
+                MapClickRules.Decide(0f, none, none, none) == MapClickAction.RemoveOwnMarker && MapClickRules.Decide(2f, none, 30f, none) == MapClickAction.RemoveOwnMarker
+                && MapClickRules.Decide(2f, 30f, 30f, none) == MapClickAction.RemoveOwnMarker, "");
+            Check("map click: ...but a nearer pin wins over a marker of ours within reach (unlike a right-click delete)",
+                MapClickRules.Decide(40f, none, 5f, none) == MapClickAction.Follow && MapClickRules.Decide(3f, none, 1f, none) == MapClickAction.Follow
+                && MapClickRules.Decide(30f, 1f, 2f, none) == MapClickAction.StopFollowing, "");
+            Check("map click: equally near - a marker of ours over a followed pin, and either over a pin not yet followed",
+                MapClickRules.Decide(4f, 4f, none, none) == MapClickAction.RemoveOwnMarker && MapClickRules.Decide(4f, none, 4f, none) == MapClickAction.RemoveOwnMarker
+                && MapClickRules.Decide(4f, 4f, 4f, none) == MapClickAction.RemoveOwnMarker, "");
+            bool nearerWins = true;
+            float[] followedAt = { 15f, 30f, 59f };
+            for (int i = 0; i < followedAt.Length; i++)
+                if (MapClickRules.Decide(none, followedAt[i], 0f, none) != MapClickAction.Follow || MapClickRules.Decide(none, followedAt[i], 2f, none) != MapClickAction.Follow) nearerWins = false;
+            Check("map click: a click on a new pin follows it, though a followed pin is within reach (15, 30, 59 m away)", nearerWins, "");
+            Check("map click: a click on the followed pin stops following it, though another pin is within reach",
+                MapClickRules.Decide(none, 0f, 25f, none) == MapClickAction.StopFollowing && MapClickRules.Decide(none, 1f, 1.5f, none) == MapClickAction.StopFollowing, "");
+            Check("map click: equally near - the followed pin decides (stopped, never followed twice)",
+                MapClickRules.Decide(none, 5f, 5f, none) == MapClickAction.StopFollowing && MapClickRules.Decide(none, 0f, 0f, none) == MapClickAction.StopFollowing, "");
+            Check("map click: a ping, shout, player or event marker nearest the click - a waypoint on the spot, the pins farther away left alone",
+                MapClickRules.Decide(none, 40f, none, 3f) == MapClickAction.AddPoint && MapClickRules.Decide(40f, none, 30f, 3f) == MapClickAction.AddPoint
+                && MapClickRules.Decide(none, none, none, 3f) == MapClickAction.AddPoint, "");
+            Check("map click: ...but a pin nearer than it still decides, and equally near the pin does",
+                MapClickRules.Decide(none, 2f, none, 3f) == MapClickAction.StopFollowing && MapClickRules.Decide(none, none, 1f, 3f) == MapClickAction.Follow
+                && MapClickRules.Decide(3f, none, none, 3f) == MapClickAction.RemoveOwnMarker && MapClickRules.Decide(none, 3f, none, 3f) == MapClickAction.StopFollowing, "");
+            Check("map click: an unusable distance counts as no pin",
+                MapClickRules.Decide(float.NaN, float.NaN, 4f, none) == MapClickAction.Follow && MapClickRules.Decide(float.NaN, float.NaN, float.NaN, none) == MapClickAction.AddPoint
+                && MapClickRules.Decide(float.NaN, 3f, float.NaN, none) == MapClickAction.StopFollowing, "");
+
+            bool ordinals = MapClickRules.Ordinal(1) == "1st" && MapClickRules.Ordinal(2) == "2nd" && MapClickRules.Ordinal(3) == "3rd"
+                && MapClickRules.Ordinal(4) == "4th" && MapClickRules.Ordinal(11) == "11th" && MapClickRules.Ordinal(12) == "12th"
+                && MapClickRules.Ordinal(13) == "13th" && MapClickRules.Ordinal(21) == "21st" && MapClickRules.Ordinal(22) == "22nd"
+                && MapClickRules.Ordinal(23) == "23rd" && MapClickRules.Ordinal(111) == "111th" && MapClickRules.Ordinal(101) == "101st";
+            Check("map click: ordinals", ordinals, MapClickRules.Ordinal(1) + " " + MapClickRules.Ordinal(12) + " " + MapClickRules.Ordinal(22));
+            Check("map click: a followed pin at the front of the route is 'set'",
+                MapClickRules.FollowMessage("Day 3", 0) == "Waypoint set: Day 3", MapClickRules.FollowMessage("Day 3", 0));
+            Check("map click: ...behind others it is 'queued', with its place",
+                MapClickRules.FollowMessage("Day 3", 1) == "Waypoint queued (2nd): Day 3", MapClickRules.FollowMessage("Day 3", 1));
+            Check("map click: an unnamed pin is 'marker'",
+                MapClickRules.FollowMessage("", 0) == "Waypoint set: marker" && MapClickRules.FollowMessage(null, 2) == "Waypoint queued (3rd): marker", "");
+            Check("map click: a point on the spot is 'added', or 'queued' behind others",
+                MapClickRules.AddedMessage(0) == "Waypoint added" && MapClickRules.AddedMessage(3) == "Waypoint queued (4th)", MapClickRules.AddedMessage(3));
         }
 
         // ---------------------------------------------------------------- a route that could not be read (1.4.1)

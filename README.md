@@ -62,6 +62,7 @@ src/                     the shared source for both plugins
   SearchCatalog.cs       what can be searched for, and which location types hold it (from 1.0.16's data)
   SearchRules.cs         unique places (candidates vs the real one), range, chests, names - Unity-free
   RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
+  MapClickRules.cs       a map click's decision (the pin nearest the pointer) and its messages - Unity-free
   SearchPatches.cs       keeps the server's answers from becoming map pins; WhoMayFind for Vegvisir-style
                          requests; which connection a routed call came on
   ...
@@ -113,7 +114,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 292 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
+./run-tests.sh                                                         # 316 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Valheim"   # a game folder elsewhere
@@ -177,6 +178,16 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
 - Wayfinder's map click places a waypoint without asking `MinimapAccess.IsExplored` first (once, branching on the
   result at once, with the click's own position, before `WaypointManager.Add`) - and, conversely, TomTom's map click
   asks it
+- a map click could decide by the wrong pin: `HandleWaypointClick` must ask for the four nearest pins
+  (`MinimapAccess.GetClosestOwnedWaypointPin`, `GetClosestFollowedPin`, `GetClosestAdoptablePin`,
+  `GetClosestTransientPin`) once each, with the same reach local, before `MapClickRules.Decide`; give it, in that order,
+  locals with one store each whose value is exactly `WaypointManager.HorizontalDistance(<that pin>.m_pos, <the position
+  local the lookup is given>)` or -1, chosen by one conditional branch on that pin's local; keep its result in a local
+  with no other store; call nothing that changes the route (the queue list included) before it; and give `AddFromPin`
+  `GetClosestAdoptablePin`'s result. `WaypointManager.Tick` must give `ArrivalRules.Step` `Character.IsDead` as
+  `playerDead`, keep its result the same way, and call `OnReached` after it. Not checked: which branch each result
+  picks, which pin `Remove` is given, which arm of a distance's `?:` is which, writes through a reference, a change to
+  the position or reach local between the lookups and the distances, and `Step`'s other arguments
 - a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
   and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
   each checked by the literal name the call sends
@@ -301,6 +312,21 @@ Run it after every Valheim update.
 - **Wayfinder's map click places a waypoint only on explored land** (`MinimapAccess.IsExplored`, as Find uses): a
   click in the fog is consumed and does nothing, with no message. Removing a marker and following a pin work
   anywhere.
+- **The pin nearest a map click decides** (`MapClickRules.Decide`, since 1.5.1), whichever kind it is: the nearest
+  marker of ours or followed pin - its waypoint is removed - the nearest pin not yet followed, which is followed, or
+  the nearest ping, shout, other player's marker or event marker, which is never followed: the click then puts a
+  waypoint on the spot, as on open ground. Equally near, a waypoint's pin wins (removed rather than followed twice, or
+  rather than a waypoint on the spot), and a marker of ours over a followed pin. A right-click delete differs on
+  purpose: there a marker of ours within reach always wins, since deleting a pin of the player's cannot be undone; an
+  Alt-click never deletes a pin of the player's. Until 1.5.1 a pin a waypoint used anywhere within reach
+  won, so with several identical death pins close together a click aimed at a new one stopped following an older one.
+  A followed pin or a point joins the end of the route, and the message says where it waits
+  (`MapClickRules.FollowMessage`, `AddedMessage`). No arrival counts while the player is dead (`ArrivalRules.Step`):
+  for the seconds before the respawn the body lies where it fell. Each Alt-click the plugin
+  acts on and each change made to the route from the map, the window or the console is logged ("Map Alt-click: ...",
+  "Route: ..."; TomTom adds the distances from the click, Wayfinder logs names only); what a Find queues, and the route
+  it replaces, are not logged as route changes (TomTom's Find logs its one summary line, Wayfinder's nothing about what
+  it found).
 - **Find needs nothing beyond BepInEx and the running game; it does not use SeedLab.** Every result comes
   from the game as it runs: the location list (as the host) or the server's answers (when joining), the world
   objects the game has loaded, and the chests' saved contents. What is fixed in the plugin is the catalogue
@@ -329,6 +355,31 @@ Run it after every Valheim update.
   for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
 
 ## History
+
+**1.5.1** — the pin nearest an Alt-click decides; a queued waypoint says so; no arrival while dead; Alt-clicks and
+route changes logged.
+
+- fixed: an Alt-click on the map let a pin you already follow anywhere within reach win over the pin under the
+  pointer, so with several pins close together - the death pins of one in-game day all read the same - a click aimed
+  at a new pin stopped following an older one, and with no other waypoint the arrow was gone. Now the pin nearest the
+  pointer decides, a waypoint marker of the mod's included (`MapClickRules.Decide`), and a ping, a shout, another
+  player's marker or an event marker nearest the click puts a waypoint on the spot instead of acting on a pin farther
+  away; a right-click delete keeps its rule, where a waypoint marker within reach always wins
+- fixed: following another pin while a route exists said "Waypoint set", and adding a point "Waypoint added", though
+  the new waypoint waits at the end of the route; they now say "Waypoint queued (2nd): Day 3" and "Waypoint queued
+  (2nd)" (TomTom still adds the point's position)
+- fixed: dying within `ArrivalRadius` of the waypoint being followed counted as reaching it, and it was gone after the
+  respawn; no arrival counts while the player is dead (`ArrivalRules.Step`)
+- new: one log line per Alt-click the plugin acts on (the nearest marker of ours, followed pin and other pin, and what
+  the click did; TomTom with distances, Wayfinder names only, and a second line for a Wayfinder click on unexplored
+  land) and per change made to the route from the map, the window or the console ("Route: added / following /
+  removed / skipped / dropped / cleared / moved to the front"); what a Find queues, and the route it replaces, are not
+  logged (TomTom's Find logs one summary line)
+- docs: the package READMEs say that Alt-clicking a pin you follow stops following it, that the pin nearest the
+  pointer counts,
+  that a new waypoint joins the end of the route, and that dying near a waypoint does not reach it
+- 24 new tests (292 → 316); preflight check 18 checks the map click's and the arrival test's wiring (61 → 62 checks
+  per edition)
 
 **1.5.0** — Find: the Wooden Greatsword; `pos` lines; arrival on the ground; Wayfinder clicks only on explored land.
 

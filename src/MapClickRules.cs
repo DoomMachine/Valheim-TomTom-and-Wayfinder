@@ -1,0 +1,95 @@
+using System.Globalization;
+
+namespace Waypointer
+{
+    /// <summary>What a map click with the waypoint modifier does (MapClickRules.Decide).</summary>
+    internal enum MapClickAction
+    {
+        /// <summary>The nearest pin is a marker this mod placed: its waypoint is removed.</summary>
+        RemoveOwnMarker,
+        /// <summary>The nearest pin is one of the player's (or a shared or vanilla one) that a waypoint follows: that
+        /// waypoint is removed, and the pin stays on the map.</summary>
+        StopFollowing,
+        /// <summary>The nearest pin is one not yet followed: follow it.</summary>
+        Follow,
+        /// <summary>No pin within reach, or a transient one (a ping, a player's marker) is nearest: a waypoint on the spot.</summary>
+        AddPoint,
+    }
+
+    /// <summary>
+    /// The map click's decision and the words it shows. Unity-free, so the tests exercise them.
+    /// </summary>
+    internal static class MapClickRules
+    {
+        /// <summary>
+        /// The pin nearest the click decides, whichever kind it is ("Nearest always", chosen on 2026-10-01): a marker this
+        /// mod placed or a pin being followed - its waypoint is removed - a pin not yet followed, which is followed, or a
+        /// transient pin (a ping, a shout, another player's marker, an event marker), which is never followed: the click
+        /// then places a waypoint on the spot, as on open ground. Equally near, a waypoint's pin wins over a pin not yet
+        /// followed (removed rather than followed twice) and over a transient pin, and a marker of ours over a followed
+        /// pin. Unlike a right-click delete, where a marker of ours anywhere within reach wins because deleting a pin of the
+        /// player's cannot be undone, an Alt-click never deletes a pin of the player's, so the one under the pointer counts.
+        /// Until 1.5.1 a pin a waypoint used anywhere within reach won over the one under the pointer, so with identical
+        /// pins close together (the death pins of one in-game day all carry the same name) a click aimed at a new pin
+        /// stopped following an older one. Distances are horizontal, from the click; a negative one (or NaN) means no such
+        /// pin within reach.
+        /// </summary>
+        /// <param name="ownMarker">The nearest marker this mod placed (a waypoint's own marker, or a stand-in).</param>
+        /// <param name="followedPin">The nearest pin a waypoint follows.</param>
+        /// <param name="otherPin">The nearest pin that can be followed and is not followed yet.</param>
+        /// <param name="transientPin">The nearest ping, shout, other player's marker or event marker.</param>
+        public static MapClickAction Decide(float ownMarker, float followedPin, float otherPin, float transientPin)
+        {
+            bool haveOwn = ownMarker >= 0f;
+            bool haveFollowed = followedPin >= 0f;
+            bool haveOther = otherPin >= 0f;
+            MapClickAction action = MapClickAction.AddPoint;
+            float nearest = -1f;
+            if (haveOwn) { action = MapClickAction.RemoveOwnMarker; nearest = ownMarker; }
+            if (haveFollowed && (nearest < 0f || followedPin < nearest)) { action = MapClickAction.StopFollowing; nearest = followedPin; }
+            if (haveOther && (nearest < 0f || otherPin < nearest)) { action = MapClickAction.Follow; nearest = otherPin; }
+            if (transientPin >= 0f && (nearest < 0f || transientPin < nearest)) return MapClickAction.AddPoint;
+            return action;
+        }
+
+        /// <summary>1st, 2nd, 3rd, 4th ... 11th, 12th, 13th ... 21st, 22nd ...</summary>
+        public static string Ordinal(int n)
+        {
+            string number = n.ToString(CultureInfo.InvariantCulture);
+            if (n <= 0) return number;
+            int lastTwo = n % 100;
+            if (lastTwo >= 11 && lastTwo <= 13) return number + "th";
+            switch (n % 10)
+            {
+                case 1: return number + "st";
+                case 2: return number + "nd";
+                case 3: return number + "rd";
+                default: return number + "th";
+            }
+        }
+
+        /// <summary>
+        /// The message for a pin the click follows: "Waypoint set: Day 3" when it is the arrow's target now, or
+        /// "Waypoint queued (2nd): Day 3" when it waits behind others - a newly followed pin joins the end of the route,
+        /// and the arrow keeps leading to the waypoint at its front.
+        /// </summary>
+        /// <param name="name">The pin's name as shown, or empty.</param>
+        /// <param name="index">Its place in the route, 0 for the front.</param>
+        public static string FollowMessage(string name, int index)
+        {
+            string shown = string.IsNullOrEmpty(name) ? "marker" : name;
+            if (index <= 0) return "Waypoint set: " + shown;
+            return "Waypoint queued (" + Ordinal(index + 1) + "): " + shown;
+        }
+
+        /// <summary>
+        /// The message for a waypoint the click adds on the spot, before any position TomTom appends: "Waypoint added"
+        /// when it is the arrow's target now, "Waypoint queued (2nd)" when it waits behind others.
+        /// </summary>
+        public static string AddedMessage(int index)
+        {
+            if (index <= 0) return "Waypoint added";
+            return "Waypoint queued (" + Ordinal(index + 1) + ")";
+        }
+    }
+}

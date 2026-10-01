@@ -172,6 +172,7 @@ namespace Waypointer
             _queue.Add(wp);
             _dirty = true;
             EnsurePins();
+            LogAdded("added", wp);
             return wp;
         }
 
@@ -183,7 +184,8 @@ namespace Waypointer
         public static int AddMany(List<Vector3> positions, List<string> names, List<bool> heightIsEstimate, bool replace)
         {
             if (positions == null || positions.Count == 0) return 0;
-            if (replace) Clear();
+            // Not logged here: TomTom's search logs what it queued, and Wayfinder's says nothing about what it found.
+            if (replace) ClearQueue();
             for (int i = 0; i < positions.Count; i++)
             {
                 string name = names != null && i < names.Count ? names[i] : null;
@@ -226,6 +228,7 @@ namespace Waypointer
             wp.Pin = pin;
             _queue.Add(wp);
             _dirty = true;
+            LogAdded("following", wp);
             return wp;
         }
 
@@ -261,18 +264,27 @@ namespace Waypointer
 
         public static bool RemoveAt(int index)
         {
-            if (index < 0 || index >= _queue.Count) return false;
-            Waypoint wp = _queue[index];
-            ReleasePin(wp);
-            _queue.RemoveAt(index);
-            _dirty = true;
-            ResetSpeedEstimate();
+            Waypoint wp = RemoveFromQueue(index);
+            if (wp == null) return false;
+            LogRemoved("removed", wp);
             return true;
         }
 
         public static bool Remove(Waypoint wp)
         {
             return RemoveAt(_queue.IndexOf(wp));
+        }
+
+        /// <summary>Takes a waypoint out of the queue and releases its marker; the removed waypoint, or null.</summary>
+        private static Waypoint RemoveFromQueue(int index)
+        {
+            if (index < 0 || index >= _queue.Count) return null;
+            Waypoint wp = _queue[index];
+            ReleasePin(wp);
+            _queue.RemoveAt(index);
+            _dirty = true;
+            ResetSpeedEstimate();
+            return wp;
         }
 
         /// <summary>
@@ -288,10 +300,18 @@ namespace Waypointer
             _queue.Remove(wp);
             _dirty = true;
             ResetSpeedEstimate();
+            LogRemoved("dropped (its pin was deleted)", wp);
             return true;
         }
 
         public static void Clear()
+        {
+            int count = _queue.Count;
+            ClearQueue();
+            Plugin.Log.LogInfo("Route: cleared (" + count.ToString(CultureInfo.InvariantCulture) + " waypoint(s))");
+        }
+
+        private static void ClearQueue()
         {
             ReleaseAllPins();
             _queue.Clear();
@@ -308,7 +328,30 @@ namespace Waypointer
             _queue.Insert(0, wp);
             _dirty = true;
             ResetSpeedEstimate();
+            Plugin.Log.LogInfo("Route: " + LogLabel(wp) + " moved to the front (" + _queue.Count.ToString(CultureInfo.InvariantCulture) + " in the route)");
             return true;
+        }
+
+        // One log line per change to the route, so a waypoint that went missing in play can be traced from the log.
+        // Names and places in the route only - no positions: Wayfinder shows none, and
+        // TomTom's map click logs its own.
+        private static void LogAdded(string what, Waypoint wp)
+        {
+            int index = _queue.IndexOf(wp);
+            Plugin.Log.LogInfo("Route: " + what + " " + LogLabel(wp) + " (" + MapClickRules.Ordinal(index + 1) + " of "
+                + _queue.Count.ToString(CultureInfo.InvariantCulture) + ")");
+        }
+
+        private static void LogRemoved(string what, Waypoint wp)
+        {
+            Plugin.Log.LogInfo("Route: " + what + " " + LogLabel(wp) + " (" + _queue.Count.ToString(CultureInfo.InvariantCulture) + " left)");
+        }
+
+        private static string LogLabel(Waypoint wp)
+        {
+            string name = wp == null || string.IsNullOrEmpty(wp.Name) ? null : GameText.Localize(wp.Name);
+            if (!string.IsNullOrEmpty(name)) return "'" + name + "'";
+            return wp != null && wp.Borrowed ? "an unnamed pin" : "an unnamed point";   // the bed's spawn pin has no name
         }
 
         /// <summary>Activates whichever queued waypoint is nearest the player (TomTom "closest waypoint").</summary>
@@ -328,7 +371,10 @@ namespace Waypointer
         /// <summary>Drops the active waypoint without treating it as reached.</summary>
         public static bool SkipActive()
         {
-            return RemoveAt(0);
+            Waypoint wp = RemoveFromQueue(0);
+            if (wp == null) return false;
+            LogRemoved("skipped", wp);
+            return true;
         }
 
         // ---------------------------------------------------------------- per-frame
@@ -392,15 +438,11 @@ namespace Waypointer
                 ? Vector3.Distance(playerPos, ResolveAltitude(active, playerPos))
                 : distance;
 
-            if (!active.Armed)
-            {
-                // Arm once, as soon as the player is genuinely away from it.
-                if (checkDistance > arrival) active.Armed = true;
-            }
-            else if (checkDistance <= arrival)
-            {
-                OnReached(active);
-            }
+            // Armed once the player is genuinely away from it, reached when back within the radius - never while the
+            // player is dead (the body lies where it fell for the seconds before the respawn).
+            ArrivalStep step = ArrivalRules.Step(active.Armed, player.IsDead(), checkDistance, arrival);
+            if (step == ArrivalStep.Arm) active.Armed = true;
+            else if (step == ArrivalStep.Reach) OnReached(active);
 
             SaveIfDirty();
         }

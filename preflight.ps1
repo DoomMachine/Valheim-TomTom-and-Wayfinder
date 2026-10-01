@@ -24,6 +24,8 @@
 #      flag (13d)
 #  16. Wayfinder places a waypoint from a map click only on explored land; TomTom's map click does not read it
 #  17. every code path that makes a waypoint is a known one
+#  18. a map click decides by the right pin (MapClickRules.Decide, given the distance to each of the four nearest pins,
+#      before the route changes), and no arrival counts while the player is dead (ArrivalRules.Step is told IsDead)
 #  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
 #      requests, knows a player by the connection their call came on, and every place in range is sent back
 #  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
@@ -50,7 +52,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.5.0"
+$expectedVersion = "1.5.1"
 
 if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
     Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
@@ -1466,6 +1468,155 @@ foreach ($t in @($plug.Types | ForEach-Object { Get-TypesDeep17 $_ })) {
 $g17 = @($sites17 | Select-Object -Unique)
 if ($g17.Count -eq 0) { Write-Output "  ok    every code path that makes a waypoint is a known one (WaypointManager.Add, AddFromPin, AddMany, AddRange and the Waypoint constructor)" }
 else { foreach ($p in $g17) { Write-Output "  FAIL  17: $p" }; $failures++ }
+
+# 18 (1.5.1): a map click decides by the right pin, and no arrival counts while the player is dead. The rules are
+# Unity-free and tested (MapClickRules.Decide, ArrivalRules.Step); this checks the wiring the tests cannot see.
+# In HandleWaypointClick: the four nearest pins are asked for (MinimapAccess.GetClosestOwnedWaypointPin,
+# GetClosestFollowedPin, GetClosestAdoptablePin, GetClosestTransientPin), once each and with the same reach local, before
+# MapClickRules.Decide; Decide is called once, and each of its four arguments, in that order, is a local with one store
+# instruction, whose value is exactly WaypointManager.HorizontalDistance(<that lookup's pin>.m_pos, <the position local
+# the lookup is given>) or -1, chosen by one conditional branch on that pin's local; its result is kept in a local with no
+# other store; no WaypointManager call that changes the route (the Queue list included) comes before it; the waypoint is
+# removed (WaypointManager.Remove) once, and AddFromPin is called once, its argument resolving to GetClosestAdoptablePin's
+# result with no ?: or ?? joining at the call. Not seen: which pin Remove is given (chosen with a ?: on the decision),
+# which arm of a distance's ?: is which, a write through a reference (ref, Interlocked), a change to the position or
+# reach local between the lookups and the distances, and anything done to the pins themselves before the lookups. Until 1.5.1 a followed pin anywhere within reach won over the pin under the pointer. In
+# WaypointManager.Tick: ArrivalRules.Step is called once, its playerDead argument is Character.IsDead, its result is
+# kept the same way, and OnReached comes after it. Which branch each result picks is logic - not seen here.
+$checks++
+$h18 = @()
+# The local a decision's result goes to: its index when the call is followed at once by a store into a local that no
+# other instruction stores into; -1 when no local is stored right after the call, -2 when the local is also set elsewhere.
+function Get-ResultLocal18($ins, [int]$callAt, [string]$name) {
+    if ($callAt + 1 -ge $ins.Count -or $ins[$callAt + 1].OpCode.Name -notlike "stloc*") { return -1 }
+    $li = Get-LocalIndex $ins[$callAt + 1]
+    if ($li -lt 0) { return -1 }
+    for ($k = 1; $k -lt $ins.Count; $k++) {
+        if ($ins[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $ins[$k]) -eq $li) {
+            $prev = $ins[$k - 1]
+            if (-not ($prev.OpCode.Name -like "call*" -and $prev.Operand -is [Mono.Cecil.MethodReference] -and $prev.Operand.Name -eq $name)) { return -2 }
+        }
+    }
+    return $li
+}
+# "" when the argument at $argAt is a local set once, from WaypointManager.HorizontalDistance(<the pin MinimapAccess.$lookup
+# returned>.m_pos, <the position that lookup is given>); otherwise what it is instead.
+function Test-Distance18($ins, $handlers, [int]$argAt, [string]$lookup) {
+    $p = $ins[$argAt]
+    if ($p.OpCode.Name -notlike "ldloc*") { return ("is not a local (it is {0})" -f (Get-InstructionText $p)) }
+    $li = Get-LocalIndex $p
+    $stores = @(); for ($k = 0; $k -lt $ins.Count; $k++) { if ($ins[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $ins[$k]) -eq $li) { $stores += $k } }
+    if ($stores.Count -ne 1) { return ("is a local set {0} times" -f $stores.Count) }
+    $s0 = $stores[0]
+    # Every value that reaches the store - the instruction before it, and the one before each branch that jumps to it -
+    # is the HorizontalDistance call or the literal -1 (no pin): "pin != null ? HorizontalDistance(...) : -1f".
+    $ends = @($s0 - 1)
+    for ($k = 0; $k -lt $s0; $k++) { if ("$($ins[$k].OpCode.FlowControl)" -eq "Branch" -and $ins[$k].Operand -eq $ins[$s0]) { $ends += ($k - 1) } }
+    $hd = -1; $bad = @()
+    foreach ($e in $ends) {
+        $i = $ins[$e]
+        if ($i.OpCode.Name -like "call*" -and $i.Operand -is [Mono.Cecil.MethodReference] -and $i.Operand.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and $i.Operand.Name -eq "HorizontalDistance") {
+            if ($hd -ge 0) { $bad += "a second distance" } else { $hd = $e }
+        }
+        elseif (-not ($i.OpCode.Name -eq "ldc.r4" -and [single]$i.Operand -eq [single]-1)) { $bad += (Get-InstructionText $i) }
+    }
+    if ($hd -lt 0) { return "is not set from WaypointManager.HorizontalDistance" }
+    if ($bad.Count -gt 0) { return ("is not exactly HorizontalDistance(...) or -1 (a value reaching it is {0})" -f ($bad -join ", ")) }
+    $ha = Get-CallArgs $ins $hd $handlers
+    if (-not $ha -or $ha.Count -ne 2) { return "comes from a HorizontalDistance call whose arguments cannot be traced" }
+    $a0 = $ins[$ha[0]]
+    if (-not ($a0.OpCode.Name -eq "ldfld" -and $a0.Operand.Name -eq "m_pos") -or $ha[0] -lt 1) { return ("is not measured from a pin's position (HorizontalDistance's first argument is {0})" -f (Get-InstructionText $a0)) }
+    $pin = Resolve-Value $ins ($ha[0] - 1) $handlers
+    if ($pin -ne ("call MinimapAccess::" + $lookup)) { return ("is measured from the pin of {0}, not of MinimapAccess.{1}" -f $pin, $lookup) }
+    # The choice between the two is one test of that pin and nothing else ("pin != null"): a single conditional branch in
+    # the expression, right after the pin is loaded (a null comparison's ldnull/ceq/cgt.un in between is allowed).
+    $pinLocal = Get-LocalIndex $ins[$ha[0] - 1]
+    $from = 0; for ($k = $s0 - 1; $k -ge 0; $k--) { if ($ins[$k].OpCode.Name -like "stloc*" -or $ins[$k].OpCode.Name -like "starg*") { $from = $k + 1; break } }
+    $conds = @(); for ($k = $from; $k -lt $s0; $k++) { if ("$($ins[$k].OpCode.FlowControl)" -eq "Cond_Branch") { $conds += $k } }
+    if ($conds.Count -ne 1) { return ("chooses between the distance and -1 with {0} tests, not one test of the pin" -f $conds.Count) }
+    $t = $conds[0] - 1
+    while ($t -ge $from -and @("ldnull", "ceq", "cgt.un", "ldc.i4.0") -contains $ins[$t].OpCode.Name) { $t-- }
+    if ($t -lt $from -or $ins[$t].OpCode.Name -notlike "ldloc*" -or (Get-LocalIndex $ins[$t]) -ne $pinLocal) { return "chooses between the distance and -1 by something other than whether that pin was found" }
+    $lk = Find-Calls $ins "Waypointer.MinimapAccess" $lookup
+    $la = $null; if ($lk.Count -eq 1) { $la = Get-CallArgs $ins $lk[0] $handlers }
+    $a1 = $ins[$ha[1]]
+    if (-not $la -or $la.Count -lt 2 -or $a1.OpCode.Name -notlike "ldloc*" -or $ins[$la[1]].OpCode.Name -notlike "ldloc*" -or (Get-LocalIndex $a1) -ne (Get-LocalIndex $ins[$la[1]])) {
+        return ("is not measured from the click's position (the position MinimapAccess.{0} is given)" -f $lookup)
+    }
+    return ""
+}
+if ($hwc) {
+    $hi = @($hwc.Body.Instructions); $hh = $hwc.Body.ExceptionHandlers
+    $dc = Find-Calls $hi "Waypointer.MapClickRules" "Decide"
+    $lookups18 = @("GetClosestOwnedWaypointPin", "GetClosestFollowedPin", "GetClosestAdoptablePin", "GetClosestTransientPin")   # Decide's argument order
+    if ($dc.Count -ne 1) { $h18 += ("HandleWaypointClick calls MapClickRules.Decide {0}x; expected once" -f $dc.Count) }
+    else {
+        $d0 = $dc[0]
+        $reach18 = @()
+        foreach ($lk in $lookups18) {
+            $q = Find-Calls $hi "Waypointer.MinimapAccess" $lk
+            if ($q.Count -ne 1) { $h18 += ("HandleWaypointClick calls MinimapAccess.{0} {1}x; expected once" -f $lk, $q.Count) }
+            else {
+                if ($q[0] -gt $d0) { $h18 += ("MinimapAccess.{0} is asked after MapClickRules.Decide" -f $lk) }
+                $qa = Get-CallArgs $hi $q[0] $hh
+                if ($qa -and $qa.Count -eq 3 -and $hi[$qa[2]].OpCode.Name -like "ldloc*") { $reach18 += (Get-LocalIndex $hi[$qa[2]]) } else { $reach18 += -1 }
+            }
+        }
+        if ($reach18.Count -eq 4 -and (@($reach18 | Select-Object -Unique).Count -ne 1 -or $reach18[0] -lt 0)) { $h18 += "the four nearest pins are not looked for with the same reach local" }
+        # Route changes, the queue list's own included (WaypointManager.Queue).
+        $mutators18 = @("Add", "AddFromPin", "AddMany", "AddRange", "Remove", "RemoveAt", "SkipActive", "Clear", "MakeActive", "ActivateClosest", "ForgetByPin", "get_Queue")
+        for ($k = 0; $k -lt $d0; $k++) {
+            $o = $hi[$k].Operand
+            if ($hi[$k].OpCode.Name -like "call*" -and $o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and $mutators18 -contains $o.Name) {
+                $h18 += ("WaypointManager.{0} is called before MapClickRules.Decide (the route changes before the nearest pin decides)" -f $o.Name)
+            }
+        }
+        $rm = Find-Calls $hi "Waypointer.WaypointManager" "Remove"
+        $fp = Find-Calls $hi "Waypointer.WaypointManager" "AddFromPin"
+        if ($rm.Count -ne 1 -or $fp.Count -ne 1) { $h18 += ("HandleWaypointClick calls WaypointManager.Remove {0}x and AddFromPin {1}x; expected once each" -f $rm.Count, $fp.Count) }
+        else {
+            # The pin followed is the nearest pin not yet followed, as is: no ?: or ?? joins at the call.
+            $fa = Get-CallArgs $hi $fp[0] $hh
+            $joins = @(); for ($k = 0; $k -lt $hi.Count; $k++) { if (("$($hi[$k].OpCode.FlowControl)" -eq "Branch" -or "$($hi[$k].OpCode.FlowControl)" -eq "Cond_Branch") -and $hi[$k].Operand -eq $hi[$fp[0]]) { $joins += $k } }
+            if (-not $fa -or $fa.Count -ne 1 -or $joins.Count -gt 0 -or (Resolve-Value $hi $fa[0] $hh) -ne "call MinimapAccess::GetClosestAdoptablePin") { $h18 += "WaypointManager.AddFromPin is not given the nearest pin not yet followed (MinimapAccess.GetClosestAdoptablePin's)" }
+        }
+        $dl = Get-ResultLocal18 $hi $d0 "Decide"
+        if ($dl -eq -1) { $h18 += "MapClickRules.Decide's result is not stored in a local right after the call" }
+        elseif ($dl -eq -2) { $h18 += "the local holding MapClickRules.Decide's result is also set from something else (an override of the decision)" }
+        $da = Get-CallArgs $hi $d0 $hh
+        if (-not $da -or $da.Count -ne 4) { $h18 += "MapClickRules.Decide's arguments cannot be traced" }
+        else {
+            for ($n = 0; $n -lt 4; $n++) {
+                $why = Test-Distance18 $hi $hh $da[$n] $lookups18[$n]
+                if ($why -ne "") { $h18 += ("MapClickRules.Decide's argument {0} {1}" -f ($n + 1), $why) }
+            }
+        }
+    }
+}
+else { $h18 += "Minimap_OnMapLeftClick_Patch.HandleWaypointClick not found" }
+$wmT = $plug.GetType("Waypointer.WaypointManager")
+$tk = $null; if ($wmT) { $tk = $wmT.Methods | Where-Object { $_.Name -eq "Tick" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $tk) { $h18 += "WaypointManager.Tick not found" }
+else {
+    $ti = @($tk.Body.Instructions); $th = $tk.Body.ExceptionHandlers
+    $st18 = Find-Calls $ti "Waypointer.ArrivalRules" "Step"
+    $or18 = Find-Calls $ti "Waypointer.WaypointManager" "OnReached"
+    if ($st18.Count -ne 1 -or $or18.Count -ne 1) { $h18 += ("WaypointManager.Tick calls ArrivalRules.Step {0}x and OnReached {1}x; expected once each" -f $st18.Count, $or18.Count) }
+    else {
+        if ($or18[0] -lt $st18[0]) { $h18 += "WaypointManager.Tick calls OnReached before ArrivalRules.Step" }
+        $sl = Get-ResultLocal18 $ti $st18[0] "Step"
+        if ($sl -eq -1) { $h18 += "ArrivalRules.Step's result is not stored in a local right after the call" }
+        elseif ($sl -eq -2) { $h18 += "the local holding ArrivalRules.Step's result is also set from something else (an arrival decided around it)" }
+        $sa = Get-CallArgs $ti $st18[0] $th
+        if (-not $sa -or $sa.Count -ne 4) { $h18 += "ArrivalRules.Step's arguments cannot be traced" }
+        else {
+            $v = Resolve-Value $ti $sa[1] $th
+            if ($v -notlike "*Character::IsDead") { $h18 += ("ArrivalRules.Step is not told whether the player is dead (its playerDead argument is {0}, not Character.IsDead)" -f $v) }
+        }
+    }
+}
+if ($h18.Count -eq 0) { Write-Output "  ok    a map click decides by the right pin (the four nearest pins asked, MapClickRules.Decide given each one's distance, before the route changes), and no arrival counts while the player is dead (ArrivalRules.Step's playerDead is Character.IsDead)" }
+else { foreach ($p in $h18) { Write-Output "  FAIL  18: $p" }; $failures++ }
 
 Write-Output ""
 Write-Output "== the server side =="

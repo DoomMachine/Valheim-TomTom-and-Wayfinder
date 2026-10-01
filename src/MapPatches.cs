@@ -56,31 +56,44 @@ namespace Waypointer
             if (Time.time - _lastClickTime < DoubleClickWindow
                 && WaypointManager.HorizontalDistance(world, _lastClickWorld) < radius)
             {
+                Plugin.Log.LogInfo("Map Alt-click: the second half of a double click - ignored");
                 return true;
             }
             _lastClickTime = Time.time;
             _lastClickWorld = world;
 
-            // Our own markers must win the gesture, and they can only be found by walking m_pins:
-            // Valheim's hit tests skip pins with save:false, which ours deliberately are.
-            Minimap.PinData pin = MinimapAccess.GetClosestWaypointPin(minimap, world, radius);
-            if (pin != null)
+            // The pin nearest the click decides (MapClickRules.Decide): the nearest marker of ours, the nearest followed
+            // pin, the nearest pin not yet followed and the nearest transient pin are weighed by distance. Our markers
+            // and the pins waypoints follow can only be found by walking m_pins: Valheim's hit tests skip pins with
+            // save:false, which our markers deliberately are. Transient pins (pings, shouts, other players, raid markers)
+            // are never followed, since their marker moves or expires on its own; one nearest the click puts a waypoint
+            // on the spot instead.
+            Minimap.PinData ownMarker = MinimapAccess.GetClosestOwnedWaypointPin(minimap, world, radius);
+            Minimap.PinData followedPin = MinimapAccess.GetClosestFollowedPin(minimap, world, radius);
+            Minimap.PinData otherPin = MinimapAccess.GetClosestAdoptablePin(minimap, world, radius);
+            Minimap.PinData transientPin = MinimapAccess.GetClosestTransientPin(minimap, world, radius);
+            float ownMarkerDistance = ownMarker != null ? WaypointManager.HorizontalDistance(ownMarker.m_pos, world) : -1f;
+            float followedPinDistance = followedPin != null ? WaypointManager.HorizontalDistance(followedPin.m_pos, world) : -1f;
+            float otherPinDistance = otherPin != null ? WaypointManager.HorizontalDistance(otherPin.m_pos, world) : -1f;
+            float transientPinDistance = transientPin != null ? WaypointManager.HorizontalDistance(transientPin.m_pos, world) : -1f;
+            MapClickAction action = MapClickRules.Decide(ownMarkerDistance, followedPinDistance, otherPinDistance, transientPinDistance);
+            LogClick(ownMarker, ownMarkerDistance, followedPin, followedPinDistance, otherPin, otherPinDistance,
+                transientPin, transientPinDistance, radius, action);
+
+            if (action == MapClickAction.RemoveOwnMarker || action == MapClickAction.StopFollowing)
             {
-                // Clicking a marker that is already a waypoint clears it. If the marker was the
-                // player's own, only the waypoint goes away - the marker stays on the map.
-                WaypointManager.Remove(WaypointManager.FindByPin(pin));
+                // Clicking a pin that is already a waypoint clears it. If the pin was the player's own,
+                // only the waypoint goes away - the pin stays on the map.
+                WaypointManager.Remove(WaypointManager.FindByPin(action == MapClickAction.RemoveOwnMarker ? ownMarker : followedPin));
                 WaypointManager.Notify("Waypoint removed");
                 return true;
             }
 
-            // Transient pins (pings, shouts, other players, raid markers) are skipped: their marker moves
-            // or expires on its own. No waypoint marker is in range here - GetClosestWaypointPin just
-            // returned null for the same radius.
-            pin = MinimapAccess.GetClosestAdoptablePin(minimap, world, radius);
-            if (pin != null)
+            if (action == MapClickAction.Follow)
             {
-                WaypointManager.AddFromPin(pin);
-                WaypointManager.Notify("Waypoint set: " + (string.IsNullOrEmpty(pin.m_name) ? "marker" : GameText.Localize(pin.m_name)));
+                Waypoint followed = WaypointManager.AddFromPin(otherPin);
+                WaypointManager.Notify(MapClickRules.FollowMessage(
+                    string.IsNullOrEmpty(otherPin.m_name) ? "" : GameText.Localize(otherPin.m_name), WaypointManager.IndexOf(followed)));
                 return true;
             }
 
@@ -88,16 +101,57 @@ namespace Waypointer
             // Only where the map shows explored land (by the player or through a Cartography Table), as Find does. A click
             // in the fog does nothing - consumed, so vanilla does not act on a pin nearby, and no message: the fog shows
             // why. Removing a marker and following a pin (above) work anywhere.
-            if (!MinimapAccess.IsExplored(world)) return true;
+            if (!MinimapAccess.IsExplored(world))
+            {
+                Plugin.Log.LogInfo("Map Alt-click on unexplored land - ignored");
+                return true;
+            }
 #endif
             Waypoint added = WaypointManager.Add(world, "", false);
 #if WAYFINDER
-            WaypointManager.Notify("Waypoint added");   // no coordinates: a readout would let clicks be steered
+            WaypointManager.Notify(MapClickRules.AddedMessage(WaypointManager.IndexOf(added)));   // no coordinates: a readout would let clicks be steered
 #else
-            WaypointManager.Notify("Waypoint added at " + CoordinateFormat.Format(added.Pos, false));
+            WaypointManager.Notify(MapClickRules.AddedMessage(WaypointManager.IndexOf(added)) + " at " + CoordinateFormat.Format(added.Pos, false));
 #endif
             return true;
         }
+
+        /// <summary>
+        /// One log line per Alt-click the plugin acts on: the nearest marker of ours, followed pin and other pin, and
+        /// what the click did, so a waypoint that went missing in play can be traced from the log.
+        /// TomTom adds the distances from the click and the reach; Wayfinder logs names only - no numbers about the map.
+        /// </summary>
+        private static void LogClick(Minimap.PinData ownMarker, float ownMarkerDistance, Minimap.PinData followedPin,
+            float followedPinDistance, Minimap.PinData otherPin, float otherPinDistance, Minimap.PinData transientPin,
+            float transientPinDistance, float radius, MapClickAction action)
+        {
+            string outcome = action == MapClickAction.RemoveOwnMarker ? "remove that marker's waypoint"
+                : action == MapClickAction.StopFollowing ? "stop following that pin"
+                : action == MapClickAction.Follow ? "follow the other pin" : "a waypoint on the spot";
+#if WAYFINDER
+            Plugin.Log.LogInfo("Map Alt-click: marker " + PinLabel(ownMarker) + ", followed pin " + PinLabel(followedPin)
+                + ", other pin " + PinLabel(otherPin) + ", ping or player marker " + PinLabel(transientPin) + " -> " + outcome);
+#else
+            Plugin.Log.LogInfo("Map Alt-click: marker " + PinLabel(ownMarker) + Metres(ownMarkerDistance)
+                + ", followed pin " + PinLabel(followedPin) + Metres(followedPinDistance)
+                + ", other pin " + PinLabel(otherPin) + Metres(otherPinDistance)
+                + ", ping or player marker " + PinLabel(transientPin) + Metres(transientPinDistance) + ", reach "
+                + radius.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " m -> " + outcome);
+#endif
+        }
+
+        private static string PinLabel(Minimap.PinData pin)
+        {
+            if (pin == null) return "none";
+            return string.IsNullOrEmpty(pin.m_name) ? "(unnamed)" : "'" + GameText.Localize(pin.m_name) + "'";
+        }
+
+#if !WAYFINDER
+        private static string Metres(float distance)
+        {
+            return distance < 0f ? "" : " at " + distance.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " m";
+        }
+#endif
     }
 
     /// <summary>
@@ -184,6 +238,7 @@ namespace Waypointer
                 Waypoint own = WaypointManager.FindByPin(MinimapAccess.GetClosestOwnedWaypointPin(__instance, pos, radius));
                 if (own != null)
                 {
+                    Plugin.Log.LogInfo("Map delete: a waypoint marker was within reach -> that waypoint is removed");
                     WaypointManager.Remove(own);
                     WaypointManager.Notify("Waypoint removed");
                     __result = true;
@@ -207,6 +262,7 @@ namespace Waypointer
                     if (handleHere)
                     {
                         // Remove deletes only a marker this mod owns; a pin of the player's is never touched.
+                        Plugin.Log.LogInfo("Map delete: a followed pin (or its stand-in marker) won -> its waypoint is removed, the pin stays");
                         WaypointManager.Remove(wp);
                         WaypointManager.Notify("Waypoint removed");
                         __result = true;

@@ -231,7 +231,16 @@ namespace Waypointer
         /// </summary>
         internal static Minimap.PinData GetClosestWaypointPin(Minimap mm, Vector3 world, float radius)
         {
-            return FindClosest(mm, world, radius, false);
+            return FindClosest(mm, world, radius, true, true);
+        }
+
+        /// <summary>
+        /// The nearest pin of the player's (or a shared or vanilla one) that a waypoint follows, within radius, or null -
+        /// never a marker this mod placed. The map click compares it with the nearest pin not yet followed.
+        /// </summary>
+        internal static Minimap.PinData GetClosestFollowedPin(Minimap mm, Vector3 world, float radius)
+        {
+            return FindClosest(mm, world, radius, false, true);
         }
 
         /// <summary>
@@ -279,6 +288,32 @@ namespace Waypointer
             return best;
         }
 
+        /// <summary>
+        /// The nearest transient pin (a ping, a shout, another player's marker, an event marker) within radius, or null.
+        /// Such a pin is never followed; when it is the pin nearest a map click, the click places a waypoint on the spot.
+        /// </summary>
+        internal static Minimap.PinData GetClosestTransientPin(Minimap mm, Vector3 world, float radius)
+        {
+            List<Minimap.PinData> pins = GetPins(mm);
+            Minimap.PinData best = null;
+            float bestSqr = radius * radius;
+            for (int i = 0; i < pins.Count; i++)
+            {
+                Minimap.PinData p = pins[i];
+                if (p == null || !IsTransient(p.m_type)) continue;
+
+                float dx = p.m_pos.x - world.x;
+                float dz = p.m_pos.z - world.z;
+                float sqr = dx * dx + dz * dz;
+                if (sqr <= bestSqr)
+                {
+                    bestSqr = sqr;
+                    best = p;
+                }
+            }
+            return best;
+        }
+
         /// <summary>Pins that come and go on their own: pings, shouts, other players, raid events.</summary>
         private static bool IsTransient(Minimap.PinType type)
         {
@@ -289,14 +324,16 @@ namespace Waypointer
 
         /// <summary>
         /// The nearest waypoint marker the mod itself placed (not a pin of the player's that a waypoint
-        /// follows) within radius, or null. Deletion uses it: a marker of ours always wins over anything else.
+        /// follows) within radius, or null. Deletion uses it so that a marker of ours always wins over anything else; the
+        /// map click weighs it by distance against the other pins (MapClickRules.Decide).
         /// </summary>
         internal static Minimap.PinData GetClosestOwnedWaypointPin(Minimap mm, Vector3 world, float radius)
         {
-            return FindClosest(mm, world, radius, true);
+            return FindClosest(mm, world, radius, true, false);
         }
 
-        private static Minimap.PinData FindClosest(Minimap mm, Vector3 world, float radius, bool ownedOnly)
+        /// <summary>The nearest pin a waypoint uses: a marker this mod placed (owned) and/or a pin it follows.</summary>
+        private static Minimap.PinData FindClosest(Minimap mm, Vector3 world, float radius, bool owned, bool followed)
         {
             List<Minimap.PinData> pins = GetPins(mm);
             Minimap.PinData best = null;
@@ -306,7 +343,7 @@ namespace Waypointer
                 Minimap.PinData p = pins[i];
                 if (p == null) continue;
                 Waypoint w = WaypointManager.FindByPin(p);
-                if (w == null || (ownedOnly && !w.OwnsPin)) continue;
+                if (w == null || (w.OwnsPin ? !owned : !followed)) continue;
 
                 float dx = p.m_pos.x - world.x;
                 float dz = p.m_pos.z - world.z;

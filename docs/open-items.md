@@ -5,14 +5,19 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-09-30, after v1.5.0.
+Last updated: 2026-10-01, with v1.5.1.
 
 ## Not yet tried in play
 
-1.4.1 has not been played on its own; all its changes are in 1.5.0. 1.5.0 was first played on 2026-09-30, in single
-player, and that session is not yet reflected in the lists below. 1.4.0 was used in at least three short sessions,
-1.3.1 in at least two and 1.3.0 in at least two, all on Windows.
+1.5.1 has not been played yet. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single player: its logs show
+waypoints reached, no Find run and no error from the plugin; 1.5.0 does not log map clicks, so the map-click checks
+below cannot be read from them. 1.4.1 has not been
+played on its own; all its changes are in 1.5.0. 1.4.0 was used in four short sessions, 1.3.1 in at least two and
+1.3.0 in at least two, all on Windows.
 
+- **1.5.1:** an Alt-click with several pins within reach (the nearest one counts), and one on a ping or another
+  player's marker (a waypoint on the spot); following a second pin ("Waypoint queued (2nd)"); dying close to the
+  waypoint being followed (it stays in the route); the new log lines.
 - **1.5.0:** a Wooden Greatsword Find at an Infested Mine, a Ruined Dvergr Tower and a Rock Spire; a mine whose chests
   have all been emptied being left out, as the host; pasting Valheim's `pos` line and Server Devcommands' `pos` line;
   with `Use3DDistance` on, a clifftop map click (on the terrain and on a Mistlands rock), and a Find place still
@@ -92,6 +97,9 @@ player, and that session is not yet reflected in the lists below. 1.4.0 was used
 - **Performance:** the plugin's `OnGUI` costs about 360 bytes and two calls per frame while the window is closed (worked
   out from Unity's code, not measured); turning Unity's `useGUILayout` off while it is closed would cut that, after a
   test in play.
+- **Pins the map hides:** an Alt-click weighs every pin within reach, including one whose icon type the map's filter
+  hides, or a shared pin while shared pins are hidden, so a hidden pin can take a click aimed at a visible one; leave
+  them out of the click.
 - The Bee Nest names and the Sealed Tower rooms under "Not verified".
 
 ## Put off for now
@@ -118,6 +126,8 @@ Wayfinder:
 - Find is silent, and places nothing if the game's explored-map test cannot be read.
 - What Wayfinder cannot police: other mods that show coordinates, edits to its save file, and pins made with dev
   commands.
+- A preflight check that Wayfinder's Find stays out of the log (today only the code keeps it out: what a Find queues,
+  and the route it replaces, are not logged).
 
 ## Watching the game
 
@@ -148,6 +158,11 @@ Wayfinder:
 - **Wayfinder shows and takes no coordinates**, in or out.
 - **Removing a marker wins:** when one of this mod's markers is within reach of a right-click, or of the controller's
   delete button on the big map, the waypoint is what gets removed, never one of your own pins.
+- **The pin nearest an Alt-click decides**, a waypoint marker of this mod's included; equally near, a waypoint's pin
+  (its waypoint is removed). A ping, a shout, another player's marker or an event marker is never followed: one nearest
+  the click puts a waypoint on the spot. A right-click delete keeps its own rule (above).
+- **A new waypoint joins the end of the route**: the arrow stays on the one in front, and an Alt-click's message says
+  where the new one waits.
 - **Typed coordinates are read with a decimal dot only** (a pasted `pos` line's decimal commas are read). Reading a
   decimal comma would silently move lines that work today, such as `12,5,-30` (read as 12, 5, -30), so a comma between
   two digits is never read as one: when nothing else on the line shows how it writes numbers and reading it that way
@@ -183,3 +198,10 @@ Wayfinder:
 ## Done
 
 Everything up to v1.5.0 is in the README's History. From here on, a finished item moves here with its version.
+
+- **1.5.1:** an Alt-click no longer lets a pin you follow anywhere within reach win over the pin under the pointer,
+  and a click on a ping or another player's marker puts a waypoint there; a waypoint an Alt-click adds behind others
+  says so; dying close to the waypoint being followed no longer counts as
+  reaching it; each Alt-click and each change you make to the route from the map, the window or the console is logged
+  (a Find aside: TomTom logs one summary line, Wayfinder nothing about what it found); the package READMEs say that
+  Alt-clicking a pin you follow stops following it.

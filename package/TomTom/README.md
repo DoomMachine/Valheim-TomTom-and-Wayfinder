@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.5.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.5.1 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -150,14 +150,27 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an empty spot | a waypoint there |
-| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). Any pin within reach counts, including one shared to you through a Cartography Table; pings, shouts, player markers and event markers are ignored |
-| a waypoint marker | the waypoint is removed |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). The pin nearest the click counts, including one shared to you through a Cartography Table; pings, shouts, other players' markers and event markers are never followed |
+| a waypoint marker, or a pin you already follow | the waypoint is removed (a pin of yours stays on the map) |
+
+When several pins or waypoint markers are within reach of the click, the one nearest the click counts (a
+right-click delete is different: there a waypoint marker within reach always wins, since deleting one of your pins
+cannot be undone). A ping, a shout, another player's marker or an event marker nearest the click puts a waypoint on
+the spot. The death pins of one in-game day all read the same ("Day 3"), so zoom in to pick the one you mean. A new waypoint joins the end of
+the route: the arrow keeps leading to the one in front, and the message says where the new one waits
+("Waypoint queued (2nd): Day 3").
 
 Plain clicks keep Valheim's normal behaviour, and an Alt-double-click places a single waypoint.
 Right-click delete — and the controller's delete button on the big map — works on waypoint
 markers too. When a waypoint marker is within reach, the waypoint is what gets removed, never one of
 your own pins; deleting one of your own pins that a waypoint follows drops that waypoint as well.
 Clicks on the window itself never reach the map underneath it.
+
+Dying close to the waypoint you are heading for does not count as reaching it: it stays in the route until you
+walk there. Each Alt-click the mod acts on gets a line in `BepInEx/LogOutput.log` ("Map Alt-click: ..."), and so
+does each change you make to the route from the map, the window or the console ("Route: ..."), and each arrival
+("Reached waypoint ..."); a Find logs one line for what it found and queued, and none for the route it replaces. A
+bug report about a waypoint that went missing is easiest to follow with that file.
 
 If you have hidden the waypoint marker's icon type with the map's icon filter, adding a waypoint shows it
 again: the game re-enables an icon type whenever a pin of that type is added. Pick a different
@@ -171,7 +184,7 @@ Alt-click on the map does nothing there, set `MapModifierKey` to another key.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.5.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.5.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -257,9 +270,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.5.0]
+   Loading [TomTom 1.5.1]
    Applied 2 of 2 patches.
-   TomTom 1.5.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.5.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.

@@ -40,6 +40,7 @@
     <Compile Include="..\src\CaptionFit.cs" />
     <Compile Include="..\src\RouteRead.cs" />
     <Compile Include="..\src\ArrivalRules.cs" />
+    <Compile Include="..\src\MapClickRules.cs" />
   </ItemGroup>
 
 </Project>
