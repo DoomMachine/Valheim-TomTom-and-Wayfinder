@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.5.1 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.5.2 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (a click on
@@ -29,14 +29,15 @@ Hold **Left Alt** and left-click:
 | You click | Result |
 | --- | --- |
 | an explored spot | a waypoint there (a click in unexplored fog does nothing) |
-| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). The pin nearest the click counts, including one shared to you through a Cartography Table; pings, shouts, other players' markers and event markers are never followed |
+| a pin already on your map | that pin becomes a waypoint (the mod never changes or deletes it; if the pin isn't on the map, e.g. on another character, a stand-in marks the spot until it is). The pin nearest the click counts, including one shared to you through a Cartography Table, but not one the map hides; pings, shouts, other players' markers and event markers are never followed |
 | a waypoint marker, or a pin you already follow | the waypoint is removed (a pin of yours stays on the map) |
 
 When several pins or waypoint markers are within reach of the click, the one nearest the click counts (a
 right-click delete is different: there a waypoint marker within reach always wins, since deleting one of your pins
 cannot be undone). A ping, a shout, another player's marker or an event marker nearest the click puts a waypoint on
-the spot, if it is explored. The death pins of one in-game day all read the same ("Day 3"), so zoom in to pick the one
-you mean. A new waypoint joins the end of
+the spot, if it is explored. Pins the map hides don't count: one whose icon type you have turned off in the map's filter, and a shared pin while
+you hide shared pins. The death pins of one in-game day all read the same ("Day 3"), so zoom in
+to pick the one you mean. A new waypoint joins the end of
 the route: the arrow keeps leading to the one in front, and the message says where the new one waits
 ("Waypoint queued (2nd): Day 3").
 
@@ -113,8 +114,8 @@ needs a plugin update.
   rock or nest placed through the build system or spawned with the console's `spawn` command (when a server's plugin
   answers, only if that server runs 1.4.1 or later).
 - **The Wooden Greatsword** is found in the Mistlands: in the treasure room of an Infested Mine - the waypoint is the
-  mine's entrance, and not every mine has a treasure room - and in the chests of ruined Dvergr towers and of the rock
-  spires (that chest sits on top of the spire, about 60 m up, and only some spires have one).
+  mine's entrance, and a mine is not sure to have a treasure room - and in the chests of ruined Dvergr towers and of
+  the rock spires (that chest sits on top of the spire, about 60 m up, and about 3 spires in 4 have one).
 - **Bee Nests grow only inside those places, and not in every one**: about 1 Abandoned House in 4, about 1
   Contested Tower in 4, 1 Bear Cave in 2 (on its fir tree), and in some of the rooms of an Abandoned Village or a
   Draugr Village - decided when the place's area is first generated. A nest found where the land has been
@@ -132,7 +133,7 @@ needs a plugin update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.5.1]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.5.2]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -216,9 +217,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.5.1]
+   Loading [Wayfinder 1.5.2]
    Applied 2 of 2 patches.
-   Wayfinder 1.5.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.5.2 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads.

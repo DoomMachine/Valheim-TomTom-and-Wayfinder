@@ -24,8 +24,11 @@
 #      flag (13d)
 #  16. Wayfinder places a waypoint from a map click only on explored land; TomTom's map click does not read it
 #  17. every code path that makes a waypoint is a known one
-#  18. a map click decides by the right pin (MapClickRules.Decide, given the distance to each of the four nearest pins,
-#      before the route changes), and no arrival counts while the player is dead (ArrivalRules.Step is told IsDead)
+#  18. a map click decides by the right pin (MapClickRules.Decide, given the distance to each of the four nearest pins
+#      the large map shows, before any of WaypointManager's route-changing methods is called), and ArrivalRules.Step is
+#      told whether the player is dead (Character.IsDead)
+#  19. the Alt-click is the plugin's, and only the Alt-click: the map click's prefix leaves a click without the modifier to
+#      the game and returns !held
 #  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
 #      requests, knows a player by the connection their call came on, and every place in range is sent back
 #  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
@@ -52,7 +55,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.5.1"
+$expectedVersion = "1.5.2"
 
 if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
     Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
@@ -203,6 +206,7 @@ $reflectedTypes = @{
     'Minimap.GetClosestPin'         = 'Minimap/PinData'
     'Minimap.m_pins'                = 'System.Collections.Generic.List`1<Minimap/PinData>'
     'Minimap.m_visibleIconTypes'    = 'System.Boolean[]'
+    'Minimap.m_sharedMapDataFade'   = 'System.Single'
     'Minimap.PinInteractRadius'     = 'System.Single'
     'Minimap.IsExplored'            = 'System.Boolean'
     'Game.RPC_DiscoverLocationResponse' = 'System.Void'
@@ -431,9 +435,10 @@ foreach ($t in $plug.GetTypes()) {
                     $pinTouches += ("{0} writes PinData.{1} ({2})" -f $where, $i.Operand.Name, $n)
                 }
                 # Reads are limited to plain values: a handle such as m_uiElement or m_NamePinData changes the
-                # pin on screen without any store to PinData.
-                elseif (@("m_name", "m_pos", "m_type") -notcontains $i.Operand.Name) {
-                    $pinTouches += ("{0} reads PinData.{1} (only m_name, m_pos and m_type may be read)" -f $where, $i.Operand.Name)
+                # pin on screen without any store to PinData. (m_ownerID since 1.5.2: a shared pin is hidden while
+                # shared pins are, and a map click leaves it out then.)
+                elseif (@("m_name", "m_pos", "m_type", "m_ownerID") -notcontains $i.Operand.Name) {
+                    $pinTouches += ("{0} reads PinData.{1} (only m_name, m_pos, m_type and m_ownerID may be read)" -f $where, $i.Operand.Name)
                 }
             }
             # Most of these are private, so a plugin can only reach them by name through reflection.
@@ -757,7 +762,7 @@ else {
         }
         if ($stores -eq 0 -or $stores -ne $fromCount) { $dirtyOk = $false }
     }
-    if ($dirtySeen -eq 0 -or -not $dirtyOk) { $rrWhy += "RetryRead does not set _dirty from 'the waypoints queued before the merge > 0' (a merged route would not be saved)" }
+    if ($dirtySeen -eq 0 -or -not $dirtyOk) { $rrWhy += "RetryRead does not set _dirty from '_queue.Count > 0' (a merged route would not be saved)" }
     # m1: in Load and RetryRead, the branch on ReadRoute's result: its false edge records the failed read before any
     # ret, and its true edge does not.
     foreach ($bm in @(@("Load", $null), @("RetryRead", $rri))) {
@@ -802,7 +807,7 @@ foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
     }
 } }
 if ($writeSites.Count -ne 1 -or $writeSites[0] -ne "WaypointManager.SaveIfDirty") { $rrWhy += ("SafeFile.WriteAllText must be called only from WaypointManager.SaveIfDirty; called from: {0}" -f ($writeSites -join ", ")) }
-if ($rrWhy.Count -eq 0) { Write-Output "  ok    a route that could not be read is not saved over (SaveIfDirty returns while RouteReadGate.Pending; Load and RetryRead record the failure, RetryRead returns then, only on ReadRoute's false branch; ReadRoute's catch returns false; NotRead is called; _dirty is set from the count queued before the merge)" }
+if ($rrWhy.Count -eq 0) { Write-Output "  ok    a route that could not be read is not saved over (SaveIfDirty returns while RouteReadGate.Pending; Load and RetryRead record the failure, RetryRead returns then, only on ReadRoute's false branch; ReadRoute's catch returns false; NotRead is called; _dirty is set from _queue.Count > 0)" }
 else { foreach ($w in $rrWhy) { Write-Output "  FAIL  $w" }; $failures++ }
 
 Write-Output ""
@@ -1404,9 +1409,34 @@ else { foreach ($p in $d13) { Write-Output "  FAIL  13d: $p" }; $failures++ }
 # 16 (1.5.0): Wayfinder places a waypoint from a map click only on explored land. In
 # Minimap_OnMapLeftClick_Patch.HandleWaypointClick it calls MinimapAccess.IsExplored once, branches on the result at once,
 # before its single call to WaypointManager.Add, and on the same local (the click's world position) that Add is given.
+# Since 1.5.2 the branch is followed: where IsExplored is false, the straight-line code reached returns true (the click
+# consumed) and calls nothing but Plugin.Log.LogInfo (no waypoint, nothing on screen), and where it is true the code goes
+# on to Add; and the rule
+# is asked after MapClickRules.Decide and AddFromPin, so following a pin or removing a waypoint works in the fog too.
 # TomTom's does not call it there.
 $checks++
 $f16 = @()
+# Where straight-line code (and unconditional branches) from $from ends: "ret:<n>" with the constant returned, "add" when
+# it calls WaypointManager.Add or AddFromPin on the way, "call:<Type.Name>" when it calls anything else but a log line
+# (ManualLogSource.LogInfo), "?" when it cannot be followed (a conditional branch, a throw).
+function Get-PathEnd16($ins, [int]$from) {
+    $k = $from; $consts = @{}; $top = $null; $steps = 0
+    while ($k -ge 0 -and $k -lt $ins.Count -and $steps -lt 200) {
+        $steps++
+        $i = $ins[$k]; $n = $i.OpCode.Name; $f = "$($i.OpCode.FlowControl)"
+        if ($n -like "call*" -and $i.Operand -is [Mono.Cecil.MethodReference] -and $i.Operand.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and @("Add", "AddFromPin") -contains $i.Operand.Name) { return "add" }
+        if ($n -like "call*" -and $i.Operand -is [Mono.Cecil.MethodReference] -and -not ($i.Operand.DeclaringType.FullName -eq "BepInEx.Logging.ManualLogSource" -and $i.Operand.Name -eq "LogInfo")) { return ("call:{0}.{1}" -f $i.Operand.DeclaringType.Name, $i.Operand.Name) }
+        if ($n -match '^ldc\.i4\.([0-8])$') { $top = [int]$Matches[1] }
+        elseif ($n -like "stloc*") { $consts[(Get-LocalIndex $i)] = $top; $top = $null }
+        elseif ($n -like "ldloc*") { $li = Get-LocalIndex $i; $top = $(if ($consts.ContainsKey($li)) { $consts[$li] } else { $null }) }
+        elseif ($f -eq "Return") { return ("ret:{0}" -f $top) }
+        elseif ($f -eq "Branch") { $k = [array]::IndexOf($ins, $i.Operand); continue }
+        elseif ($f -eq "Cond_Branch" -or $f -eq "Throw") { return "?" }
+        else { $top = $null }
+        $k++
+    }
+    return "?"
+}
 $mlc = $plug.GetType("Waypointer.Minimap_OnMapLeftClick_Patch")
 $hwc = $null; if ($mlc) { $hwc = $mlc.Methods | Where-Object { $_.Name -eq "HandleWaypointClick" -and $_.HasBody } | Select-Object -First 1 }
 if (-not $hwc) { $f16 += "Minimap_OnMapLeftClick_Patch.HandleWaypointClick not found" }
@@ -1426,9 +1456,22 @@ else {
         if ($ea -and $hi[$ea[0]].OpCode.Name -like "ldloc*") { $el = Get-LocalIndex $hi[$ea[0]] }
         if ($aa -and $hi[$aa[0]].OpCode.Name -like "ldloc*") { $al = Get-LocalIndex $hi[$aa[0]] }
         if ($el -lt 0 -or $el -ne $al) { $f16 += "IsExplored is not given the same local (the click's position) as WaypointManager.Add" }
+        $br = $hi[$ie[0] + 1]
+        $refuseAt = -1; $goAt = -1
+        if ($br.OpCode.Name -like "brtrue*") { $refuseAt = $ie[0] + 2; $goAt = [array]::IndexOf($hi, $br.Operand) }
+        elseif ($br.OpCode.Name -like "brfalse*") { $refuseAt = [array]::IndexOf($hi, $br.Operand); $goAt = $ie[0] + 2 }
+        $refuse = $(if ($refuseAt -ge 0) { Get-PathEnd16 $hi $refuseAt } else { "?" })
+        if ($refuse -ne "ret:1") {
+            $f16 += ("where IsExplored is false the click {0}, not a consumed refusal (return true, no waypoint, nothing but a log line)" -f $(if ($refuse -eq "add") { "places a waypoint" } elseif ($refuse -like "ret:*") { "returns " + $refuse.Substring(4) } elseif ($refuse -like "call:*") { "calls " + $refuse.Substring(5) } else { "cannot be followed" }))
+        }
+        if ($goAt -lt 0 -or $ad[0] -lt $goAt) { $f16 += "where IsExplored is true the click does not go on to WaypointManager.Add" }
+        $dc16 = Find-Calls $hi "Waypointer.MapClickRules" "Decide"; $fp16 = Find-Calls $hi "Waypointer.WaypointManager" "AddFromPin"
+        if ($dc16.Count -ne 1 -or $fp16.Count -ne 1 -or $ie[0] -lt $dc16[0] -or $ie[0] -lt $fp16[0]) {
+            $f16 += "IsExplored is asked before MapClickRules.Decide or AddFromPin (following a pin and removing a waypoint must work in the fog)"
+        }
     }
 }
-if ($f16.Count -eq 0) { Write-Output ("  ok    {0}" -f $(if ($Edition -eq "TomTom") { "TomTom's map click places a waypoint anywhere (does not read MinimapAccess.IsExplored)" } else { "Wayfinder's map click places a waypoint only where MinimapAccess.IsExplored says the map is explored" })) }
+if ($f16.Count -eq 0) { Write-Output ("  ok    {0}" -f $(if ($Edition -eq "TomTom") { "TomTom's map click places a waypoint anywhere (does not read MinimapAccess.IsExplored)" } else { "Wayfinder's map click places a waypoint only where MinimapAccess.IsExplored says the map is explored (the branch followed to a consumed refusal), after the click's decision" })) }
 else { foreach ($p in $f16) { Write-Output "  FAIL  16: $p" }; $failures++ }
 
 # 17 (1.5.0): every code path that makes a waypoint is a known one. WaypointManager.Add, AddFromPin, AddMany and AddRange
@@ -1478,9 +1521,19 @@ else { foreach ($p in $g17) { Write-Output "  FAIL  17: $p" }; $failures++ }
 # the lookup is given>) or -1, chosen by one conditional branch on that pin's local; its result is kept in a local with no
 # other store; no WaypointManager call that changes the route (the Queue list included) comes before it; the waypoint is
 # removed (WaypointManager.Remove) once, and AddFromPin is called once, its argument resolving to GetClosestAdoptablePin's
-# result with no ?: or ?? joining at the call. Not seen: which pin Remove is given (chosen with a ?: on the decision),
-# which arm of a distance's ?: is which, a write through a reference (ref, Interlocked), a change to the position or
-# reach local between the lookups and the distances, and anything done to the pins themselves before the lookups. Until 1.5.1 a followed pin anywhere within reach won over the pin under the pointer. In
+# result with no ?: or ?? joining at the call. Since 1.5.2 the four lookups leave out the pins the large map hides, as
+# Valheim's own click does: each hands its walk over the pins (MinimapAccess.FindClosest or ClosestAdoptable, or its own
+# loop in GetClosestTransientPin) MinimapAccess.ShownIconTypes and SharedPinsFade, called in that lookup, and each walk
+# asks MapClickRules.PinShown once, with those two as its first and third arguments and one pin local's m_type and
+# m_ownerID as its second and fourth, and branches on the result at once; ShownIconTypes reads _visibleIconTypesField and
+# SharedPinsFade _sharedMapDataFadeField (not the other's), each set in Init from AccessTools.Field with the game's name;
+# and the right-click delete (Minimap_RemovePin_Patch.Prefix) and WaypointManager.EnsurePins keep counting hidden pins:
+# they ask GetClosestOwnedWaypointPinEvenHidden and GetClosestAdoptablePinEvenHidden (never the click's lookups), which
+# hand their walk null and 1. Not seen: which pin Remove is given (chosen with a ?: on the decision), which arm of a
+# distance's ?: is which, which way PinShown's branch goes or another test joined to it, which way the helpers' guards
+# go, a write through a reference (ref, Interlocked), a change to the position or reach local
+# between the lookups and the distances, and anything done to the pins themselves before the lookups. Until 1.5.1 a
+# followed pin anywhere within reach won over the pin under the pointer. In
 # WaypointManager.Tick: ArrivalRules.Step is called once, its playerDead argument is Character.IsDead, its result is
 # kept the same way, and OnReached comes after it. Which branch each result picks is logic - not seen here.
 $checks++
@@ -1594,6 +1647,95 @@ if ($hwc) {
     }
 }
 else { $h18 += "Minimap_OnMapLeftClick_Patch.HandleWaypointClick not found" }
+# 1.5.2: the four lookups leave out the pins the large map hides.
+$maT = $plug.GetType("Waypointer.MinimapAccess")
+function Get-Method18($t, [string]$name, [int]$argc) {
+    if (-not $t) { return $null }
+    return $t.Methods | Where-Object { $_.Name -eq $name -and $_.HasBody -and $_.Parameters.Count -eq $argc } | Select-Object -First 1
+}
+# "" when the walk asks MapClickRules.PinShown once, branches on its result at once, and gives it, as its first and
+# third arguments, values that resolve to $filter and $fade (a parameter's name, or the call that set a local).
+function Test-PinShown18($m, [string]$filter, [string]$fade) {
+    $wi = @($m.Body.Instructions); $wh = $m.Body.ExceptionHandlers
+    $ps = Find-Calls $wi "Waypointer.MapClickRules" "PinShown"
+    if ($ps.Count -ne 1) { return ("asks MapClickRules.PinShown {0}x, expected once" -f $ps.Count) }
+    if ("$($wi[$ps[0] + 1].OpCode.FlowControl)" -ne "Cond_Branch") { return "does not branch on MapClickRules.PinShown's result right after the call" }
+    $pa = Get-CallArgs $wi $ps[0] $wh
+    if (-not $pa -or $pa.Count -ne 4) { return "gives MapClickRules.PinShown arguments that cannot be traced" }
+    $got = @()
+    foreach ($n in @(0, 2)) {
+        $a = $wi[$pa[$n]]
+        if ($a.OpCode.Name -like "ldarg*") {
+            $ix = -1
+            if ($a.OpCode.Name -match '^ldarg\.([0-3])$') { $ix = [int]$Matches[1] } elseif ($a.Operand -is [Mono.Cecil.ParameterDefinition]) { $ix = $a.Operand.Index }
+            if ($m.HasThis) { $ix-- }
+            $got += $(if ($ix -ge 0 -and $ix -lt $m.Parameters.Count) { "parameter " + $m.Parameters[$ix].Name } else { "an argument" })
+        }
+        else { $got += (Resolve-Value $wi $pa[$n] $wh) }
+    }
+    if ($got[0] -ne $filter -or $got[1] -ne $fade) { return ("gives MapClickRules.PinShown {0} and {1}, not {2} and {3}" -f $got[0], $got[1], $filter, $fade) }
+    $t1 = $wi[$pa[1]]; $t3 = $wi[$pa[3]]
+    $pinOk = $t1.OpCode.Name -eq "ldfld" -and $t1.Operand.Name -eq "m_type" -and $t3.OpCode.Name -eq "ldfld" -and $t3.Operand.Name -eq "m_ownerID" -and $pa[1] -ge 1 -and $pa[3] -ge 1 -and $wi[$pa[1] - 1].OpCode.Name -like "ldloc*" -and $wi[$pa[3] - 1].OpCode.Name -like "ldloc*" -and (Get-LocalIndex $wi[$pa[1] - 1]) -eq (Get-LocalIndex $wi[$pa[3] - 1])
+    if (-not $pinOk) { return ("gives MapClickRules.PinShown {0} and {1} as the pin's type and owner, not one pin's m_type and m_ownerID" -f (Get-InstructionText $t1), (Get-InstructionText $t3)) }
+    return ""
+}
+$walks18 = @(@("GetClosestOwnedWaypointPin", "FindClosest", 7, 5, 6), @("GetClosestFollowedPin", "FindClosest", 7, 5, 6), @("GetClosestAdoptablePin", "ClosestAdoptable", 5, 3, 4))
+foreach ($w in $walks18) {
+    $lm = Get-Method18 $maT $w[0] 3
+    if (-not $lm) { $h18 += ("MinimapAccess.{0} not found" -f $w[0]); continue }
+    $li = @($lm.Body.Instructions); $lh = $lm.Body.ExceptionHandlers
+    $wc = Find-Calls $li "Waypointer.MinimapAccess" $w[1]
+    $wa = $null; if ($wc.Count -eq 1) { $wa = Get-CallArgs $li $wc[0] $lh }
+    if (-not $wa -or $wa.Count -ne $w[2]) { $h18 += ("MinimapAccess.{0} does not hand its walk to MinimapAccess.{1} once" -f $w[0], $w[1]); continue }
+    $vf = Resolve-Value $li $wa[$w[3]] $lh; $vd = Resolve-Value $li $wa[$w[4]] $lh
+    if ($vf -ne "call MinimapAccess::ShownIconTypes" -or $vd -ne "call MinimapAccess::SharedPinsFade") {
+        $h18 += ("MinimapAccess.{0} does not leave out the pins the map hides (it hands {1} {2} and {3}, not ShownIconTypes and SharedPinsFade)" -f $w[0], $w[1], $vf, $vd)
+    }
+}
+foreach ($wk in @(@("FindClosest", 7), @("ClosestAdoptable", 5))) {
+    $wm18 = Get-Method18 $maT $wk[0] $wk[1]
+    if (-not $wm18) { $h18 += ("MinimapAccess.{0} not found" -f $wk[0]); continue }
+    $why = Test-PinShown18 $wm18 "parameter shownIconTypes" "parameter sharedPinsFade"
+    if ($why -ne "") { $h18 += ("MinimapAccess.{0} {1}" -f $wk[0], $why) }
+}
+$tp18 = Get-Method18 $maT "GetClosestTransientPin" 3
+if (-not $tp18) { $h18 += "MinimapAccess.GetClosestTransientPin not found" }
+else {
+    $why = Test-PinShown18 $tp18 "call MinimapAccess::ShownIconTypes" "call MinimapAccess::SharedPinsFade"
+    if ($why -ne "") { $h18 += ("MinimapAccess.GetClosestTransientPin {0}" -f $why) }
+}
+$init18 = Get-Method18 $maT "Init" 0
+$ii18 = $(if ($init18) { @($init18.Body.Instructions) } else { @() })
+foreach ($hp in @(@("ShownIconTypes", "_visibleIconTypesField", "_sharedMapDataFadeField", "m_visibleIconTypes"), @("SharedPinsFade", "_sharedMapDataFadeField", "_visibleIconTypesField", "m_sharedMapDataFade"))) {
+    $hm = Get-Method18 $maT $hp[0] 1
+    if (-not $hm) { $h18 += ("MinimapAccess.{0} not found" -f $hp[0]); continue }
+    $reads = @($hm.Body.Instructions | Where-Object { $_.OpCode.Name -eq "ldsfld" -and $_.Operand.DeclaringType.FullName -eq "Waypointer.MinimapAccess" } | ForEach-Object { $_.Operand.Name })
+    if ($reads -notcontains $hp[1] -or $reads -contains $hp[2]) { $h18 += ("MinimapAccess.{0} does not read {1} alone (it reads {2})" -f $hp[0], $hp[1], ($reads -join ", ")) }
+    $set = $false
+    for ($k = 0; $k -lt $ii18.Count; $k++) {
+        if ($ii18[$k].OpCode.Name -eq "stsfld" -and $ii18[$k].Operand.Name -eq $hp[1]) {
+            for ($j = $k - 1; $j -ge [Math]::Max(0, $k - 6); $j--) { if ($ii18[$j].OpCode.Name -eq "ldstr" -and "$($ii18[$j].Operand)" -eq $hp[3]) { $set = $true } }
+        }
+    }
+    if (-not $set) { $h18 += ("MinimapAccess.Init does not set {0} from AccessTools.Field(typeof(Minimap), '{1}')" -f $hp[1], $hp[3]) }
+}
+foreach ($kp in @(@("Waypointer.Minimap_RemovePin_Patch", "Prefix", "GetClosestOwnedWaypointPinEvenHidden", "GetClosestOwnedWaypointPin"), @("Waypointer.WaypointManager", "EnsurePins", "GetClosestAdoptablePinEvenHidden", "GetClosestAdoptablePin"))) {
+    $kt = $plug.GetType($kp[0]); $km = $null; if ($kt) { $km = $kt.Methods | Where-Object { $_.Name -eq $kp[1] -and $_.HasBody } | Select-Object -First 1 }
+    if (-not $km) { $h18 += ("{0}.{1} not found" -f $kp[0], $kp[1]); continue }
+    $ki = @($km.Body.Instructions)
+    $good = Find-Calls $ki "Waypointer.MinimapAccess" $kp[2]; $bad = Find-Calls $ki "Waypointer.MinimapAccess" $kp[3]
+    if ($good.Count -ne 1 -or $bad.Count -ne 0) { $h18 += ("{0}.{1} calls MinimapAccess.{2} {3}x and {4} {5}x; expected once and never (pins the map hides must still count there)" -f $kp[0].Split('.')[-1], $kp[1], $kp[2], $good.Count, $kp[3], $bad.Count) }
+}
+foreach ($w in @(@("GetClosestOwnedWaypointPinEvenHidden", "FindClosest", 7, 5, 6), @("GetClosestAdoptablePinEvenHidden", "ClosestAdoptable", 5, 3, 4))) {
+    $lm = Get-Method18 $maT $w[0] 3
+    if (-not $lm) { $h18 += ("MinimapAccess.{0} not found" -f $w[0]); continue }
+    $li = @($lm.Body.Instructions); $lh = $lm.Body.ExceptionHandlers
+    $wc = Find-Calls $li "Waypointer.MinimapAccess" $w[1]
+    $wa = $null; if ($wc.Count -eq 1) { $wa = Get-CallArgs $li $wc[0] $lh }
+    $nf = $null; $nd = $null
+    if ($wa -and $wa.Count -eq $w[2]) { $nf = $li[$wa[$w[3]]]; $nd = $li[$wa[$w[4]]] }
+    if (-not ($nf -and $nf.OpCode.Name -eq "ldnull" -and $nd -and $nd.OpCode.Name -eq "ldc.r4" -and [single]$nd.Operand -eq [single]1)) { $h18 += ("MinimapAccess.{0} does not hand its walk null and 1 (every pin, shown or not)" -f $w[0]) }
+}
 $wmT = $plug.GetType("Waypointer.WaypointManager")
 $tk = $null; if ($wmT) { $tk = $wmT.Methods | Where-Object { $_.Name -eq "Tick" -and $_.HasBody } | Select-Object -First 1 }
 if (-not $tk) { $h18 += "WaypointManager.Tick not found" }
@@ -1615,8 +1757,52 @@ else {
         }
     }
 }
-if ($h18.Count -eq 0) { Write-Output "  ok    a map click decides by the right pin (the four nearest pins asked, MapClickRules.Decide given each one's distance, before the route changes), and no arrival counts while the player is dead (ArrivalRules.Step's playerDead is Character.IsDead)" }
+if ($h18.Count -eq 0) { Write-Output "  ok    a map click decides by the right pin (the four nearest pins the map shows asked, MapClickRules.Decide given each one's distance, before WaypointManager's route-changing methods), and ArrivalRules.Step is told whether the player is dead (its playerDead is Character.IsDead)" }
 else { foreach ($p in $h18) { Write-Output "  FAIL  18: $p" }; $failures++ }
+
+# 19 (1.5.2): the Alt-click is the plugin's, and only the Alt-click. Minimap_OnMapLeftClick_Patch.Prefix reads
+# Hotkeys.Held(Plugin.MapModifierKey) once into a local set nowhere else but to false; where that local is false the
+# straight-line code reached returns true (the click left to the game, calling nothing but an info log line on the way);
+# and the method has one "return !held" (ldloc; ldc.i4.0; ceq; ret). Not seen: another return of a constant, or a store
+# of false into the local after it is read, while the modifier is held (a "return true" where the click cannot be placed
+# passes), the window's early return, and a throw before the modifier is read.
+$checks++
+$p19 = @()
+$mlc19 = $plug.GetType("Waypointer.Minimap_OnMapLeftClick_Patch")
+$pre19 = $null; if ($mlc19) { $pre19 = $mlc19.Methods | Where-Object { $_.Name -eq "Prefix" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $pre19) { $p19 += "Minimap_OnMapLeftClick_Patch.Prefix not found" }
+else {
+    $pi19 = @($pre19.Body.Instructions); $ph19 = $pre19.Body.ExceptionHandlers
+    $hd19 = Find-Calls $pi19 "Waypointer.Hotkeys" "Held"
+    if ($hd19.Count -ne 1) { $p19 += ("Prefix calls Hotkeys.Held {0}x; expected once" -f $hd19.Count) }
+    else {
+        $ha19 = Get-CallArgs $pi19 $hd19[0] $ph19
+        if (-not $ha19 -or (Get-InstructionText $pi19[$ha19[0]]) -ne "ldsfld Plugin::MapModifierKey") { $p19 += "Prefix does not ask Hotkeys.Held about Plugin.MapModifierKey" }
+        if ($pi19[$hd19[0] + 1].OpCode.Name -notlike "stloc*") { $p19 += "Hotkeys.Held's result is not kept in a local right after the call" }
+        else {
+            $hl19 = Get-LocalIndex $pi19[$hd19[0] + 1]
+            for ($k = 0; $k -lt $pi19.Count; $k++) {
+                if ($k -ne $hd19[0] + 1 -and $pi19[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $pi19[$k]) -eq $hl19 -and -not ($k -ge 1 -and $pi19[$k - 1].OpCode.Name -eq "ldc.i4.0")) { $p19 += "the local holding Hotkeys.Held's result is also set from something else" }
+            }
+            $br19 = -1
+            for ($k = $hd19[0] + 2; $k -lt $pi19.Count - 1; $k++) { if ($pi19[$k].OpCode.Name -like "ldloc*" -and (Get-LocalIndex $pi19[$k]) -eq $hl19 -and "$($pi19[$k + 1].OpCode.FlowControl)" -eq "Cond_Branch") { $br19 = $k + 1; break } }
+            if ($br19 -lt 0) { $p19 += "Prefix does not branch on whether the modifier is held (a plain click would be the plugin's)" }
+            else {
+                $b19 = $pi19[$br19]; $notHeld = -1
+                if ($b19.OpCode.Name -like "brtrue*") { $notHeld = $br19 + 1 } elseif ($b19.OpCode.Name -like "brfalse*") { $notHeld = [array]::IndexOf($pi19, $b19.Operand) }
+                $end19 = $(if ($notHeld -ge 0) { Get-PathEnd16 $pi19 $notHeld } else { "?" })
+                if ($end19 -ne "ret:1") { $p19 += ("where the modifier is not held the click is not left to the game at once (the code reached ends {0})" -f $end19) }
+            }
+            $neg19 = 0
+            for ($k = 3; $k -lt $pi19.Count; $k++) {
+                if ($pi19[$k].OpCode.Name -eq "ret" -and $pi19[$k - 1].OpCode.Name -eq "ceq" -and $pi19[$k - 2].OpCode.Name -eq "ldc.i4.0" -and $pi19[$k - 3].OpCode.Name -like "ldloc*" -and (Get-LocalIndex $pi19[$k - 3]) -eq $hl19) { $neg19++ }
+            }
+            if ($neg19 -ne 1) { $p19 += "Prefix does not return '!held' once (with the modifier held, Valheim's own click could run)" }
+        }
+    }
+}
+if ($p19.Count -eq 0) { Write-Output "  ok    the Alt-click is the plugin's: without the modifier a click is left to the game, and Prefix returns !Hotkeys.Held(MapModifierKey)" }
+else { foreach ($p in $p19) { Write-Output "  FAIL  19: $p" }; $failures++ }
 
 Write-Output ""
 Write-Output "== the server side =="

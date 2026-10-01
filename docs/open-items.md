@@ -5,16 +5,18 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-10-01, with v1.5.1.
+Last updated: 2026-10-01, with v1.5.2.
 
 ## Not yet tried in play
 
-1.5.1 has not been played yet. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single player: its logs show
+1.5.2 and 1.5.1 have not been played yet. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single player: its logs show
 waypoints reached, no Find run and no error from the plugin; 1.5.0 does not log map clicks, so the map-click checks
 below cannot be read from them. 1.4.1 has not been
 played on its own; all its changes are in 1.5.0. 1.4.0 was used in four short sessions, 1.3.1 in at least two and
 1.3.0 in at least two, all on Windows.
 
+- **1.5.2:** an Alt-click near a pin whose icon type the map's filter hides, and near a shared pin while shared pins
+  are hidden (the pin the map shows counts).
 - **1.5.1:** an Alt-click with several pins within reach (the nearest one counts), and one on a ping or another
   player's marker (a waypoint on the spot); following a second pin ("Waypoint queued (2nd)"); dying close to the
   waypoint being followed (it stays in the route); the new log lines.
@@ -69,37 +71,20 @@ played on its own; all its changes are in 1.5.0. 1.4.0 was used in four short se
 
 ## Next release (small, planned)
 
-- **Preflight:** the check of Wayfinder's fog rule finds the rule but not which way it branches; make it follow the
-  branch, and require the rule to come after the paths that follow a pin.
+- **Preflight:** in the map click's test of a hidden pin, which way it branches, another test joined to it, which pin
+  it is given, and which way the two helpers that read the map's icon filter and shared-pin fade test the map are not
+  checked; nor are the pin lookups' owned and followed flags and the right-click's second lookup. In the map click's
+  prefix, another return of a constant, or a store of false into the modifier's local, while the modifier is held is not
+  checked (the game's own left click would then run during an Alt-click).
 - **Tests:** a Find place's height is marked as an estimate and carried into and out of the route file; only the
   route file's format and the arrival rule are tested, not the code that marks the flag in Find and carries it to and
   from the queue and the file. Two more planted defects pass every check and test: a chest check measured in 3D (it
   fails safe) and the order of the arrow's static fields. Some conditions around reading an unreadable route again
   (the last try when another world loads or the game closes, the reset when another world loads, and the timed retry
   during play) are caught by no test or check in this repository.
-- **Wording:**
-  - the package READMEs' "not every mine has a treasure room" and "only some spires have one" - better: a mine is not
-    sure to have one, and about 3 spires in 4 have one;
-  - the README says a Find place is measured horizontally where the ground is not loaded, but it keeps its estimated
-    height;
-  - the README's "more than 10 m off the ground at about 1% of places" is from one seed, before a place's own
-    levelling;
-  - the README's "nothing is stored" should be "nothing measured is stored";
-  - `SkipCheckedChests`' description and the TomTom README should say that, joined to a server, the Wooden
-    Greatsword's chest check needs the server on 1.5.0;
-  - Wayfinder's `Use3DDistance` description mentions typed values, which Wayfinder does not take;
-  - the README's History and the fog-rule check's message claim more than the check tests;
-  - the README's route check says "before the merge", which the check does not test.
-- **Docs:** if a game update removes the game's explored-map test that Wayfinder reads, its map click places no
-  waypoint anywhere, with nothing on screen to say why (following a pin and removing a marker still work). Say so in
-  the README.
-- **Repository:** `run-tests.sh` and `build.sh` are not marked executable.
 - **Performance:** the plugin's `OnGUI` costs about 360 bytes and two calls per frame while the window is closed (worked
   out from Unity's code, not measured); turning Unity's `useGUILayout` off while it is closed would cut that, after a
   test in play.
-- **Pins the map hides:** an Alt-click weighs every pin within reach, including one whose icon type the map's filter
-  hides, or a shared pin while shared pins are hidden, so a hidden pin can take a click aimed at a visible one; leave
-  them out of the click.
 - The Bee Nest names and the Sealed Tower rooms under "Not verified".
 
 ## Put off for now
@@ -135,7 +120,7 @@ Wayfinder:
   game build. After a game update, check them, and run Find again for "(possible)" merchant spots saved before it.
 - **Private game members** reached by reflection (such as the map's pin list, and the game's handler for a
   Vegvisir-style answer, which Find patches): if an update changes one, the feature that uses it works less well or
-  not at all (Wayfinder's map click, for one; see "Next release").
+  not at all (Wayfinder's map click, for one: the README's implementation notes say what it does then).
 
 ## Ideas (not planned)
 
@@ -149,7 +134,8 @@ Wayfinder:
   server, and settings sync (not needed: the server tells each player its rule).
 - A mutation-test script in this repository that plants a defect for each of preflight's checks and shows the check
   fails. Releases that change the checks are tried that way, with a script kept outside the repository; the planted
-  defects known to pass every check are listed under "Next release" and "Put off for now".
+  defects known to pass every check are listed under "Next release" and "Put off for now", and for the map click's check
+  in the README's Checking section.
 
 ## Decided or not planned - reopen only with a new reason
 
@@ -157,9 +143,11 @@ Wayfinder:
   reaches the Cartography Table or your saved map.
 - **Wayfinder shows and takes no coordinates**, in or out.
 - **Removing a marker wins:** when one of this mod's markers is within reach of a right-click, or of the controller's
-  delete button on the big map, the waypoint is what gets removed, never one of your own pins.
-- **The pin nearest an Alt-click decides**, a waypoint marker of this mod's included; equally near, a waypoint's pin
-  (its waypoint is removed). A ping, a shout, another player's marker or an event marker is never followed: one nearest
+  delete button on the big map, the waypoint is what gets removed, never one of your own pins - even while the map
+  hides the marker's icon type.
+- **The pin nearest an Alt-click decides**, among the pins the map shows, a waypoint marker of this mod's included;
+  equally near, a waypoint's pin (its waypoint is removed). While the modifier is held the game's own left click never
+  runs. A ping, a shout, another player's marker or an event marker is never followed: one nearest
   the click puts a waypoint on the spot. A right-click delete keeps its own rule (above).
 - **A new waypoint joins the end of the route**: the arrow stays on the one in front, and an Alt-click's message says
   where the new one waits.
@@ -199,6 +187,13 @@ Wayfinder:
 
 Everything up to v1.5.0 is in the README's History. From here on, a finished item moves here with its version.
 
+- **1.5.2:** pins the map hides (an icon type filtered out, shared pins while hidden) no longer take an Alt-click; the
+  game's own left click never runs while the modifier is held, even when the plugin cannot tell where the click
+  landed;
+  preflight follows the branch of Wayfinder's fog rule and requires it after the paths that follow a pin; the wording
+  items of 1.5.0 (mines and spires, the Wooden Greatsword's chest check on a server, Wayfinder's `Use3DDistance`
+  description, the README's arrival and checking notes); the README says what happens to Wayfinder's map click if a
+  game update removes the explored-map test; `run-tests.sh` and `build.sh` are marked executable.
 - **1.5.1:** an Alt-click no longer lets a pin you follow anywhere within reach win over the pin under the pointer,
   and a click on a ping or another player's marker puts a waypoint there; a waypoint an Alt-click adds behind others
   says so; dying close to the waypoint being followed no longer counts as

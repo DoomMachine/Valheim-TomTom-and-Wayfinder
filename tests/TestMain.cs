@@ -1239,9 +1239,9 @@ namespace Waypointer
         // ---------------------------------------------------------------- the map click (1.5.1)
 
         // MapClickRules.Decide: the pin nearest the click decides, whichever kind (a marker of ours, a followed pin, a pin
-        // not yet followed). The layouts are the 2026-10-01 report's: identical "Day 3" death pins close together, one of
-        // them followed, the click aimed at another; a marker of ours next to a pin of the player's; and a ping or another
-        // player's marker nearest the click.
+        // not yet followed, a ping, shout, other player's or event marker). The layouts: identical "Day 3" death pins close
+        // together, one of them followed, the click aimed at another; a marker of ours next to a pin of the player's; and a
+        // ping or another player's marker nearest the click. MapClickRules.PinShown: the pins the large map hides.
         private static void MapClickTests()
         {
             const float none = -1f;
@@ -1272,6 +1272,8 @@ namespace Waypointer
             Check("map click: ...but a pin nearer than it still decides, and equally near the pin does",
                 MapClickRules.Decide(none, 2f, none, 3f) == MapClickAction.StopFollowing && MapClickRules.Decide(none, none, 1f, 3f) == MapClickAction.Follow
                 && MapClickRules.Decide(3f, none, none, 3f) == MapClickAction.RemoveOwnMarker && MapClickRules.Decide(none, 3f, none, 3f) == MapClickAction.StopFollowing, "");
+            Check("map click: equally near - a pin not yet followed over a ping, shout, player or event marker (followed)",
+                MapClickRules.Decide(none, none, 3f, 3f) == MapClickAction.Follow && MapClickRules.Decide(none, none, 0f, 0f) == MapClickAction.Follow, "");
             Check("map click: an unusable distance counts as no pin",
                 MapClickRules.Decide(float.NaN, float.NaN, 4f, none) == MapClickAction.Follow && MapClickRules.Decide(float.NaN, float.NaN, float.NaN, none) == MapClickAction.AddPoint
                 && MapClickRules.Decide(float.NaN, 3f, float.NaN, none) == MapClickAction.StopFollowing, "");
@@ -1289,6 +1291,22 @@ namespace Waypointer
                 MapClickRules.FollowMessage("", 0) == "Waypoint set: marker" && MapClickRules.FollowMessage(null, 2) == "Waypoint queued (3rd): marker", "");
             Check("map click: a point on the spot is 'added', or 'queued' behind others",
                 MapClickRules.AddedMessage(0) == "Waypoint added" && MapClickRules.AddedMessage(3) == "Waypoint queued (4th)", MapClickRules.AddedMessage(3));
+
+            // Which pins the large map shows (Minimap.UpdatePins): an icon type the filter hides, and a shared pin (an owner
+            // other than 0) while shared pins are faded out, are hidden; a click weighs only the pins shown.
+            bool[] filter = { true, false, true };
+            Check("pins shown: every pin while the map hides nothing",
+                MapClickRules.PinShown(filter, 0, 1f, 0L) && MapClickRules.PinShown(filter, 2, 1f, 12345L), "");
+            Check("pins shown: a pin whose icon type the map's filter hides is not",
+                !MapClickRules.PinShown(filter, 1, 1f, 0L) && !MapClickRules.PinShown(filter, 1, 1f, 12345L), "");
+            Check("pins shown: a shared pin while shared pins are hidden is not, at any fade down to 0",
+                !MapClickRules.PinShown(filter, 0, 0f, 12345L) && !MapClickRules.PinShown(filter, 0, -0.5f, -7L), "");
+            Check("pins shown: ...but is while they fade in or out, and the player's own pins (owner 0) always are",
+                MapClickRules.PinShown(filter, 0, 0.01f, 12345L) && MapClickRules.PinShown(filter, 0, 0f, 0L), "");
+            Check("pins shown: an icon filter that could not be read, or a type it does not list, hides nothing",
+                MapClickRules.PinShown(null, 1, 1f, 0L) && MapClickRules.PinShown(filter, 3, 1f, 0L) && MapClickRules.PinShown(filter, -1, 1f, 0L), "");
+            Check("pins shown: an unusable fade hides shared pins, as the game's own test does",
+                !MapClickRules.PinShown(filter, 0, float.NaN, 12345L) && MapClickRules.PinShown(filter, 0, float.NaN, 0L), "");
         }
 
         // ---------------------------------------------------------------- a route that could not be read (1.4.1)

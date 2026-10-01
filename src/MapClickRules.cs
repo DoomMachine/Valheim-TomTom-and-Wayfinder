@@ -26,8 +26,8 @@ namespace Waypointer
         /// mod placed or a pin being followed - its waypoint is removed - a pin not yet followed, which is followed, or a
         /// transient pin (a ping, a shout, another player's marker, an event marker), which is never followed: the click
         /// then places a waypoint on the spot, as on open ground. Equally near, a waypoint's pin wins over a pin not yet
-        /// followed (removed rather than followed twice) and over a transient pin, and a marker of ours over a followed
-        /// pin. Unlike a right-click delete, where a marker of ours anywhere within reach wins because deleting a pin of the
+        /// followed (removed rather than followed twice) and over a transient pin, a marker of ours over a followed pin,
+        /// and a pin not yet followed over a transient pin (followed). Unlike a right-click delete, where a marker of ours anywhere within reach wins because deleting a pin of the
         /// player's cannot be undone, an Alt-click never deletes a pin of the player's, so the one under the pointer counts.
         /// Until 1.5.1 a pin a waypoint used anywhere within reach won over the one under the pointer, so with identical
         /// pins close together (the death pins of one in-game day all carry the same name) a click aimed at a new pin
@@ -50,6 +50,25 @@ namespace Waypointer
             if (haveOther && (nearest < 0f || otherPin < nearest)) { action = MapClickAction.Follow; nearest = otherPin; }
             if (transientPin >= 0f && (nearest < 0f || transientPin < nearest)) return MapClickAction.AddPoint;
             return action;
+        }
+
+        /// <summary>
+        /// Whether the large map shows a pin, so that a map click may weigh it - Valheim's own click skips a pin it does
+        /// not show. Minimap.UpdatePins hides a pin whose icon type the map's filter hides (m_visibleIconTypes) and a
+        /// shared pin (an owner other than 0, from a Cartography Table) while shared pins are faded out
+        /// (m_sharedMapDataFade not above 0). Its third reason, a pin off the part of the map on screen, is not
+        /// weighed here: a pin within reach of the pointer is on screen but at the map's very edge. An icon filter that
+        /// could not be read (null) hides nothing, and neither does an icon type it does not list.
+        /// </summary>
+        /// <param name="shownIconTypes">The map's icon filter, indexed by pin type, or null when unknown.</param>
+        /// <param name="type">The pin's type.</param>
+        /// <param name="sharedPinsFade">How far shared pins are faded in, 0 to 1 (1 when unknown).</param>
+        /// <param name="ownerId">The pin's owner: 0 for the player's own pins and for markers no one shared.</param>
+        public static bool PinShown(bool[] shownIconTypes, int type, float sharedPinsFade, long ownerId)
+        {
+            if (shownIconTypes != null && type >= 0 && type < shownIconTypes.Length && !shownIconTypes[type]) return false;
+            if (ownerId != 0L && !(sharedPinsFade > 0f)) return false;
+            return true;
         }
 
         /// <summary>1st, 2nd, 3rd, 4th ... 11th, 12th, 13th ... 21st, 22nd ...</summary>

@@ -20,6 +20,7 @@ namespace Waypointer
         private static Func<Minimap, Vector3, bool> _isExplored;
         private static FieldInfo _pinsField;
         private static FieldInfo _visibleIconTypesField;
+        private static FieldInfo _sharedMapDataFadeField;
         private static MethodInfo _pinInteractRadiusGetter;
 
         internal static void Init()
@@ -57,6 +58,10 @@ namespace Waypointer
             _visibleIconTypesField = AccessTools.Field(typeof(Minimap), "m_visibleIconTypes");
             if (_visibleIconTypesField == null) Plugin.Log.LogWarning("Minimap.m_visibleIconTypes not found.");
 
+            _sharedMapDataFadeField = AccessTools.Field(typeof(Minimap), "m_sharedMapDataFade");
+            if (_sharedMapDataFadeField == null)
+                Plugin.Log.LogWarning("Minimap.m_sharedMapDataFade not found: a map click also weighs shared pins while they are hidden.");
+
             PropertyInfo pir = AccessTools.Property(typeof(Minimap), "PinInteractRadius");
             if (pir != null) _pinInteractRadiusGetter = pir.GetGetMethod(true);
             if (_pinInteractRadiusGetter == null)
@@ -85,7 +90,8 @@ namespace Waypointer
         /// True when the map shows this point as explored: explored by the player, or shared to them by a
         /// Cartography Table (Minimap.IsExplored reads m_explored, then m_exploredOthers, in 12 m map pixels).
         /// False when that cannot be read, so Wayfinder's search then places nothing rather than something the
-        /// map does not show.
+        /// map does not show, and Wayfinder's map click places no waypoint on open ground anywhere, silently (following a
+        /// pin and removing a waypoint still work) - after a game update that renames or removes Minimap.IsExplored.
         /// </summary>
         internal static bool IsExplored(Vector3 world)
         {
@@ -220,8 +226,8 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// Nearest pin that one of our waypoints is using, so our own markers win the gesture, measured on
-        /// the horizontal plane.
+        /// Nearest pin that one of our waypoints is using, shown on the map or not, so our own markers win the right-click
+        /// delete, measured on the horizontal plane.
         ///
         /// This walks m_pins directly rather than using Valheim's own GetClosestPin, because that
         /// helper begins its loop with `if (!pin.m_save) continue;` - verified in IL. Our waypoint
@@ -231,16 +237,16 @@ namespace Waypointer
         /// </summary>
         internal static Minimap.PinData GetClosestWaypointPin(Minimap mm, Vector3 world, float radius)
         {
-            return FindClosest(mm, world, radius, true, true);
+            return FindClosest(mm, world, radius, true, true, null, 1f);
         }
 
         /// <summary>
-        /// The nearest pin of the player's (or a shared or vanilla one) that a waypoint follows, within radius, or null -
-        /// never a marker this mod placed. The map click compares it with the nearest pin not yet followed.
+        /// The nearest pin of the player's (or a shared or vanilla one) that a waypoint follows and the large map shows,
+        /// within radius, or null - never a marker this mod placed. The map click weighs it (MapClickRules.Decide).
         /// </summary>
         internal static Minimap.PinData GetClosestFollowedPin(Minimap mm, Vector3 world, float radius)
         {
-            return FindClosest(mm, world, radius, false, true);
+            return FindClosest(mm, world, radius, false, true, ShownIconTypes(mm), SharedPinsFade(mm));
         }
 
         /// <summary>
@@ -259,13 +265,31 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// Nearest pin a borrowed waypoint may attach itself to: not already used by any waypoint (which
-        /// also rules out our own stand-in marker sitting on the same spot) and not a transient pin.
-        /// Deliberately NOT filtered on m_save: some vanilla markers a player might follow, such as the
-        /// bed spawn point, are save:false too. Used both to re-adopt a followed pin (EnsurePins) and to
-        /// pick the pin an Alt-click promotes.
+        /// The nearest pin the map click may follow (ClosestAdoptable) among the pins the large map shows: Valheim's own
+        /// click leaves out a pin the map hides, so a hidden pin never takes a click aimed at a visible one.
         /// </summary>
         internal static Minimap.PinData GetClosestAdoptablePin(Minimap mm, Vector3 world, float radius)
+        {
+            return ClosestAdoptable(mm, world, radius, ShownIconTypes(mm), SharedPinsFade(mm));
+        }
+
+        /// <summary>
+        /// The nearest pin a waypoint may attach itself to, shown on the map or not: a followed pin is found again
+        /// (EnsurePins) whether or not the map hides it.
+        /// </summary>
+        internal static Minimap.PinData GetClosestAdoptablePinEvenHidden(Minimap mm, Vector3 world, float radius)
+        {
+            return ClosestAdoptable(mm, world, radius, null, 1f);
+        }
+
+        /// <summary>
+        /// Nearest pin a borrowed waypoint may attach itself to: not already used by any waypoint (which
+        /// also rules out our own stand-in marker sitting on the same spot), not a transient pin, and not one
+        /// the given icon filter and shared-pin fade hide (MapClickRules.PinShown; null and 1 hide nothing).
+        /// Deliberately NOT filtered on m_save: some vanilla markers a player might follow, such as the
+        /// bed spawn point, are save:false too.
+        /// </summary>
+        private static Minimap.PinData ClosestAdoptable(Minimap mm, Vector3 world, float radius, bool[] shownIconTypes, float sharedPinsFade)
         {
             List<Minimap.PinData> pins = GetPins(mm);
             Minimap.PinData best = null;
@@ -274,6 +298,7 @@ namespace Waypointer
             {
                 Minimap.PinData p = pins[i];
                 if (p == null || IsTransient(p.m_type)) continue;
+                if (!MapClickRules.PinShown(shownIconTypes, (int)p.m_type, sharedPinsFade, p.m_ownerID)) continue;
                 if (WaypointManager.FindByPin(p) != null) continue;
 
                 float dx = p.m_pos.x - world.x;
@@ -289,18 +314,22 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// The nearest transient pin (a ping, a shout, another player's marker, an event marker) within radius, or null.
-        /// Such a pin is never followed; when it is the pin nearest a map click, the click places a waypoint on the spot.
+        /// The nearest transient pin (a ping, a shout, another player's marker, an event marker) the large map shows,
+        /// within radius, or null. Such a pin is never followed; when it is the pin nearest a map click, the click places
+        /// a waypoint on the spot.
         /// </summary>
         internal static Minimap.PinData GetClosestTransientPin(Minimap mm, Vector3 world, float radius)
         {
             List<Minimap.PinData> pins = GetPins(mm);
+            bool[] shownIconTypes = ShownIconTypes(mm);
+            float sharedPinsFade = SharedPinsFade(mm);
             Minimap.PinData best = null;
             float bestSqr = radius * radius;
             for (int i = 0; i < pins.Count; i++)
             {
                 Minimap.PinData p = pins[i];
                 if (p == null || !IsTransient(p.m_type)) continue;
+                if (!MapClickRules.PinShown(shownIconTypes, (int)p.m_type, sharedPinsFade, p.m_ownerID)) continue;
 
                 float dx = p.m_pos.x - world.x;
                 float dz = p.m_pos.z - world.z;
@@ -324,16 +353,29 @@ namespace Waypointer
 
         /// <summary>
         /// The nearest waypoint marker the mod itself placed (not a pin of the player's that a waypoint
-        /// follows) within radius, or null. Deletion uses it so that a marker of ours always wins over anything else; the
-        /// map click weighs it by distance against the other pins (MapClickRules.Decide).
+        /// follows) that the large map shows, within radius, or null. The map click weighs it by distance against the
+        /// other pins (MapClickRules.Decide).
         /// </summary>
         internal static Minimap.PinData GetClosestOwnedWaypointPin(Minimap mm, Vector3 world, float radius)
         {
-            return FindClosest(mm, world, radius, true, false);
+            return FindClosest(mm, world, radius, true, false, ShownIconTypes(mm), SharedPinsFade(mm));
         }
 
-        /// <summary>The nearest pin a waypoint uses: a marker this mod placed (owned) and/or a pin it follows.</summary>
-        private static Minimap.PinData FindClosest(Minimap mm, Vector3 world, float radius, bool owned, bool followed)
+        /// <summary>
+        /// The nearest waypoint marker the mod itself placed, shown on the map or not, within radius, or null. The
+        /// right-click delete uses it, so that a marker of ours within reach always wins over a pin of the player's.
+        /// </summary>
+        internal static Minimap.PinData GetClosestOwnedWaypointPinEvenHidden(Minimap mm, Vector3 world, float radius)
+        {
+            return FindClosest(mm, world, radius, true, false, null, 1f);
+        }
+
+        /// <summary>
+        /// The nearest pin a waypoint uses: a marker this mod placed (owned) and/or a pin it follows, leaving out one the
+        /// given icon filter and shared-pin fade hide (MapClickRules.PinShown; null and 1 hide nothing).
+        /// </summary>
+        private static Minimap.PinData FindClosest(Minimap mm, Vector3 world, float radius, bool owned, bool followed,
+            bool[] shownIconTypes, float sharedPinsFade)
         {
             List<Minimap.PinData> pins = GetPins(mm);
             Minimap.PinData best = null;
@@ -344,6 +386,7 @@ namespace Waypointer
                 if (p == null) continue;
                 Waypoint w = WaypointManager.FindByPin(p);
                 if (w == null || (w.OwnsPin ? !owned : !followed)) continue;
+                if (!MapClickRules.PinShown(shownIconTypes, (int)p.m_type, sharedPinsFade, p.m_ownerID)) continue;
 
                 float dx = p.m_pos.x - world.x;
                 float dz = p.m_pos.z - world.z;
@@ -355,6 +398,41 @@ namespace Waypointer
                 }
             }
             return best;
+        }
+
+        /// <summary>
+        /// The large map's icon filter (Minimap.m_visibleIconTypes, indexed by pin type), or null when it cannot be
+        /// read - then no icon type counts as hidden.
+        /// </summary>
+        private static bool[] ShownIconTypes(Minimap mm)
+        {
+            if (mm == null || _visibleIconTypesField == null) return null;
+            try
+            {
+                return _visibleIconTypesField.GetValue(mm) as bool[];
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// How far shared pins are faded in (Minimap.m_sharedMapDataFade: down to 0 while the map's shared-pins toggle
+        /// hides them, up to 1 while it shows them), or 1 when it cannot be read - then no shared pin counts as hidden.
+        /// </summary>
+        private static float SharedPinsFade(Minimap mm)
+        {
+            if (mm == null || _sharedMapDataFadeField == null) return 1f;
+            try
+            {
+                object v = _sharedMapDataFadeField.GetValue(mm);
+                return v is float ? (float)v : 1f;
+            }
+            catch (Exception)
+            {
+                return 1f;
+            }
         }
     }
 }

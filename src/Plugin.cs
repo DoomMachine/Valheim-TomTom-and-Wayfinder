@@ -226,10 +226,17 @@ namespace Waypointer
                     "How close you must get, in metres, before a waypoint counts as reached.",
                     new AcceptableValueRange<float>(1f, 100f)));
             Use3DDistance = Config.Bind("2 - Behaviour", "Use3DDistance", false,
+#if WAYFINDER
+                "Off by default: arrival is measured on the horizontal plane. Turn on to include altitude: a waypoint " +
+                "with a height of its own (your own position, an object Find found) uses it; one without (a map click on " +
+                "open ground, a pin placed on the map), and a place Find found, uses the ground under it once that ground " +
+                "is loaded near you. Over water it stays horizontal.");
+#else
                 "Off by default: arrival is measured on the horizontal plane. Turn on to include altitude: a waypoint " +
                 "with a height of its own (typed, your own position, an object Find found) uses it; one without (a map " +
                 "click on open ground, two typed numbers, a pin placed on the map), and a place Find found, uses the ground under it " +
                 "once that ground is loaded near you. Over water it stays horizontal.");
+#endif
 #if !WAYFINDER
             RawValheimOrder = Config.Bind("2 - Behaviour", "InputIsRawValheimXYZ", false,
                 "Off (default): you type X, Y and an optional third value that means ELEVATION. " +
@@ -285,7 +292,7 @@ namespace Waypointer
                 + "places whose area the game has generated without a nest left in it (none grew there, or it was "
                 + "destroyed). The game fills a chest, and rolls whether a nest grows, when an area is first generated. "
                 + "Works as the host (or in single player), and when you join a server that runs this plugin too (for "
-                + "a Bee Nest, 1.4.0 or later), which checks for you; when you join any other server it does nothing, "
+                + "a Bee Nest, 1.4.0 or later; for the Wooden Greatsword, 1.5.0 or later), which checks for you; when you join any other server it does nothing, "
                 + "since your game knows only what it has seen since you joined. Reading chests runs a little each frame, so it makes a search take longer rather than making "
                 + "the game stutter; turn it off if a search feels slow.");
 #endif

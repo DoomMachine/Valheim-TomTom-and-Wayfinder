@@ -62,7 +62,8 @@ src/                     the shared source for both plugins
   SearchCatalog.cs       what can be searched for, and which location types hold it (from 1.0.16's data)
   SearchRules.cs         unique places (candidates vs the real one), range, chests, names - Unity-free
   RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
-  MapClickRules.cs       a map click's decision (the pin nearest the pointer) and its messages - Unity-free
+  MapClickRules.cs       a map click's decision (the pin nearest the pointer), which pins the map shows, and its
+                         messages - Unity-free
   SearchPatches.cs       keeps the server's answers from becoming map pins; WhoMayFind for Vegvisir-style
                          requests; which connection a routed call came on
   ...
@@ -114,7 +115,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 316 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
+./run-tests.sh                                                         # 323 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Valheim"   # a game folder elsewhere
@@ -144,8 +145,8 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   `RouteReadGate.Pending` before `SafeFile.WriteAllText` and return while it is true, `Load` and `RetryRead` must
   record a failed read on the branch where `ReadRoute` returned false (and `RetryRead` return right after it),
   `ReadRoute`'s catch must return false, `LoadForCurrentWorldIfNeeded` must call `RouteReadGate.NotRead` (that it sits
-  on the `PersistWaypoints`-off path is not checked), `RetryRead` must set `_dirty` from the count of waypoints queued
-  before the merge being above 0, and `SaveIfDirty` must be the only caller of `SafeFile.WriteAllText`
+  on the `PersistWaypoints`-off path is not checked), `RetryRead` must set `_dirty` from a count of the queue (`_queue.Count`)
+  being above 0 (that the count is taken before the merge is not checked), and `SaveIfDirty` must be the only caller of `SafeFile.WriteAllText`
 - a key the player chooses could stop the waypoint tick: Valheim throws on every read of 30 of the keys
   BepInEx offers, so every configurable key must be read through `Hotkeys`, whose reads are caught (and not
   rethrown), a hard-coded key must be one the game can read (the 30 are worked out from the game itself),
@@ -176,18 +177,32 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   and typed entries, Find), and a `Waypoint` may be constructed only in `WaypointManager`'s own `Add`, `AddMany`,
   `AddFromPin` and `FromEntry`
 - Wayfinder's map click places a waypoint without asking `MinimapAccess.IsExplored` first (once, branching on the
-  result at once, with the click's own position, before `WaypointManager.Add`) - and, conversely, TomTom's map click
-  asks it
+  result at once, with the click's own position, before `WaypointManager.Add` and after `MapClickRules.Decide` and
+  `AddFromPin`, so following a pin works in the fog), or where it is false reaches anything but `return true`, or calls
+  anything but an info log line (`LogInfo`) on the way - `WaypointManager.Add` or `AddFromPin`, or a message on screen (the branch is
+  followed through straight-line code) - and, conversely, TomTom's map click asks it
 - a map click could decide by the wrong pin: `HandleWaypointClick` must ask for the four nearest pins
   (`MinimapAccess.GetClosestOwnedWaypointPin`, `GetClosestFollowedPin`, `GetClosestAdoptablePin`,
   `GetClosestTransientPin`) once each, with the same reach local, before `MapClickRules.Decide`; give it, in that order,
   locals with one store each whose value is exactly `WaypointManager.HorizontalDistance(<that pin>.m_pos, <the position
   local the lookup is given>)` or -1, chosen by one conditional branch on that pin's local; keep its result in a local
-  with no other store; call nothing that changes the route (the queue list included) before it; and give `AddFromPin`
-  `GetClosestAdoptablePin`'s result. `WaypointManager.Tick` must give `ArrivalRules.Step` `Character.IsDead` as
-  `playerDead`, keep its result the same way, and call `OnReached` after it. Not checked: which branch each result
-  picks, which pin `Remove` is given, which arm of a distance's `?:` is which, writes through a reference, a change to
-  the position or reach local between the lookups and the distances, and `Step`'s other arguments
+  with no other store; call none of `WaypointManager`'s route-changing methods (the queue list included) before it; and
+  give `AddFromPin` `GetClosestAdoptablePin`'s result. Each of the four lookups must leave out the pins the map hides:
+  hand its walk over the pins (`FindClosest`, `ClosestAdoptable`, or its own loop) `MinimapAccess.ShownIconTypes` and
+  `SharedPinsFade`, and each walk must ask `MapClickRules.PinShown` once with those two and one pin's `m_type` and
+  `m_ownerID`, and branch on its result at once; the two helpers must read the icon filter's and the shared-pin fade's
+  own fields; and the right-click delete and `WaypointManager.EnsurePins` must keep counting hidden pins (the
+  `...EvenHidden` lookups, which pass no filter). `WaypointManager.Tick` must give `ArrivalRules.Step`
+  `Character.IsDead` as `playerDead`, keep its result the same way, and call `OnReached` after it. Not checked: which
+  branch each result picks (`PinShown`'s included, or another test joined to it), which way the two helpers' guards go,
+  which pin `Remove` is given, which arm of a distance's `?:` is which, writes through a reference, a change to the
+  position or reach local between the lookups and the distances, anything done to the pins themselves before the
+  lookups, which pin local's type and owner `PinShown` is given, the lookups' owned and followed flags, the
+  right-click's second lookup (`GetClosestWaypointPin`), and `Step`'s other arguments
+- the Alt-click is not the plugin's alone: the map click's prefix must read `Hotkeys.Held(MapModifierKey)` once into a
+  local, return true at once where it is false (a plain click left to the game), and return `!held` once. Not checked:
+  another return of a constant, or a store of false into that local, while the modifier is held (a `return true` where
+  the click cannot be placed passes), the window's early return, and a throw before the modifier is read
 - a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
   and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
   each checked by the literal name the call sends
@@ -238,9 +253,12 @@ Run it after every Valheim update.
   moves to a new engine version; it would add a binary that neither build path can reproduce, and it
   would change nothing per frame.
 - Private game members (`Minimap.ScreenToWorldPoint`, `m_pins`, `PinInteractRadius`, `GetClosestPin`,
-  `m_visibleIconTypes`, and in Wayfinder `IsExplored`) are reached with `HarmonyLib.AccessTools` reflection, so
-  the plugins depend only on the shipped DLLs. If `PinInteractRadius` cannot be read, map clicks reach as far as
-  its public parts say (`m_removeRadius` times the zoom), with one warning.
+  `m_visibleIconTypes`, `m_sharedMapDataFade`, and in Wayfinder `IsExplored`) are reached with `HarmonyLib.AccessTools`
+  reflection, so the plugins depend only on the shipped DLLs. If `PinInteractRadius` cannot be read, map clicks reach
+  as far as its public parts say (`m_removeRadius` times the zoom), with one warning; if the icon filter or the
+  shared-pin fade cannot be read, a map click counts every pin as shown. If a game update removes `IsExplored`,
+  Wayfinder's map click places no waypoint on open ground anywhere, with nothing on screen to say why (following a pin
+  and removing a waypoint still work), and its Find places nothing.
 - Input is taken over by making `TextInput.IsVisible` report `true` while the window is open. That one
   flag is what `Player.TakeInput` and `GameCamera.UpdateMouseCapture` consult, so it releases the cursor
   and blocks movement, the hotbar and Use together — the same approach ConfigurationManager and
@@ -301,10 +319,11 @@ Run it after every Valheim update.
   the entrance but inside the entrance's own 64 m zone, so the chest check's horizontal 64 m covers them.
 - **The 3D arrival test** (`Use3DDistance`) measures a waypoint that has a height of its own at that height. One
   without (a map click, two typed numbers, a pin placed on the map) and a place Find found - whose height is the world
-  generator's estimate, before the terrain is built and levelled, and more than 10 m off the ground at about 1% of
-  places - is measured at the loaded ground under it (`Heightmap.GetHeight`, terrain edits included; the rule is the
-  Unity-free `ArrivalRules`), and horizontally over water or where the ground is not loaded. Only arrival is affected:
-  nothing is stored, and TomTom's readout is unchanged. A Find place's height is saved as `2` in the route file's
+  generator's estimate, before the terrain is built and levelled, and, before a place's own levelling, more than 10 m
+  off the ground at about 1% of places on one seed - is measured at the loaded ground under it (`Heightmap.GetHeight`,
+  terrain edits included; the rule is the Unity-free `ArrivalRules`), and horizontally over water; where the ground is
+  not loaded, one without a height is measured horizontally and a Find place at its estimate. Only arrival is affected:
+  nothing measured is stored, and TomTom's readout is unchanged. A Find place's height is saved as `2` in the route file's
   hasElevation column, which a plugin before 1.5.0 reads as no height.
 - **TomTom reads the game's `pos` console line** (Valheim's `Player position (X,Y,Z): ...` and Server Devcommands'
   `(X,Z,Y)`) in the axis order its header names, before the digit-grouping checks its zone and distance would trip;
@@ -316,10 +335,16 @@ Run it after every Valheim update.
   marker of ours or followed pin - its waypoint is removed - the nearest pin not yet followed, which is followed, or
   the nearest ping, shout, other player's marker or event marker, which is never followed: the click then puts a
   waypoint on the spot, as on open ground. Equally near, a waypoint's pin wins (removed rather than followed twice, or
-  rather than a waypoint on the spot), and a marker of ours over a followed pin. A right-click delete differs on
-  purpose: there a marker of ours within reach always wins, since deleting a pin of the player's cannot be undone; an
-  Alt-click never deletes a pin of the player's. Until 1.5.1 a pin a waypoint used anywhere within reach
-  won, so with several identical death pins close together a click aimed at a new one stopped following an older one.
+  rather than a waypoint on the spot), a marker of ours over a followed pin, and a pin not yet followed over a ping or
+  marker. Only the pins the large map shows count (`MapClickRules.PinShown`, since 1.5.2, as Valheim's own click): not
+  one whose icon type the map's filter hides, nor a shared pin while shared pins are hidden (`Minimap.UpdatePins`'
+  rules; its third, a pin off the part of the map on screen, is not weighed). A right-click delete differs on
+  purpose: there a marker of ours within reach always wins, even one the map hides, since deleting a pin of the
+  player's cannot be undone; an Alt-click never deletes a pin of the player's, and while the modifier is held
+  Valheim's own left click (a check mark, or taking a shared pin as one's own) never runs, even when the plugin cannot
+  tell where the click landed (since 1.5.2; before, that click was left to the game). Until 1.5.1 a pin a waypoint used
+  anywhere within reach won, so with several identical death pins close together a click aimed at a new one stopped
+  following an older one.
   A followed pin or a point joins the end of the route, and the message says where it waits
   (`MapClickRules.FollowMessage`, `AddedMessage`). No arrival counts while the player is dead (`ArrivalRules.Step`):
   for the seconds before the respawn the body lies where it fell. Each Alt-click the plugin
@@ -356,6 +381,29 @@ Run it after every Valheim update.
 
 ## History
 
+**1.5.2** — pins the map hides no longer take an Alt-click; the game's own left click never runs during an Alt-click.
+
+- fixed: an Alt-click weighed every pin within reach, including one whose icon type the map's filter hides and a
+  shared pin while shared pins are hidden, so a hidden pin could take a click aimed at a visible one; now only the pins
+  the map shows count, as for Valheim's own click (`MapClickRules.PinShown`). A right-click delete still lets a
+  waypoint marker within reach win even when its icon is hidden, and a followed pin is still found again whether or not
+  it is shown
+- fixed: when the plugin could not tell where an Alt-click landed, or failed on it, the game's own left click ran too
+  (ticking or unticking the check mark of the nearest saved pin, or taking a shared pin as your own); while the
+  modifier is held it now never does, and a click that cannot be placed is logged and ignored
+- changed: the Alt-click log line names its fourth pin "ping, shout, player or event marker" (was "ping or player
+  marker")
+- docs: the package READMEs say pins the map hides don't count; a mine is not sure to have a treasure room, and about
+  3 rock spires in 4 have a chest; joined to a server, the Wooden Greatsword's chest check needs the server on 1.5.0 or
+  later (TomTom's README and `SkipCheckedChests`' description); Wayfinder's `Use3DDistance` description no longer names
+  typed values; the README's arrival and checking notes are corrected (a Find place where the ground is not loaded, the
+  1% figure, what preflight checks)
+- 7 new tests (316 → 323); preflight check 16 follows the fog rule's branch, requires it after the click's decision
+  and allows nothing but an info log line on the refusal, check 18 that the click's four lookups leave out hidden pins
+  (and the right-click delete and the re-adoption of a followed pin do not), the new check 19 that a plain click is left
+  to the game and that the click's prefix returns `!held`, and `Minimap.m_sharedMapDataFade` is checked as a reflected
+  member (62 → 64 checks per edition); `run-tests.sh` and `build.sh` are marked executable
+
 **1.5.1** — the pin nearest an Alt-click decides; a queued waypoint says so; no arrival while dead; Alt-clicks and
 route changes logged.
 
@@ -370,8 +418,8 @@ route changes logged.
   (2nd)" (TomTom still adds the point's position)
 - fixed: dying within `ArrivalRadius` of the waypoint being followed counted as reaching it, and it was gone after the
   respawn; no arrival counts while the player is dead (`ArrivalRules.Step`)
-- new: one log line per Alt-click the plugin acts on (the nearest marker of ours, followed pin and other pin, and what
-  the click did; TomTom with distances, Wayfinder names only, and a second line for a Wayfinder click on unexplored
+- new: one log line per Alt-click the plugin acts on (the nearest marker of ours, followed pin, other pin and ping,
+  shout, player or event marker, and what the click did; TomTom with distances, Wayfinder names only, and a second line for a Wayfinder click on unexplored
   land) and per change made to the route from the map, the window or the console ("Route: added / following /
   removed / skipped / dropped / cleared / moved to the front"); what a Find queues, and the route it replaces, are not
   logged (TomTom's Find logs one summary line)
@@ -397,8 +445,8 @@ route changes logged.
   nothing. Removing a marker and following a pin work anywhere
 - refactored: the arrow's caption cache (`CaptionCache`, `CaptionWidth`) and the route file's reader and writer
   (`RouteFile`) are Unity-free, so the tests reach them
-- 44 new tests (248 → 292), and preflight checks that every code path making a waypoint is a known one and Wayfinder's
-  fog rule for a map click (59 → 61 checks per edition)
+- 44 new tests (248 → 292), and preflight checks that every code path making a waypoint is a known one and that
+  Wayfinder's map click asks `MinimapAccess.IsExplored` before placing one (59 → 61 checks per edition)
 
 **1.4.1** — fixes: an unreadable saved route is never overwritten, rocks have their own name, safer coordinate input.
 

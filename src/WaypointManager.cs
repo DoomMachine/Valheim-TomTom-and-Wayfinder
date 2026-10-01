@@ -574,8 +574,9 @@ namespace Waypointer
                 if (wp.Borrowed && (wp.Pin == null || wp.OwnsPin))
                 {
                     // Following a pin of the player's. Whenever we are showing a stand-in (or nothing),
-                    // look for their pin again - it reappears after a relog once the map data loads.
-                    Minimap.PinData theirs = MinimapAccess.GetClosestAdoptablePin(mm, wp.Pos, AdoptRadius);
+                    // look for their pin again - it reappears after a relog once the map data loads - whether or not
+                    // the map hides it.
+                    Minimap.PinData theirs = MinimapAccess.GetClosestAdoptablePinEvenHidden(mm, wp.Pos, AdoptRadius);
                     if (theirs != null)
                     {
                         if (wp.Pin != null) RemoveOwnMarker(mm, wp.Pin);   // retire the stand-in

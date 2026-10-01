@@ -20,25 +20,33 @@ namespace Waypointer
 
         private static bool Prefix(Minimap __instance)
         {
+            // Once the modifier is held, the click is the plugin's: Valheim's plain click (a check mark on the nearest
+            // pin, or taking a shared pin as one's own) never runs with it - not even when the plugin cannot tell where
+            // the click landed, or fails on it.
+            bool held = false;
             try
             {
                 // Swallow clicks that were aimed at our own window sitting over the map.
                 if (WaypointWindow.PointerOverWindow()) return false;
 
                 // An unbound modifier, or one Valheim cannot read, leaves every click to the game.
-                if (!Hotkeys.Held(Plugin.MapModifierKey)) return true;
+                held = Hotkeys.Held(Plugin.MapModifierKey);
+                if (!held) return true;
 
-                // Suppressed only when we actually acted on the click.
-                return !HandleWaypointClick(__instance);
+                if (!HandleWaypointClick(__instance))
+                    Plugin.Log.LogInfo("Map Alt-click: where it landed on the map cannot be read - ignored");
             }
             catch (Exception e)
             {
                 Plugin.Log.LogError("Map click handling failed: " + e);
-                return true;
             }
+            return !held;
         }
 
-        /// <summary>Returns true when the click was consumed and vanilla should be skipped.</summary>
+        /// <summary>
+        /// Acts on a click made with the modifier held. Returns false only when it cannot tell where the click landed
+        /// (nothing done); either way, the caller keeps Valheim's plain click from running.
+        /// </summary>
         private static bool HandleWaypointClick(Minimap minimap)
         {
             if (minimap == null) return false;
@@ -46,7 +54,8 @@ namespace Waypointer
             Vector3 world;
             if (!MinimapAccess.TryScreenToWorld(minimap, ZInput.pointerPosition, out world))
             {
-                // We cannot tell where the click landed, so leave it to the game rather than eat it.
+                // We cannot tell where the click landed: nothing is done (until 1.5.2 the click was left to the game,
+                // whose plain click toggles the check mark of the pin nearest the pointer).
                 return false;
             }
 
@@ -117,8 +126,9 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// One log line per Alt-click the plugin acts on: the nearest marker of ours, followed pin and other pin, and
-        /// what the click did, so a waypoint that went missing in play can be traced from the log.
+        /// One log line per Alt-click the plugin acts on: the nearest marker of ours, followed pin, other pin and transient
+        /// pin (a ping, shout, other player's or event marker), and what the click did, so a waypoint that went missing
+        /// in play can be traced from the log.
         /// TomTom adds the distances from the click and the reach; Wayfinder logs names only - no numbers about the map.
         /// </summary>
         private static void LogClick(Minimap.PinData ownMarker, float ownMarkerDistance, Minimap.PinData followedPin,
@@ -130,12 +140,12 @@ namespace Waypointer
                 : action == MapClickAction.Follow ? "follow the other pin" : "a waypoint on the spot";
 #if WAYFINDER
             Plugin.Log.LogInfo("Map Alt-click: marker " + PinLabel(ownMarker) + ", followed pin " + PinLabel(followedPin)
-                + ", other pin " + PinLabel(otherPin) + ", ping or player marker " + PinLabel(transientPin) + " -> " + outcome);
+                + ", other pin " + PinLabel(otherPin) + ", ping, shout, player or event marker " + PinLabel(transientPin) + " -> " + outcome);
 #else
             Plugin.Log.LogInfo("Map Alt-click: marker " + PinLabel(ownMarker) + Metres(ownMarkerDistance)
                 + ", followed pin " + PinLabel(followedPin) + Metres(followedPinDistance)
                 + ", other pin " + PinLabel(otherPin) + Metres(otherPinDistance)
-                + ", ping or player marker " + PinLabel(transientPin) + Metres(transientPinDistance) + ", reach "
+                + ", ping, shout, player or event marker " + PinLabel(transientPin) + Metres(transientPinDistance) + ", reach "
                 + radius.ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " m -> " + outcome);
 #endif
         }
@@ -233,9 +243,9 @@ namespace Waypointer
                 if (__instance == null || !WaypointManager.HasActive) return true;
 
                 // A marker of ours within reach always wins, even when a followed pin or one of the
-                // player's own pins is nearer the pointer: deleting a player's pin cannot be undone, a
-                // waypoint is quickly re-added. Remove deletes only a marker this mod owns.
-                Waypoint own = WaypointManager.FindByPin(MinimapAccess.GetClosestOwnedWaypointPin(__instance, pos, radius));
+                // player's own pins is nearer the pointer, and even while the map hides its icon type: deleting a
+                // player's pin cannot be undone, a waypoint is quickly re-added. Remove deletes only a marker this mod owns.
+                Waypoint own = WaypointManager.FindByPin(MinimapAccess.GetClosestOwnedWaypointPinEvenHidden(__instance, pos, radius));
                 if (own != null)
                 {
                     Plugin.Log.LogInfo("Map delete: a waypoint marker was within reach -> that waypoint is removed");
