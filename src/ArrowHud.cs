@@ -45,8 +45,17 @@ namespace Waypointer
         public static void Draw()
         {
             if (Event.current == null || Event.current.type != EventType.Repaint) return;
-            if (!Plugin.ShowArrow.Value) return;
-            if (!ShouldShow()) return;
+            if (!Plugin.ShowArrow.Value)
+            {
+                TraceArrow("ShowArrow is off");
+                return;
+            }
+            string hidden = HiddenBecause();
+            if (hidden != null)
+            {
+                TraceArrow(hidden);
+                return;
+            }
 
             Waypoint wp = WaypointManager.Active;
             Player player = Player.m_localPlayer;
@@ -61,12 +70,21 @@ namespace Waypointer
             Vector3 playerPos = player.transform.position;
 
             float bearing;
-            if (!TryGetRelativeBearing(playerPos, wp.Pos, out bearing)) return;
+            if (!TryGetRelativeBearing(playerPos, wp.Pos, out bearing))
+            {
+                TraceArrow("no direction yet");
+                return;
+            }
 
             float distance = WaypointManager.HorizontalDistance(playerPos, wp.Pos);
 
             EnsureTexture();
-            if (_arrow == null) return;
+            if (_arrow == null)
+            {
+                TraceArrow("its picture could not be made");
+                return;
+            }
+            TraceArrow(Shown);
 
             float size = Plugin.ArrowSize.Value;
             float cx = Screen.width * Mathf.Clamp01(Plugin.ArrowScreenX.Value);
@@ -175,27 +193,51 @@ namespace Waypointer
             _labelStyle.wordWrap = false;
         }
 
-        private static bool ShouldShow()
+        /// <summary>Why the arrow is hidden now, or null when it is drawn.</summary>
+        private static string HiddenBecause()
         {
             Player player = Player.m_localPlayer;
-            if (player == null) return false;
-            if (!WaypointManager.HasActive) return false;
+            if (player == null) return "no local player";
+            if (!WaypointManager.HasActive) return "no waypoint";
 
             try
             {
-                if (Hud.IsUserHidden()) return false;
+                if (Hud.IsUserHidden()) return "the HUD is hidden";
                 // InCutscene covers the intro, sleeping, cinematics and the cutscene animation - the test
                 // Hud.Update itself uses to hide the whole HUD.
-                if (player.IsDead() || player.InCutscene() || player.IsTeleporting()) return false;
+                if (player.IsDead()) return "the player is dead";
+                if (player.InCutscene()) return "a cutscene, sleep or the intro";
+                if (player.IsTeleporting()) return "teleporting";
                 // The arrow is IMGUI and draws above the game's own canvas, so it is hidden while a
                 // full-screen panel is open rather than painted over it.
-                if (Menu.IsVisible() || InventoryGui.IsVisible() || StoreGui.IsVisible()) return false;
+                if (Menu.IsVisible() || InventoryGui.IsVisible() || StoreGui.IsVisible()) return "the menu, the inventory or a store is open";
                 if (Plugin.HideArrowWhenMapOpen.Value && Minimap.instance != null
-                    && Minimap.instance.m_mode == Minimap.MapMode.Large) return false;
+                    && Minimap.instance.m_mode == Minimap.MapMode.Large) return "the large map is open";
             }
-            catch { }
+            catch (Exception e)
+            {
+                Plugin.WarnOnce(ref _hideTestWarned, "Could not tell whether the arrow should be hidden", e, "it is drawn");
+            }
 
-            return true;
+            return null;
+        }
+
+        private const string Shown = "shown";
+        private static bool _hideTestWarned;
+        private static string _tracedArrow;
+
+        /// <summary>VerboseLog: the arrow's state when it changes (the reasons are constants, compared by reference).</summary>
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceArrow(string state)
+        {
+            if (!Diag.On) return;
+            try
+            {
+                if (ReferenceEquals(state, _tracedArrow)) return;
+                _tracedArrow = state;
+                Diag.Trace(ReferenceEquals(state, Shown) ? "arrow shown" : "arrow hidden: " + state);
+            }
+            catch (Exception) { }
         }
 
         /// <summary>

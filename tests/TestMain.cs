@@ -7,7 +7,7 @@ using UnityEngine;
 
 namespace Waypointer
 {
-    public static class TestMain
+    public static partial class TestMain
     {
         private static int _failures;
 
@@ -209,6 +209,7 @@ namespace Waypointer
             RouteFileTests();
             ArrivalTests();
             MapClickTests();
+            LogTests();
 
             Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : (_failures + " TEST(S) FAILED"));
             return _failures == 0 ? 0 : 1;

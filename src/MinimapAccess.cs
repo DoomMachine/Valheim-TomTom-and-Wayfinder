@@ -33,6 +33,7 @@ namespace Waypointer
                 MethodInfo stw = AccessTools.Method(typeof(Minimap), "ScreenToWorldPoint", new Type[] { typeof(Vector3) });
                 if (stw != null)
                     _screenToWorld = AccessTools.MethodDelegate<Func<Minimap, Vector3, Vector3>>(stw);
+                else Plugin.Log.LogWarning("Minimap.ScreenToWorldPoint not found: Alt-clicks on the map do nothing.");
             }
             catch (Exception e) { Plugin.Log.LogWarning("ScreenToWorldPoint unavailable: " + e.Message); }
 
@@ -41,6 +42,8 @@ namespace Waypointer
                 MethodInfo gcp = AccessTools.Method(typeof(Minimap), "GetClosestPin", new Type[] { typeof(Vector3), typeof(float), typeof(bool) });
                 if (gcp != null)
                     _closestPin = AccessTools.MethodDelegate<Func<Minimap, Vector3, float, bool, Minimap.PinData>>(gcp);
+                else Plugin.Log.LogWarning("Minimap.GetClosestPin not found: a map delete near a followed pin always removes "
+                    + "its waypoint, even where the game would have deleted another pin nearer the pointer.");
             }
             catch (Exception e) { Plugin.Log.LogWarning("GetClosestPin unavailable: " + e.Message); }
 
@@ -49,6 +52,10 @@ namespace Waypointer
                 MethodInfo ie = AccessTools.Method(typeof(Minimap), "IsExplored", new Type[] { typeof(Vector3) });
                 if (ie != null)
                     _isExplored = AccessTools.MethodDelegate<Func<Minimap, Vector3, bool>>(ie);
+#if WAYFINDER
+                else Plugin.Log.LogWarning("Minimap.IsExplored not found: Wayfinder cannot tell explored map from fog, so an "
+                    + "Alt-click places no waypoint on open ground (it still follows a pin or removes a waypoint), and Find places none.");
+#endif
             }
             catch (Exception e) { Plugin.Log.LogWarning("IsExplored unavailable: " + e.Message); }
 
@@ -103,10 +110,17 @@ namespace Waypointer
             }
             catch (Exception e)
             {
-                Plugin.Log.LogWarning("IsExplored failed: " + e.Message);
+                if (!_isExploredWarned)
+                {
+                    _isExploredWarned = true;
+                    Plugin.Log.LogWarning("Minimap.IsExplored failed (" + e.GetType().Name + "): no waypoint is placed where "
+                        + "the map cannot tell explored from fog. Later failures are not logged.");
+                }
                 return false;
             }
         }
+
+        private static bool _isExploredWarned, _canAddPinsWarned, _radiusPartsWarned;
 
         private static readonly List<Minimap.PinData> NoPins = new List<Minimap.PinData>();
         private static bool _pinsWarned;
@@ -162,8 +176,10 @@ namespace Waypointer
             {
                 return _visibleIconTypesField.GetValue(mm) != null;
             }
-            catch
+            catch (Exception e)
             {
+                Plugin.WarnOnce(ref _canAddPinsWarned, "Could not tell whether the map is ready for markers", e,
+                    "no waypoint markers are made while this fails");
                 return false;
             }
         }
@@ -209,7 +225,12 @@ namespace Waypointer
                 float r = RadiusFromPublicParts(mm);
                 if (r > 0f) return r;
             }
-            catch (Exception) { /* a public member an update renamed: the last resort below */ }
+            catch (Exception e)
+            {
+                // A public member an update renamed: the last resort below.
+                Plugin.WarnOnce(ref _radiusPartsWarned, "The map click's reach could not be worked out from the map's public members", e,
+                    "a fixed reach is used instead");
+            }
             return FallbackPinInteractRadius;
         }
 

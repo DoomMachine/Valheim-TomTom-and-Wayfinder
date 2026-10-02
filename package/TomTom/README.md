@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.5.2 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.6.0 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -185,14 +185,15 @@ Alt-click on the map does nothing there, set `MapModifierKey` to another key.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.5.2]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.6.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
 
 Delete the plugin's folder (`BepInEx/plugins/DoomMachine-TomTom/`). Its settings
 (`BepInEx/config/DoomMachine.TomTom.cfg`) and saved routes (`BepInEx/config/DoomMachine.TomTom/`, one file per world,
-shared by every character on this PC) stay until you delete them as well. The markers are never saved into your map,
+shared by every character on this PC) stay until you delete them as well, and so do its log files
+(`BepInEx/TomTom.log`, `TomTom-prev.log` and any `TomTom.log.1` to `.4`). The markers are never saved into your map,
 so nothing is left there.
 
 ## Console
@@ -271,14 +272,14 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.5.2]
+   Loading [TomTom 1.6.0]
    Applied 2 of 2 patches.
-   TomTom 1.5.2 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.6.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
-   The last one comes when the world loads.
+   The last one comes when the world loads. TomTom's own log, `BepInEx\TomTom.log`, is beside it (see Log file).
 7. To change who may use Find: stop the server, open `BepInEx\config\DoomMachine.TomTom.cfg` (the first start writes
-   it; on a server it holds only `[6 - Server]`), set `WhoMayFind`, and start the server again.
+   it; on a server it holds only `[6 - Server]` and `[7 - Logging]`), set `WhoMayFind`, and start the server again.
    - `AdminsOnly` uses the game's own admin list, `adminlist.txt`, in the server's save folder: the `-savedir`
      folder if the server is started with one, otherwise `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim`. One
      ID per line - the same IDs as for the game's own admin commands (kick, ban): for a Steam player, the
@@ -314,6 +315,40 @@ F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `Do
 key, as if it were unbound; everything else keeps working. Keys the game ignores outright - Mouse5,
 Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warning.
 
+## Log file
+
+Besides `BepInEx/LogOutput.log`, TomTom keeps a log of its own beside it: `BepInEx/TomTom.log`. Each start of the
+game normally begins a new file and keeps the last game's as `TomTom-prev.log` (older ones are replaced); if another
+program holds one of these files open, the new lines are added after the last game's instead, or - when that program
+does not let others write to it - go to `TomTom.log.1`. On Windows, while another copy of the game on this PC is
+writing the file, that copy writes `TomTom.log.1` (up to `.4`), adding to what an earlier second copy wrote there. These
+numbered files are kept until you delete them; once all four hold more than 8 MiB, a second copy writes none. You can
+open the log while the game runs, as you can `LogOutput.log`. Two settings in `[7 - Logging]` decide what goes in. A
+change in game through ConfigurationManager takes effect at once. To edit the `.cfg` file instead, quit the game (or
+stop the server), edit it and start again: an edit made while the game runs is not read, and the plugin rewrites its
+settings file, with the old value, whenever one of its settings changes (for example when you start a Find with a new
+range).
+
+- **`ErrorLog`** (on by default): TomTom's warnings and errors, and any game error whose stack trace runs through
+  TomTom's code, with that trace - the file to send with a bug report. A game without problems leaves only a few lines,
+  naming the versions of TomTom, Valheim, Unity and BepInEx.
+- **`VerboseLog`** (off by default): all of that, every other line TomTom logs, and a line for each event - map clicks
+  and deletes, waypoints added (with their positions), reached and removed, the route read and saved, markers made,
+  lost and found again, the arrow hidden or shown and why, deaths, the map and the window, the messages shown on
+  screen, settings changed, the stages of a Find and, on a server or as the host, other players' Find requests (each
+  player by a number). These new event lines go to this file only; the `Map Alt-click`, `Route` and `Reached waypoint`
+  lines are in `LogOutput.log` too. Turn it on to watch a problem as it happens, then off again.
+
+With both off nothing is written; the files already there stay. Warnings and errors are written at once, other lines
+within a second. A line repeated many times in a row is written once, with a count; each stretch of `VerboseLog` stops
+adding ordinary lines after 8 MiB, so warnings and errors still fit, and a file stops at 16 MiB.
+
+What it holds: warnings can name a world by its ID number; with `VerboseLog`, also your waypoints' names and positions,
+the names of your pins, of pins shared with you and of other players' markers near an Alt-click, and your settings, and
+on a server or as the host the names of players refused Find (as `LogOutput.log` does). The config, BepInEx and game
+folders and your user folder are written as `<config>`, `<BepInEx>`, `<game>` and `<home>` when a line names them. Read
+it before you share it.
+
 ## Configuration
 
 `BepInEx/config/DoomMachine.TomTom.cfg`, also editable in-game through ConfigurationManager.
@@ -336,6 +371,8 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `MaxSearchWaypoints` | `50` | the most waypoints one Find queues |
 | `SkipCheckedChests` | `true` | leave out places known not to hold what you look for: chests already filled without the item, and places generated without a Bee Nest (as the host, or joining a server with this plugin) |
 | `WhoMayFind` | `Everyone` | used only when this game is the server: which joining players may use Find (see Servers) |
+| `ErrorLog` | `true` | TomTom's own log of warnings and errors, `BepInEx/TomTom.log` (see Log file) |
+| `VerboseLog` | `false` | also a line for each event in that log, to watch a problem as it happens (see Log file) |
 
 Saved queues: `BepInEx/config/DoomMachine.TomTom/waypoints_<worldUID>.txt`, one per world.
 The file is replaced safely. If a save is interrupted, a `.new`, `.old` or `.old2` copy may be left beside it;

@@ -173,6 +173,7 @@ namespace Waypointer
             _dirty = true;
             EnsurePins();
             LogAdded("added", wp);
+            TraceAdded(pos, hasElevation);
             return wp;
         }
 
@@ -185,6 +186,7 @@ namespace Waypointer
         {
             if (positions == null || positions.Count == 0) return 0;
             // Not logged here: TomTom's search logs what it queued, and Wayfinder's says nothing about what it found.
+            TraceAddMany(positions.Count, replace);
             if (replace) ClearQueue();
             for (int i = 0; i < positions.Count; i++)
             {
@@ -229,6 +231,7 @@ namespace Waypointer
             _queue.Add(wp);
             _dirty = true;
             LogAdded("following", wp);
+            TraceFollowing(pin);
             return wp;
         }
 
@@ -383,6 +386,7 @@ namespace Waypointer
         {
             Player player = Player.m_localPlayer;
             Minimap mm = Minimap.instance;
+            TracePresence(player, mm);
 
             if (player == null || mm == null)
             {
@@ -443,6 +447,7 @@ namespace Waypointer
             ArrivalStep step = ArrivalRules.Step(active.Armed, player.IsDead(), checkDistance, arrival);
             if (step == ArrivalStep.Arm) active.Armed = true;
             else if (step == ArrivalStep.Reach) OnReached(active);
+            TraceStep(step, active, distance, checkDistance, arrival);
 
             SaveIfDirty();
         }
@@ -466,6 +471,7 @@ namespace Waypointer
         /// <summary>Shows a short message in the top-left corner of the HUD, if the HUD exists.</summary>
         internal static void Notify(string text)
         {
+            TraceHud(text);
             if (MessageHud.instance != null)
                 MessageHud.instance.ShowMessage(MessageHud.MessageType.TopLeft, text, 0, null, false, false);
         }
@@ -567,6 +573,7 @@ namespace Waypointer
 
                 if (wp.Pin != null && !MinimapAccess.PinIsAlive(mm, wp.Pin))
                 {
+                    TraceMarker(wp, ": its marker is no longer on the map; it is made again or found again");
                     wp.Pin = null;
                     wp.OwnsPin = false;
                 }
@@ -582,6 +589,7 @@ namespace Waypointer
                         if (wp.Pin != null) RemoveOwnMarker(mm, wp.Pin);   // retire the stand-in
                         wp.Pin = theirs;
                         wp.OwnsPin = false;
+                        TraceMarker(wp, ": the followed pin is on the map again");
                         continue;
                     }
                 }
@@ -595,6 +603,10 @@ namespace Waypointer
                 // Our own marker - or, for a borrowed waypoint whose pin isn't on this map, a stand-in.
                 wp.Pin = CreateLocalOnlyPin(mm, wp.Pos, type, label);
                 wp.OwnsPin = wp.Pin != null;
+                TraceMarkerMade(wp);
+                if (wp.Pin == null)
+                    Plugin.WarnOnce(ref _markerWarned, "A waypoint's map marker could not be made", null,
+                        "the game's map gave no pin, so that waypoint has no marker; the waypoint itself works");
             }
         }
 
@@ -682,6 +694,192 @@ namespace Waypointer
             for (int i = 0; i < _queue.Count; i++) ReleasePin(_queue[i]);
         }
 
+        // ---------------------------------------------------------------- the log file
+
+        private static bool _markerWarned;
+        private static bool _worldUidWarned;
+        private static bool _tracedPlayer, _tracedDead, _tracedMap;
+        private static int _tracedMapMode = -1;
+
+        /// <summary>Saved-route lines that could not be read are left out. Never quotes a line: it holds a position.</summary>
+        private static void WarnUnreadableLines(long worldUid, int count)
+        {
+            try
+            {
+#if WAYFINDER
+                Plugin.Log.LogWarning("Saved route of world " + worldUid.ToString(CultureInfo.InvariantCulture)
+                    + ": some lines could not be read and are left out; the next save writes the route without them.");
+#else
+                Plugin.Log.LogWarning("Saved route of world " + worldUid.ToString(CultureInfo.InvariantCulture) + ": "
+                    + count.ToString(CultureInfo.InvariantCulture) + " line(s) could not be read and are left out; the next "
+                    + "save writes the route without them.");
+#endif
+            }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TracePresence(Player player, Minimap mm)
+        {
+            if (!Diag.On) return;
+            try
+            {
+                bool hasPlayer = player != null;
+                if (hasPlayer != _tracedPlayer)
+                {
+                    _tracedPlayer = hasPlayer;
+                    Diag.Trace(hasPlayer
+                        ? "local player appeared (world " + CurrentWorldUid().ToString(CultureInfo.InvariantCulture) + ", "
+                          + Diag.N(_queue.Count) + " waypoint(s) queued" + (QueueBelongsToCurrentWorld ? ", this world's)" : ", not this world's yet)")
+                        : "local player gone");
+                }
+                bool dead = hasPlayer && player.IsDead();
+                if (dead != _tracedDead)
+                {
+                    _tracedDead = dead;
+                    Diag.Trace(dead ? "player died: no arming or arrival until alive" : "player alive");
+                }
+                bool hasMap = mm != null;
+                if (hasMap != _tracedMap)
+                {
+                    _tracedMap = hasMap;
+                    Diag.Trace(hasMap ? "map present" : "no map");
+                }
+                int mode = hasMap ? (int)mm.m_mode : -1;
+                if (mode != _tracedMapMode)
+                {
+                    _tracedMapMode = mode;
+                    if (hasMap) Diag.Trace("map mode: " + mm.m_mode);
+                }
+            }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceStep(ArrivalStep step, Waypoint wp, float distance, float checkDistance, float radius)
+        {
+#if !WAYFINDER
+            if (!Diag.On || step == ArrivalStep.None) return;
+            try
+            {
+                string how = !Plugin.Use3DDistance.Value ? "horizontal"
+                    : wp.HasElevation && !wp.HeightIsEstimate ? "3D, to its own height"
+                    : wp.HeightIsEstimate ? "3D, to the loaded ground or the generator's estimate"
+                    : "3D, to the loaded ground or the player's height";
+                Diag.Trace((step == ArrivalStep.Arm ? "armed " : "reached ") + Diag.Wp(wp) + ": " + Diag.M(distance)
+                    + " away, measured " + Diag.M(checkDistance) + " (" + how + "), radius " + Diag.M(radius));
+            }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceWorld(long uid, bool worldChanged)
+        {
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace("world " + uid.ToString(CultureInfo.InvariantCulture)
+                    + (worldChanged ? ": another world loaded; the last world's route was saved first" : ": loaded")
+                    + (Plugin.PersistWaypoints.Value ? "; its saved route is read" : "; PersistWaypoints is off, its saved route is not read"));
+            }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceRouteRead(long worldUid, int waypoints, int unreadable)
+        {
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace("route of world " + worldUid.ToString(CultureInfo.InvariantCulture) + " read: " + Diag.N(waypoints)
+                    + " waypoint(s), " + Diag.N(unreadable) + " unreadable line(s)");
+            }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceSaved()
+        {
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace("route of world " + _loadedWorldUid.ToString(CultureInfo.InvariantCulture) + " saved: "
+                    + Diag.N(_queue.Count) + " waypoint(s)");
+            }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceAdded(Vector3 pos, bool hasElevation)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("added at " + CoordinateFormat.Format(pos, hasElevation) + (hasElevation ? " (with its height)" : " (no height)")); }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceFollowing(Minimap.PinData pin)
+        {
+#if !WAYFINDER
+            if (!Diag.On || pin == null) return;
+            try
+            {
+                // Copied first: "..." + pin.m_type compiles to ldflda with Roslyn, which preflight check 5 reads as a write.
+                Minimap.PinType type = pin.m_type;
+                bool shared = pin.m_ownerID != 0L;
+                Vector3 at = pin.m_pos;
+                Diag.Trace("following " + Diag.Pin(pin) + " (" + type + (shared ? ", another player's" : "") + ") at "
+                    + CoordinateFormat.Format(at, Mathf.Abs(at.y) > 0.01f));
+            }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceAddMany(int count, bool replace)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace("Find queues " + Diag.N(count) + " waypoint(s)" + (replace ? ", replacing the " : ", after the ")
+                    + Diag.N(_queue.Count) + " queued");
+            }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceHud(string text)
+        {
+            if (!Diag.On) return;
+            try { Diag.Trace("on screen: " + text); }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceMarker(Waypoint wp, string what)
+        {
+            if (!Diag.On) return;
+            try { Diag.Trace("marker of " + Diag.Wp(wp) + what); }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceMarkerMade(Waypoint wp)
+        {
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace((wp.Pin == null ? "no marker could be made for " : wp.Borrowed ? "stand-in marker made for " : "marker made for ")
+                    + Diag.Wp(wp));
+            }
+            catch (Exception) { }
+        }
+
         // ---------------------------------------------------------------- geometry
 
         public static float HorizontalDistance(Vector3 a, Vector3 b)
@@ -722,7 +920,11 @@ namespace Waypointer
             {
                 if (ZNet.instance != null) return ZNet.instance.GetWorldUID();
             }
-            catch { }
+            catch (Exception e)
+            {
+                Plugin.WarnOnce(ref _worldUidWarned, "The world's id could not be read", e,
+                    "no route is loaded or saved until it can be");
+            }
             return 0L;
         }
 
@@ -754,6 +956,7 @@ namespace Waypointer
             _saveFailures = 0;
             _nextSaveAttempt = 0f;
             _read.Reset();
+            TraceWorld(uid, worldChanged);
 
             if (Plugin.PersistWaypoints.Value)
             {
@@ -770,6 +973,7 @@ namespace Waypointer
                 _queue.Clear();
                 _dirty = false;   // the pending change belonged to the world just left, and persistence is off
                 ResetSpeedEstimate();
+                Diag.Trace("PersistWaypoints is off: the previous world's route is dropped from memory");
             }
         }
 
@@ -815,11 +1019,15 @@ namespace Waypointer
             try
             {
                 string[] lines = File.ReadAllLines(readPath);
+                int unreadable = 0;
                 for (int i = 0; i < lines.Length; i++)
                 {
                     RouteEntry entry;
                     if (RouteFile.TryParseLine(lines[i], out entry)) into.Add(FromEntry(entry));
+                    else if (RouteFile.IsDataLine(lines[i])) unreadable++;
                 }
+                if (unreadable > 0) WarnUnreadableLines(worldUid, unreadable);
+                TraceRouteRead(worldUid, into.Count, unreadable);
                 return true;
             }
             catch (Exception e)
@@ -925,6 +1133,7 @@ namespace Waypointer
                 for (int i = 0; i < _queue.Count; i++) sb.AppendLine(RouteFile.FormatLine(ToEntry(_queue[i])));
                 SafeFile.WriteAllText(SavePath(_loadedWorldUid), sb.ToString());
                 _dirty = false;
+                TraceSaved();
                 if (_saveFailures > 0)
                     Plugin.Log.LogInfo("Waypoints saved after " + _saveFailures.ToString(CultureInfo.InvariantCulture)
                         + " failed attempt(s).");

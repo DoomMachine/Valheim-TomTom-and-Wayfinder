@@ -92,6 +92,7 @@ namespace Waypointer
         {
             if (_open) return;
             _open = true;
+            Diag.Trace("window opened");
         }
 
         public static void Close()
@@ -101,6 +102,7 @@ namespace Waypointer
             _closedFrame = Time.frameCount;
             _textFieldFocused = false;
             _pending.Clear();
+            Diag.Trace("window closed");
         }
 
         /// <summary>
@@ -391,6 +393,7 @@ namespace Waypointer
         {
             Player player = Player.m_localPlayer;
             if (player == null) return;
+            Diag.Trace("window: Add my position");
             WaypointManager.Add(player.transform.position, "Marked spot", true);
             _status = "Added your current position.";
         }

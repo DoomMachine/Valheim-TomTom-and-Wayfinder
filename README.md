@@ -64,14 +64,20 @@ src/                     the shared source for both plugins
   RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
   MapClickRules.cs       a map click's decision (the pin nearest the pointer), which pins the map shows, and its
                          messages - Unity-free
+  LogFile.cs             the plugin's own log file, BepInEx/<Edition>.log: its two hooks, its lock, the caps, opening
+                         and closing it
+  LogRules.cs            what the log file admits, its file names, how a line is written and what a line may not show -
+                         Unity-free
+  LogRotation.cs         each game's first opening keeps the last game's file as <Edition>-prev.log - Unity-free
+  Diag.cs                VerboseLog's event lines - TomTom only: [Conditional("TOMTOM")], dropped from Wayfinder
   SearchPatches.cs       keeps the server's answers from becoming map pins; WhoMayFind for Vegvisir-style
                          requests; which connection a routed call came on
   ...
 Plugin.props             build settings shared by both projects (references, packaging, deploy)
-TomTom/TomTom.csproj     sets EditionName=TomTom, deploys by default
+TomTom/TomTom.csproj     sets EditionName=TomTom and the TOMTOM symbol (VerboseLog's event lines), deploys by default
 Wayfinder/Wayfinder.csproj  defines WAYFINDER, excludes both Coordinate*.cs files, packages only
 package/<Edition>/       manifest.json, icon.png and README.md for each package
-tests/                   parser, formatter, crash-safe save, key-read, search and server-message tests (built as TomTom)
+tests/                   parser, formatter, crash-safe save, key-read, search, server-message and log-file tests (built as TomTom)
 docs/open-items.md       what is untested, unverified, planned or only an idea, and what is decided
 preflight.ps1            checks a compiled plugin against the shipped game assemblies
 build.sh                 SDK-free fallback compiler (C# 5)
@@ -115,7 +121,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 323 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
+./run-tests.sh                                                         # 390 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks, the log file's rules and rotation), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Valheim"   # a game folder elsewhere
@@ -140,8 +146,10 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
 - the route save could swap in a file that has not been flushed to disk — the one step of the crash-safe
   save no test can observe: `SafeFile.WriteAllText` must write the new text, call `FileStream.Flush(true)`
   unconditionally, and only then `File.Move` it into place; the save must go through it, and nothing but that
-  method's one `FileStream` may open a file for writing (whether the drive honours the flush is beyond any
-  check); and a route that could not be read must not be saved over: `WaypointManager.SaveIfDirty` must ask
+  method's one `FileStream` - and, since 1.6.0, the log file's one `FileStream` and the one `StreamWriter` over it
+  (in `LogFile.OpenWriter`) - may open a file for writing (whether the drive honours the flush is beyond any
+  check); only `SafeFile` and `LogRotation.Rotate` may move or delete a file, and nothing may make BepInEx open a file
+  for the plugin (a `DiskLogListener` or a `ConfigFile` of its own, `Utility.TryOpenFileStream`); and a route that could not be read must not be saved over: `WaypointManager.SaveIfDirty` must ask
   `RouteReadGate.Pending` before `SafeFile.WriteAllText` and return while it is true, `Load` and `RetryRead` must
   record a failed read on the branch where `ReadRoute` returned false (and `RetryRead` return right after it),
   `ReadRoute`'s catch must return false, `LoadForCurrentWorldIfNeeded` must call `RouteReadGate.NotRead` (that it sits
@@ -189,20 +197,58 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   with no other store; call none of `WaypointManager`'s route-changing methods (the queue list included) before it; and
   give `AddFromPin` `GetClosestAdoptablePin`'s result. Each of the four lookups must leave out the pins the map hides:
   hand its walk over the pins (`FindClosest`, `ClosestAdoptable`, or its own loop) `MinimapAccess.ShownIconTypes` and
-  `SharedPinsFade`, and each walk must ask `MapClickRules.PinShown` once with those two and one pin's `m_type` and
-  `m_ownerID`, and branch on its result at once; the two helpers must read the icon filter's and the shared-pin fade's
+  `SharedPinsFade`, and each walk must ask `MapClickRules.PinShown` once with those two and the `m_type` and
+  `m_ownerID` of the pin it is at (the one local `pins[i]` is stored into), and branch on its result at once; the two helpers must read the icon filter's and the shared-pin fade's
   own fields; and the right-click delete and `WaypointManager.EnsurePins` must keep counting hidden pins (the
   `...EvenHidden` lookups, which pass no filter). `WaypointManager.Tick` must give `ArrivalRules.Step`
   `Character.IsDead` as `playerDead`, keep its result the same way, and call `OnReached` after it. Not checked: which
   branch each result picks (`PinShown`'s included, or another test joined to it), which way the two helpers' guards go,
   which pin `Remove` is given, which arm of a distance's `?:` is which, writes through a reference, a change to the
   position or reach local between the lookups and the distances, anything done to the pins themselves before the
-  lookups, which pin local's type and owner `PinShown` is given, the lookups' owned and followed flags, the
-  right-click's second lookup (`GetClosestWaypointPin`), and `Step`'s other arguments
+  lookups, the lookups' owned and followed flags, the right-click's second lookup (`GetClosestWaypointPin`), and
+  `Step`'s other arguments
 - the Alt-click is not the plugin's alone: the map click's prefix must read `Hotkeys.Held(MapModifierKey)` once into a
-  local, return true at once where it is false (a plain click left to the game), and return `!held` once. Not checked:
-  another return of a constant, or a store of false into that local, while the modifier is held (a `return true` where
-  the click cannot be placed passes), the window's early return, and a throw before the modifier is read
+  local, return true where it is false, calling nothing but an info log line on the way (a plain click left to the
+  game), and return `!held` once; after the modifier is read, that local may not be set again, and the prefix may set
+  its return value only once (the plain click's) and return no constant (since 1.6.0). Not checked: the window's early
+  return, and a throw before the modifier is read
+- the log file could be written anywhere but beside `LogOutput.log` under the plugin's own names (check 20): the folder
+  must be `BepInEx.Paths.BepInExRootPath`, set once; every file opened must be `Path.Combine(<that folder>, <a name from
+  LogRules.FileName or FallbackName of the edition's own name>)`, or the name already in use; every path the rotation
+  looks at, moves or deletes must be `Path.Combine(<that folder>, LogRules.FileName, StageName or FallbackName)`; and
+  those names may hold no text but `.log`, `-prev.log`, `.log.` and `-prev.log.new`. Not checked: which of those files
+  is opened when, or with which `FileMode` (the unit tests run the rotation)
+- the log file could hurt the game (check 21): every `LogFile` method the rest of the plugin calls, its hooks, its
+  failure path, `LogRotation.Rotate` and every `Diag` method must run wholly inside a `catch (Exception)` that does
+  not rethrow; every `[Conditional("TOMTOM")]` trace helper must make its calls inside such a try; the plugin's own
+  log event must return at once for a line `LogRules.Admits` refuses; the log file's code (`LogFile`, `LogRules`,
+  `LogRotation`, `LineBudget`, `RepeatCollapse` and `Diag`) may call no other code of the plugin (`Diag` may read a
+  name through `GameText` and a `Waypoint`'s getters), and of BepInEx's logging only its own log event, a log event's
+  level and data, and one warning (the one that reports its own failure, from `Update`, `Awake` or `OnDestroy`);
+  nothing may call `ManualLogSource.LogDebug`; its hooks are added only when it opens and removed only when it closes,
+  nothing adds a listener or a source to BepInEx's `Logger` (`Listeners`, `Sources`, `CreateLogSource`), and nothing
+  hooks Unity's threaded log event; what runs under its lock - every region between `Monitor.Enter` (or `TryEnter`)
+  and its `Monitor.Exit` in a `LogFile` method, nested ones too, its `*Locked` methods, `OpenWriter`, `Park`,
+  `OnFlushTimer` and `LogRotation.Rotate`, and every method of the log file's code called by name from there (each
+  overload), followed to the end - may name no method outside .NET's `System` types and the log file's own, and
+  nothing named `Invoke`, `BeginInvoke`, `DynamicInvoke` or `InvokeMember`; no log type may have a virtual method; the
+  static initialisers of `LogFile`, `LogRules`, `LogRotation`, `LineBudget` and `RepeatCollapse` may only make
+  objects, delegates and arrays (`Diag` has none); no `Timer.Dispose(WaitHandle)`; `Plugin.Update` must start with
+  `LogFile.EmitParkedFailure`, `OnApplicationQuit` call `LogFile.NoteQuit`, `OnDestroy` call `LogFile.Close` on both
+  of its paths, and `Awake` open the log before it binds the other settings; `ErrorLog` must default to true and
+  TomTom's `VerboseLog` to false; `LogRules`' level numbers must be BepInEx's `LogLevel` values; and `Diag.Trace` must
+  carry `[Conditional("TOMTOM")]`. Not checked: code run on the lock's behalf rather than named there (a delegate
+  handed to a library method, reflection by other means)
+- Wayfinder could log more than warnings and errors (check 22): its `LogDetail` must be exactly `Off` and `Errors`,
+  `LogRules.IsVerbose` must return false outright, no `VerboseLog` may be bound, and no method outside `Diag` may call
+  `Diag` or a `[Conditional("TOMTOM")]` method; TomTom must have `Verbose`, bind `VerboseLog` and call its traces (so
+  the `TOMTOM` symbol was set for its build); and in both, no trace (a call to `Diag`, `LogFile` or a trace helper, or
+  a read of `Diag.On`) may sit where the checks above
+  read an exact shape: the map click's prefix, `HandleWaypointClick` before `MapClickRules.Decide`,
+  `WaypointManager.CreateLocalOnlyPin`, `SafeFile`, `LocationSearch.Ask` and `AnswersIntercepted`, the answer and
+  WhoMayFind patches, `FindServer.CallerMayFind`, `Allowed`, `IsAdmin` and `CallingPeer`, and `FindLink.SendFind` and
+  `OnToClient`. Not checked: a trace inside a lambda written in one of those methods (the compiler makes it a method
+  of its own)
 - a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
   and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
   each checked by the literal name the call sends
@@ -244,6 +290,13 @@ Run it after every Valheim update.
   local stand-in marks the spot, and the real pin is re-adopted as soon as it reappears.
 - **Each edition keeps its own save folder** (`BepInEx/config/<GUID>/`), so coordinates entered in TomTom
   never carry over into Wayfinder.
+- **A trace is one statement**: `Diag.Trace("<literal>")`, or a call to a private `[Conditional("TOMTOM")]` helper with
+  plain arguments that builds its text after `if (!Diag.On) return;`, inside its own try. So without `VerboseLog` no
+  text is built, building one can never throw into the code around it, and Wayfinder's compiler drops the call and its
+  argument. A helper that formats a position or a count about a Find has its body under `#if !WAYFINDER` too; copy a
+  `Minimap.PinData` field to a local before formatting it (the SDK compiler takes its address otherwise, which
+  preflight reads as a write to the pin). Never put a trace where preflight reads an exact shape (check 22 lists the
+  places).
 
 ## Implementation notes
 
@@ -368,7 +421,7 @@ Run it after every Valheim update.
   renamed, removed or changed their signature, not changed chest lists.
 - **On a server** the same DLL runs its server side. On a dedicated server (`Paths.ProcessName` is
   `valheim_server`; the game's own `ZNet.IsDedicated()` needs a `ZNet` that does not exist yet in `Awake`) it binds
-  only `[6 - Server]` and applies two patches. A player's plugin says hello once per connection over a routed call
+  only `[6 - Server]` and `[7 - Logging]` and applies two patches. A player's plugin says hello once per connection over a routed call
   of its own; a server with the plugin answers with its version and whether that player may use Find, and then
   answers each Find with one `SearchJob` run on its own data - exactly the host's answer - sent back in messages of
   256 places at most (about 4 KB; Steam's limit per message is 512 KB), everything in range, since Wayfinder filters
@@ -378,8 +431,56 @@ Run it after every Valheim update.
   therefore knows a player by the connection the call came on, taken from `RPC_RoutedRPC`'s own argument, and runs
   the game's admin check (`ZNet.IsAdmin`, `adminlist.txt`) on that connection's host name. `WhoMayFind` is a rule
   for players who use this plugin: any game can already send the Vegvisir request itself and get vanilla pins.
+- **The log file** (`LogFile`, since 1.6.0) listens to the plugin's own `ManualLogSource.LogEvent` and to Unity's
+  `Application.logMessageReceived` (an error or exception whose stack trace contains `Waypointer.`), so it adds no
+  BepInEx listener and leaves `LogOutput.log` and `Player.log` as they were; TomTom's `VerboseLog` event lines
+  (`Diag.Trace`) go to the file only. It sits beside `LogOutput.log` rather than in the config folder because a mod
+  manager's profile export copies the whole `BepInEx/config` folder, and the files it keeps beside `LogOutput.log` are
+  only settings files. Each way into it catches what goes wrong; a failure closes the file and is reported once, as a
+  warning, from `Update`, `Awake` or `OnDestroy` - never from inside the logging that failed. Its one lock calls nothing
+  outside the log file's own types and .NET's base library, so it cannot wait on BepInEx's configuration lock, its writers or Unity's log
+  dispatch. Warnings and errors reach the system at once; with `VerboseLog` other lines are flushed by a 1 s timer that
+  exists only then, and whose callback holds nothing of its own (on the game's Mono, `Timer.Dispose()` does not stop a
+  callback already queued). Each game's first opening moves the last game's file aside first - a rename that another
+  program's open handle refuses on Windows, leaving `-prev` as it was - and only then replaces `-prev`; a file that was
+  not moved is appended to, never emptied, as are a second copy of the game's numbered files (`.log.1` to `.4`, kept
+  until the player removes them), and a file that would pass 16 MiB stops. Folders in a line are written as
+  `<config>`, `<BepInEx>`, `<game>` and `<home>` (the profile folder, also in its short form); Wayfinder also writes
+  numbers that could be a position as `#` (a number with a fraction, then two or three whole numbers joined by commas),
+  because a game error's message can quote a position.
 
 ## History
+
+**1.6.0** — a log file of the plugin's own: warnings and errors by default, and TomTom's `VerboseLog` to follow a
+problem as it happens.
+
+- added: `BepInEx/TomTom.log` (Wayfinder: `BepInEx/Wayfinder.log`) beside `LogOutput.log`, written while the new
+  `[7 - Logging] ErrorLog` is on (the default): the plugin's warnings and errors, and any game error whose stack trace
+  runs through the plugin's code, with that trace. The last game's file is kept as `TomTom-prev.log`; on Windows, while
+  another copy of the game holds the file, that copy adds to `TomTom.log.1` (up to `.4`) instead. The config, BepInEx
+  and game folders and the user folder are written as `<config>`, `<BepInEx>`, `<game>` and `<home>`; Wayfinder writes
+  numbers that could be a position as `#`. A file stops at 16 MiB. Both a player's game and a dedicated server write
+  it
+- added (TomTom): `[7 - Logging] VerboseLog` (off by default) also writes every line TomTom logs, and a line for each
+  event - map clicks and deletes, waypoints added (with their positions), reached and removed, the route read and
+  saved, markers made, lost and found again, the arrow hidden or shown and why, deaths, the map and the window, messages
+  on screen, settings changed, the stages of a Find and, on a server or as the host, other players' Find requests (each
+  player by a number); these new event lines go to `TomTom.log` only (the map-click, route and arrival lines TomTom
+  already wrote stay in `LogOutput.log` too). Wayfinder has no such setting
+- added: warnings where something used to fail silently - a reflected map method that is missing
+  (`ScreenToWorldPoint`, `GetClosestPin`; `IsExplored` in Wayfinder), saved-route lines that could not be read (TomTom
+  says how many), a marker the game did not make, the world's id, whether to hide the arrow, whether the map is ready for
+  markers, the click's reach worked out from the map's public parts (each once a game session), a Find that could not
+  ask the server's plugin, a Find stopped because its safety patch is no longer active, and a server answer that could
+  not be added (TomTom: counted, once per Find; Wayfinder: once a game session)
+- changed: `Minimap.IsExplored failed` is logged once a game session (was once for each place a Wayfinder Find looked
+  at, which said how many there were), and "A message from the server's plugin could not be handled" once a game session
+  (was once per message)
+- 67 new tests (323 → 390); preflight check 10 admits the log file's one stream and keeps moves and deletes to
+  `SafeFile` and the rotation, checks 18 and 19 are stricter (the pin `PinShown` weighs is the one being walked; the
+  Alt-click prefix sets its return value once and never resets the modifier), and the new checks 20 (where the log
+  file is written), 21 (that it cannot hurt the game) and 22 (Wayfinder has no verbose log, and no trace sits where
+  checks read exact shapes) - 64 → 67 checks per edition
 
 **1.5.2** — pins the map hides no longer take an Alt-click; the game's own left click never runs during an Alt-click.
 

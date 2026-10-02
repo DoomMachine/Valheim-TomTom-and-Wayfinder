@@ -57,6 +57,9 @@ build_partest() {
     echo "\"$(cygpath -w "$HERE/src/RouteRead.cs")\""
     echo "\"$(cygpath -w "$HERE/src/ArrivalRules.cs")\""
     echo "\"$(cygpath -w "$HERE/src/MapClickRules.cs")\""
+    echo "\"$(cygpath -w "$HERE/tests/LogTests.cs")\""
+    echo "\"$(cygpath -w "$HERE/src/LogRules.cs")\""
+    echo "\"$(cygpath -w "$HERE/src/LogRotation.cs")\""
   } > "$RSP"
   "$CSC" "@$(cygpath -w "$RSP")"
 }

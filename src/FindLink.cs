@@ -140,6 +140,8 @@ namespace Waypointer
             }
         }
 
+        private static bool _messageErrorLogged;
+
         private static void OnToClient(long sender, ZPackage pkg)
         {
             try
@@ -173,7 +175,12 @@ namespace Waypointer
             }
             catch (Exception e)
             {
-                Plugin.Log.LogError("A message from the server's plugin could not be handled: " + e.Message);
+                if (!_messageErrorLogged)
+                {
+                    _messageErrorLogged = true;
+                    Plugin.Log.LogError("A message from the server's plugin could not be handled: " + e.Message
+                        + " (later ones are not logged)");
+                }
             }
         }
     }

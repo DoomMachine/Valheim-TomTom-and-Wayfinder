@@ -35,6 +35,14 @@ namespace Waypointer
                 e.X, e.Y, e.Z, e.HasElevation ? (e.HeightIsEstimate ? "2" : "1") : "0", e.Borrowed ? "0" : "1", SanitizeName(e.Name));
         }
 
+        /// <summary>A line that holds a waypoint, or was meant to: not blank and not a comment (#), like the header.</summary>
+        public static bool IsDataLine(string raw)
+        {
+            if (raw == null) return false;
+            string line = raw.Trim();
+            return line.Length > 0 && !line.StartsWith("#", StringComparison.Ordinal);
+        }
+
         /// <summary>False for a blank line, a comment (#), and a line that cannot be read, which is skipped.</summary>
         public static bool TryParseLine(string raw, out RouteEntry e)
         {

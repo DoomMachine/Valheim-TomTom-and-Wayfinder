@@ -80,10 +80,22 @@ namespace Waypointer
         /// <summary>Starts a search; false when one is already running or the player is not in a world.</summary>
         public static bool Start(SearchQuery query, float range, bool replace)
         {
-            if (query == null || Busy) return false;
+            if (query == null || Busy)
+            {
+                Diag.Trace(query == null ? "Find not started: no query" : "Find not started: one is already running");
+                return false;
+            }
             Player player = Player.m_localPlayer;
-            if (player == null || ZNet.instance == null || ZoneSystem.instance == null || ZDOMan.instance == null) return false;
-            if (!WaypointManager.QueueBelongsToCurrentWorld) return false;
+            if (player == null || ZNet.instance == null || ZoneSystem.instance == null || ZDOMan.instance == null)
+            {
+                Diag.Trace("Find not started: not in a world");
+                return false;
+            }
+            if (!WaypointManager.QueueBelongsToCurrentWorld)
+            {
+                Diag.Trace("Find not started: the queue is not this world's yet");
+                return false;
+            }
 
             _query = query;
             _range = range;
@@ -91,6 +103,10 @@ namespace Waypointer
             _origin = player.transform.position;
             _hits.Clear();
             _searchId++;
+#if !WAYFINDER
+            _answerErrors = 0;
+            _firstAnswerError = null;
+#endif
             _token = SearchRules.RequestPinName(_searchId);
             _answers = _objectsRead = _chestPlacesChecked = _chestPlacesSkipped = 0;
 #if !WAYFINDER
@@ -101,6 +117,7 @@ namespace Waypointer
             _elapsed.Reset();
             _elapsed.Start();
             _onServer = ZNet.instance.IsServer();
+            TraceStart(replace);
 
             if (_onServer)
             {
@@ -156,6 +173,8 @@ namespace Waypointer
             request.CheckChests = ChestCheckWanted();
             if (!FindLink.SendFind(request))
             {
+                Plugin.Log.LogWarning("Location search could not ask the server's plugin: no connection to the server, or "
+                    + "this game is not ready to talk to it yet.");
                 SetStatus("Search failed - see BepInEx/LogOutput.log.");
                 _phase = Phase.Idle;
                 return false;
@@ -195,6 +214,7 @@ namespace Waypointer
             if (_phase == Phase.Idle) return;
             if (Player.m_localPlayer == null || !WaypointManager.QueueBelongsToCurrentWorld)
             {
+                Diag.Trace(Player.m_localPlayer == null ? "Find cancelled: no local player" : "Find cancelled: the queue is not this world's");
                 Cancel();
                 return;
             }
@@ -225,6 +245,8 @@ namespace Waypointer
         private static void TickWaitingForServerInfo()
         {
             if (FindLink.AwaitingServerInfo) return;
+            Diag.Trace(FindLink.ServerHasPlugin ? "Find: the server's plugin answered the hello"
+                : "Find: no answer to the hello in time; asking the way a Vegvisir does");
             if (FindLink.ServerHasPlugin) AskServerPlugin();
             else StartAsking();
         }
@@ -237,6 +259,8 @@ namespace Waypointer
             {
                 if (!Ask(_nextAsk))
                 {
+                    Plugin.Log.LogWarning("Location search stopped: its safety patch on Game.RPC_DiscoverLocationResponse is "
+                        + "no longer active.");
                     Cancel();
                     SetStatus("Search is unavailable - see BepInEx/LogOutput.log.");
                     return;
@@ -249,6 +273,12 @@ namespace Waypointer
             if (!_allAnswered && now <= _deadline) return;
 
             bool complete = _allAnswered;
+            TraceAnswers(complete);
+#if !WAYFINDER
+            if (_answerErrors > 0)
+                Plugin.Log.LogWarning("Location search: " + _answerErrors.ToString(CultureInfo.InvariantCulture)
+                    + " of the server's answers could not be added and were left out (the first: " + _firstAnswerError + ").");
+#endif
             // Unique places are resolved over every answer first: counting only those in range would take the
             // one candidate that happens to be near for the real place. With answers missing, a lone one is not proof.
             SearchRules.ResolveUniqueOnClient(_hits, PlacedIcons(), complete);
@@ -270,6 +300,7 @@ namespace Waypointer
                 return;
             }
             if (Time.unscaledTime <= _deadline) return;
+            Diag.Trace("Find: the server's plugin missed its deadline");
             Plugin.Log.LogWarning("Location search: the server's plugin did not answer in time.");
             _phase = Phase.Idle;
             _hits.Clear();
@@ -286,6 +317,7 @@ namespace Waypointer
             if (m.Status == FindStatus.Accepted)
             {
                 FindLink.NoteAllowed();
+                Diag.Trace("Find: the server's plugin accepted the request");
                 _deadline = Time.unscaledTime + HelperResultTimeout;
                 return;
             }
@@ -309,11 +341,13 @@ namespace Waypointer
                 _chestPlacesChecked = m.ChestPlacesChecked;
                 _chestPlacesSkipped = m.ChestPlacesSkipped;
                 _serverPluginDone = true;
+                TraceDone(m.Total);
                 return;
             }
 
             _phase = Phase.Idle;
             _hits.Clear();
+            TraceStatus(m.Status);
             if (m.Status == FindStatus.Refused)
             {
                 FindLink.NoteRefused();
@@ -399,7 +433,25 @@ namespace Waypointer
 
         private static void AddLocationHit(int index, Vector3 pos, bool placed)
         {
-            if (_job != null) _job.AddLocationHit(index, pos, placed);
+            try
+            {
+                if (_job != null) _job.AddLocationHit(index, pos, placed);
+            }
+            catch (Exception e)
+            {
+                // The answer is left out. TomTom counts them and says so once the asking ends; Wayfinder says it once a
+                // game session, without a count or a message (a message could carry a position).
+#if WAYFINDER
+                if (!_answerErrorLogged)
+                {
+                    _answerErrorLogged = true;
+                    Plugin.Log.LogWarning("Location search: an answer from the server could not be added and was left out ("
+                        + e.GetType().Name + "). Later ones are not logged.");
+                }
+#else
+                if (_answerErrors++ == 0) _firstAnswerError = e.GetType().Name + ": " + e.Message;
+#endif
+            }
         }
 
         /// <summary>True when the prefix that keeps the server's answers from becoming pins is patched in.</summary>
@@ -483,6 +535,7 @@ namespace Waypointer
 #endif
             // The explored filter, then the rocks of a listed clearing, then the places a nest found stands for.
             SearchRules.FinishHits(_hits, _query, explored, RockClearingRadius);
+            TraceFinish(_hits.Count);
 
             int count = _hits.Count;
             int possible = 0;
@@ -498,6 +551,7 @@ namespace Waypointer
                 float[] xs = new float[n], zs = new float[n];
                 for (int i = 0; i < n; i++) { xs[i] = _hits[i].X; zs[i] = _hits[i].Z; }
                 int[] order = RoutePlanner.Plan(_origin.x, _origin.z, xs, zs, n, cap, RouteBudgetMs);
+                TraceRoute(order.Length, n);
                 List<Vector3> positions = new List<Vector3>(order.Length);
                 List<string> names = new List<string>(order.Length);
                 // A place's height is the world generator's estimate; an object's (a rock, a nest) is where it stands.
@@ -529,6 +583,79 @@ namespace Waypointer
                 _query.PlacesHoldObjects ? "places checked for a nest" : "places' chests checked"));
 #endif
             _hits.Clear();
+        }
+
+        // ---------------------------------------------------------------- the log file
+#if WAYFINDER
+        private static bool _answerErrorLogged;
+#else
+        private static int _answerErrors;
+        private static string _firstAnswerError;
+#endif
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceStart(bool replace)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace("Find '" + _query.Title + "' within " + Diag.M(_range) + (replace ? ", replacing the queue" : ", added to the queue") + ": "
+                    + (_onServer ? "this game is the server and reads its own list"
+                        : FindLink.ServerHasPlugin ? "asking the server's plugin"
+                        : FindLink.AwaitingServerInfo ? "waiting for the server's answer to the hello"
+                        : "asking the server the way a Vegvisir does"));
+            }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceAnswers(bool complete)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("Find: " + Diag.N(_answers) + " answer(s); " + (complete ? "every request answered" : "not every request answered in time")); }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceDone(int total)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("Find: the server's plugin is done: it counted " + Diag.N(total) + " place(s), " + Diag.N(_answers) + " arrived"); }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceStatus(FindStatus status)
+        {
+            if (!Diag.On) return;
+            try { Diag.Trace("Find: the server's plugin answered " + status); }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceFinish(int places)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("Find: " + Diag.N(places) + " place(s) after the filters"); }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceRoute(int stops, int places)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("Find: a route of " + Diag.N(stops) + " stop(s) planned over the nearest " + Diag.N(places) + " place(s)"); }
+            catch (Exception) { }
+#endif
         }
 
         /// <summary>

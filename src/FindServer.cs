@@ -49,6 +49,7 @@ namespace Waypointer
                 if (FindProtocol.DecodeHello(data) < 0) return;
                 _greeted.Add(peer.m_uid);
                 SendInfo(peer);
+                TracePeer("Find server: hello from ", peer.m_uid, "; Info sent");
             }
             else if (kind == FindProtocol.KindFind)
             {
@@ -63,12 +64,14 @@ namespace Waypointer
                 if (query == null)
                 {
                     Send(peer.m_uid, FindProtocol.EncodeStatus(request.SearchId, FindStatus.UnknownQuery));
+                    TracePeer("Find server: ", peer.m_uid, " asked for a query this plugin does not know");
                     return;
                 }
                 for (int i = _waiting.Count - 1; i >= 0; i--) if (_waiting[i].Peer == peer.m_uid) _waiting.RemoveAt(i);
                 if (_waiting.Count >= MaxWaiting)
                 {
                     Send(peer.m_uid, FindProtocol.EncodeStatus(request.SearchId, FindStatus.Busy));
+                    TracePeer("Find server: busy; the Find of ", peer.m_uid, " is refused for now");
                     return;
                 }
                 Pending p = new Pending();
@@ -77,6 +80,7 @@ namespace Waypointer
                 p.Query = query;
                 _waiting.Add(p);
                 Send(peer.m_uid, FindProtocol.EncodeStatus(request.SearchId, FindStatus.Accepted));
+                TraceAccepted(peer.m_uid, request);
             }
         }
 
@@ -92,7 +96,11 @@ namespace Waypointer
             {
                 Pending next = _waiting[0];
                 _waiting.RemoveAt(0);
-                if (!Connected(next.Peer)) continue;
+                if (!Connected(next.Peer))
+                {
+                    TracePeer("Find server: ", next.Peer, " left before their Find started; it is dropped");
+                    continue;
+                }
                 _current = next;
                 FindRequest r = next.Request;
                 try
@@ -104,11 +112,13 @@ namespace Waypointer
                 {
                     Fail(e);
                 }
+                if (_job != null) TraceJobStarted(next);
             }
             if (_job == null) return;
             if (!Connected(_current.Peer))
             {
                 // The player left: stop working for them.
+                TracePeer("Find server: ", _current.Peer, " left; their Find is dropped");
                 _job = null;
                 _current = null;
                 return;
@@ -134,6 +144,7 @@ namespace Waypointer
             _current = null;
             List<byte[]> messages = FindProtocol.EncodeResult(done.Request.SearchId, job.Hits, job.ObjectsRead, job.ChestPlacesChecked, job.ChestPlacesSkipped);
             for (int i = 0; i < messages.Count; i++) Send(done.Peer, messages[i]);
+            TraceSent(job.Hits.Count, messages.Count, done.Peer);
         }
 
         /// <summary>The running search failed: drop it, say so in the log, and tell its player to try again.</summary>
@@ -168,6 +179,7 @@ namespace Waypointer
                 if (peer != null) SendInfo(peer);
                 else _greeted.Remove(uid);
             }
+            TracePolicy();
         }
 
         private static bool StillAllowed(Pending p)
@@ -254,6 +266,72 @@ namespace Waypointer
         {
             if (ZRoutedRpc.instance == null) return;
             ZRoutedRpc.instance.InvokeRoutedRPC(peer, FindProtocol.ToClient, new ZPackage(data));
+        }
+
+        // ---------------------------------------------------------------- the log file (VerboseLog, TomTom)
+
+        private static readonly List<long> _peerTags = new List<long>();
+
+        /// <summary>A player in a trace: "#1", "#2" ... in the order they first appear - never a name, an id or an address.</summary>
+        private static string PeerTag(long uid)
+        {
+            int i = _peerTags.IndexOf(uid);
+            if (i < 0)
+            {
+                _peerTags.Add(uid);
+                i = _peerTags.Count - 1;
+            }
+            return "player #" + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TracePeer(string before, long uid, string after)
+        {
+            if (!Diag.On) return;
+            try { Diag.Trace(before + PeerTag(uid) + after); }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TracePolicy()
+        {
+            if (!Diag.On) return;
+            try { Diag.Trace("Find server: WhoMayFind is now " + Plugin.WhoMayFind.Value + "; " + Diag.N(_greeted.Count) + " player(s) told"); }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceAccepted(long uid, FindRequest r)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try
+            {
+                Diag.Trace("Find server: accepted the Find '" + r.Query + "' of " + PeerTag(uid) + " within " + Diag.M(r.Range)
+                    + (r.CheckChests ? ", chests checked" : "") + "; " + Diag.N(_waiting.Count) + " waiting");
+            }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceJobStarted(Pending p)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("Find server: running the Find '" + p.Query.Name + "' of " + PeerTag(p.Peer) + ", " + Diag.N(_job.Hits.Count) + " place(s) listed"); }
+            catch (Exception) { }
+#endif
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceSent(int places, int messages, long uid)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try { Diag.Trace("Find server: sent " + Diag.N(places) + " place(s) in " + Diag.N(messages) + " message(s) to " + PeerTag(uid)); }
+            catch (Exception) { }
+#endif
         }
 
         private static bool Connected(long peer)

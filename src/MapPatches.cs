@@ -278,6 +278,7 @@ namespace Waypointer
                         __result = true;
                         return false;
                     }
+                    TraceDeleteLeft(mine, target, pos);
                 }
 
                 // Vanilla deletes its own pick. Remember which followed pins exist now, so the postfix
@@ -290,6 +291,28 @@ namespace Waypointer
                 Plugin.Log.LogWarning("RemovePin prefix failed: " + e.Message);
                 return true;
             }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceDeleteLeft(Minimap.PinData mine, Minimap.PinData target, Vector3 pos)
+        {
+#if !WAYFINDER
+            if (!Diag.On) return;
+            try
+            {
+                if (ReferenceEquals(mine, target))
+                {
+                    Diag.Trace("Map delete: left to the game, which deletes the followed pin " + Diag.Pin(mine)
+                        + " itself; its waypoint goes with it");
+                    return;
+                }
+                float own = mine != null ? WaypointManager.HorizontalDistance(mine.m_pos, pos) : -1f;
+                float theirs = target != null ? WaypointManager.HorizontalDistance(target.m_pos, pos) : -1f;
+                Diag.Trace("Map delete: left to the game, whose pick " + Diag.Pin(target) + " at " + Diag.M(theirs)
+                    + " is nearer than the followed pin " + Diag.Pin(mine) + " at " + Diag.M(own));
+            }
+            catch (Exception) { }
+#endif
         }
 
         private static void Postfix(Minimap __instance, Minimap.PinData[] __state)

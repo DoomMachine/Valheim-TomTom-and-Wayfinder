@@ -35,6 +35,8 @@ build_edition() {
     echo "-warn:4"
     # Wayfinder is TomTom minus coordinate entry; the symbol compiles that path out (see src/Edition.cs).
     if [ "$edition" = "Wayfinder" ]; then echo "-define:WAYFINDER"; fi
+    # TOMTOM keeps Diag.Trace's [Conditional("TOMTOM")] calls (VerboseLog); Wayfinder's compiler drops them.
+    if [ "$edition" = "TomTom" ]; then echo "-define:TOMTOM"; fi
     echo "-out:\"$(cygpath -w "$outdir/$edition.dll")\""
     for r in mscorlib System System.Core netstandard \
              UnityEngine UnityEngine.CoreModule UnityEngine.UI UnityEngine.UIModule \

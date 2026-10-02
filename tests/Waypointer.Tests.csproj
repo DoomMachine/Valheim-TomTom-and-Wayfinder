@@ -41,6 +41,9 @@
     <Compile Include="..\src\RouteRead.cs" />
     <Compile Include="..\src\ArrivalRules.cs" />
     <Compile Include="..\src\MapClickRules.cs" />
+    <Compile Include="LogTests.cs" />
+    <Compile Include="..\src\LogRules.cs" />
+    <Compile Include="..\src\LogRotation.cs" />
   </ItemGroup>
 
 </Project>

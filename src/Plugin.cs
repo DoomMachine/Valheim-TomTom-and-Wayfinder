@@ -77,10 +77,31 @@ namespace Waypointer
         // ---- server (a dedicated server, or the host of a Start Server game)
         public static ConfigEntry<FindPolicy> WhoMayFind;
 
+        // ---- logging: the plugin's own log file, on a player's game and on a dedicated server (Wayfinder: no VerboseLog)
+        internal static ConfigEntry<bool> ErrorLog;
+#if !WAYFINDER
+        internal static ConfigEntry<bool> VerboseLog;
+#endif
+
         private void Awake()
         {
             Log = Logger;
             Dedicated = IsDedicatedServerProcess();
+
+            // The plugin's own log file first, so that whatever goes wrong below is in it. LogFile never throws.
+            Exception logBindError = null;
+            try
+            {
+                BindLogConfig();
+            }
+            catch (Exception e)
+            {
+                logBindError = e;
+            }
+            LogFile.Open(LogDetailSetting(), HeaderFacts());
+            LogFile.EmitParkedFailure();   // an open that failed says so now: Update never runs if Awake stops below
+            if (logBindError != null)
+                Log.LogError("The [7 - Logging] settings failed to bind, so the log file keeps warnings and errors: " + logBindError);
 
             // A plugin that throws in Awake is dropped by BepInEx, so config and reflection setup are
             // guarded separately from patching: a failure in one should not silently remove the rest.
@@ -119,6 +140,7 @@ namespace Waypointer
             else
                 Log.LogInfo(NAME + " " + VERSION + " by " + Edition.Author + " loaded. Press "
                             + ToggleWindowKey.Value + " to open the waypoint window.");
+            TraceSettings();
         }
 
         /// <summary>
@@ -180,6 +202,186 @@ namespace Waypointer
             }
 
             Log.LogInfo(string.Format("Applied {0} of {1} patches.", applied, patchClasses.Length));
+        }
+
+        private void BindLogConfig()
+        {
+#if WAYFINDER
+            ErrorLog = Config.Bind("7 - Logging", "ErrorLog", true,
+                "Writes Wayfinder's own log file, BepInEx\\Wayfinder.log beside LogOutput.log (the last game's is kept as "
+                + "Wayfinder-prev.log): Wayfinder's warnings and errors, and any game error whose stack trace runs through "
+                + "Wayfinder's code, with that trace - the file to send with a bug report. Numbers in it that could be a "
+                + "position are written as #. LogOutput.log is written as before. Off: no file. A change in game "
+                + "(ConfigurationManager) takes effect at once. To edit the .cfg file instead, quit the game or stop the "
+                + "server first: an edit made while it runs is not read, and the plugin rewrites the file, with the old "
+                + "value, whenever one of its settings changes.");
+            ErrorLog.SettingChanged += OnLogSettingChanged;
+#else
+            ErrorLog = Config.Bind("7 - Logging", "ErrorLog", true,
+                "Writes TomTom's own log file, BepInEx\\TomTom.log beside LogOutput.log (the last game's is kept as "
+                + "TomTom-prev.log): TomTom's warnings and errors, and any game error whose stack trace runs through "
+                + "TomTom's code, with that trace - the file to send with a bug report. LogOutput.log is written as "
+                + "before. Off: no file, unless VerboseLog is on. A change in game (ConfigurationManager) takes effect "
+                + "at once. To edit the .cfg file instead, quit the game or stop the server first: an edit made while it "
+                + "runs is not read, and the plugin rewrites the file, with the old value, whenever one of its settings "
+                + "changes.");
+            ErrorLog.SettingChanged += OnLogSettingChanged;
+            VerboseLog = Config.Bind("7 - Logging", "VerboseLog", false,
+                "Also writes every line TomTom logs to TomTom.log, and a line for each event: map clicks and deletes, "
+                + "waypoints added (with their positions), reached and removed, the route read and saved, markers made, "
+                + "lost and found again, the arrow hidden or shown and why, deaths, the map and the window, messages on "
+                + "screen, settings changed, the stages of a Find and, on a server or as the host, other players' Find "
+                + "requests (each player by a number). The new event lines go to TomTom.log only; the map-click, route "
+                + "and arrival lines TomTom already writes stay in LogOutput.log as well. Turn it on to watch a problem as "
+                + "it happens, then off again. The file then holds positions, pin names (yours, pins shared with you, and "
+                + "other players' markers near an Alt-click) and, on a server or as the host, the names of players refused "
+                + "Find: read it before you share it. A change in game (ConfigurationManager) takes effect at once. To "
+                + "edit the .cfg file instead, quit the game or stop the server first: an edit made while it runs is not "
+                + "read, and the plugin rewrites the file, with the old value, whenever one of its settings changes.");
+            VerboseLog.SettingChanged += OnLogSettingChanged;
+#endif
+        }
+
+        private void OnLogSettingChanged(object sender, EventArgs e)
+        {
+            LogFile.SetLevel(LogDetailSetting());   // never throws
+            TraceChangedSettings();
+        }
+
+        private static LogDetail LogDetailSetting()
+        {
+            bool errors = ErrorLog == null || ErrorLog.Value;
+#if WAYFINDER
+            return LogRules.Detail(errors, false);
+#else
+            return LogRules.Detail(errors, VerboseLog != null && VerboseLog.Value);
+#endif
+        }
+
+        /// <summary>The first line of the log file: versions and process, gathered here so the log file itself calls no
+        /// game or Unity code while it holds its lock. Never a path, a name, an id or an address.</summary>
+        private static string HeaderFacts()
+        {
+            string version = VERSION, game = "?", unity = "?", bepinex = "?";
+            try
+            {
+                object[] a = typeof(Plugin).Assembly.GetCustomAttributes(
+                    typeof(System.Reflection.AssemblyInformationalVersionAttribute), false);
+                if (a.Length > 0) version = ((System.Reflection.AssemblyInformationalVersionAttribute)a[0]).InformationalVersion;
+            }
+            catch (Exception) { }
+            try { game = global::Version.GetVersionString(false); } catch (Exception) { }
+            try { unity = Application.unityVersion; } catch (Exception) { }
+            try { bepinex = typeof(Paths).Assembly.GetName().Version.ToString(); } catch (Exception) { }
+            return NAME + " " + version + " log - Valheim " + game + " - Unity " + unity + " - BepInEx " + bepinex
+                   + (Dedicated ? " - dedicated server" : " - player's game");
+        }
+
+        /// <summary>VerboseLog: the settings that differ from their defaults, then every change (TomTom; Wayfinder's
+        /// compiler drops the call, so it never subscribes).</summary>
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private void TraceSettings()
+        {
+            try
+            {
+                Config.SettingChanged += OnAnySettingChanged;
+                TraceChangedSettings();
+            }
+            catch (Exception) { }
+        }
+
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private void TraceChangedSettings()
+        {
+            if (!Diag.On) return;
+            try
+            {
+                foreach (ConfigDefinition d in Config.Keys)
+                {
+                    ConfigEntryBase s = Config[d];
+                    if (s != null && !Equals(s.BoxedValue, s.DefaultValue))
+                        Diag.Trace("setting: [" + d.Section + "] " + d.Key + " = " + s.BoxedValue + " (not the default)");
+                }
+            }
+            catch (Exception) { }
+        }
+
+        // A slider dragged in ConfigurationManager changes its setting every frame: the first change is written, then that
+        // setting's changes within SettledTicks of the last one written are held, and the last of them is written when
+        // another setting changes, when the setting changes again later, or when the plugin closes.
+        private const long SettledTicks = TimeSpan.TicksPerSecond / 2;
+        private static readonly object SettingTraceLock = new object();
+        private static ConfigEntryBase _tracedSetting, _heldSetting;
+        private static long _tracedSettingAt;
+        private static int _heldChanges;
+
+        private static void OnAnySettingChanged(object sender, SettingChangedEventArgs e)
+        {
+            try
+            {
+                if (!Diag.On || e == null || e.ChangedSetting == null) return;
+                ConfigEntryBase s = e.ChangedSetting;
+                string held = null, now = null;
+                lock (SettingTraceLock)                    // any thread: a configuration reload runs this on its own
+                {
+                    long t = DateTime.UtcNow.Ticks;
+                    if (ReferenceEquals(s, _tracedSetting) && t - _tracedSettingAt < SettledTicks)
+                    {
+                        _heldSetting = s;
+                        _heldChanges++;
+                        return;
+                    }
+                    if (_heldSetting != null && !ReferenceEquals(_heldSetting, s)) held = SettingText(_heldSetting, _heldChanges);
+                    now = SettingText(s, ReferenceEquals(_heldSetting, s) ? _heldChanges : 0);
+                    _heldSetting = null;
+                    _heldChanges = 0;
+                    _tracedSetting = s;
+                    _tracedSettingAt = t;
+                }
+                if (held != null) Diag.Trace(held);
+                Diag.Trace(now);
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>Writes a setting change still held back (OnDestroy, before the log file closes).</summary>
+        [System.Diagnostics.Conditional("TOMTOM")]
+        private static void TraceHeldSetting()
+        {
+            if (!Diag.On) return;
+            try
+            {
+                string held = null;
+                lock (SettingTraceLock)
+                {
+                    if (_heldSetting != null) held = SettingText(_heldSetting, _heldChanges);
+                    _heldSetting = null;
+                    _heldChanges = 0;
+                }
+                if (held != null) Diag.Trace(held);
+            }
+            catch (Exception) { }
+        }
+
+        private static string SettingText(ConfigEntryBase s, int heldChanges)
+        {
+            ConfigDefinition d = s.Definition;
+            return "setting changed: [" + d.Section + "] " + d.Key + " = " + s.BoxedValue
+                   + (heldChanges > 0 ? " (after " + heldChanges.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                      + " quicker changes)" : "");
+        }
+
+        /// <summary>One warning for a fault that would otherwise go unnoticed or repeat; later ones are not logged.</summary>
+        internal static void WarnOnce(ref bool warned, string what, Exception e, string effect)
+        {
+            if (warned) return;
+            warned = true;
+            try
+            {
+                Log.LogWarning(what + (e != null ? " (" + e.GetType().Name + ": " + e.Message + ")" : "") + ": " + effect
+                               + ". Later failures are not logged.");
+            }
+            catch (Exception) { }
         }
 
         /// <summary>The settings a server uses; bound on players too, since the host of a Start Server game is one.</summary>
@@ -310,6 +512,7 @@ namespace Waypointer
 
         private void Update()
         {
+            LogFile.EmitParkedFailure();   // first, outside the tries: it catches everything itself
             if (Dedicated)
             {
                 TickServer();
@@ -496,7 +699,15 @@ namespace Waypointer
         {
             if (Dedicated)
             {
-                if (_harmony != null) _harmony.UnpatchSelf();
+                try
+                {
+                    if (_harmony != null) _harmony.UnpatchSelf();
+                }
+                finally
+                {
+                    LogFile.Close();
+                    LogFile.EmitParkedFailure();
+                }
                 return;
             }
             try
@@ -512,6 +723,14 @@ namespace Waypointer
             {
                 Log.LogWarning("Shutdown cleanup failed: " + e.Message);
             }
+            TraceHeldSetting();
+            LogFile.Close();
+            LogFile.EmitParkedFailure();
+        }
+
+        private void OnApplicationQuit()
+        {
+            LogFile.NoteQuit();
         }
     }
 }

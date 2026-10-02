@@ -29,6 +29,11 @@
 #      told whether the player is dead (Character.IsDead)
 #  19. the Alt-click is the plugin's, and only the Alt-click: the map click's prefix leaves a click without the modifier to
 #      the game and returns !held
+#  20. the plugin's own log file is written beside LogOutput.log under the plugin's own names, and nowhere else
+#  21. the log file cannot hurt the game: every way into it catches what goes wrong, it logs nothing through BepInEx but
+#      one warning, under its lock it names nothing outside .NET's base library and its own code, and its defaults are
+#      ErrorLog on and (TomTom) VerboseLog off
+#  22. Wayfinder has no verbose log at all; TomTom's is built in; and no trace sits where checks read exact shapes
 #  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
 #      requests, knows a player by the connection their call came on, and every place in range is sent back
 #  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
@@ -55,7 +60,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.5.2"
+$expectedVersion = "1.6.0"
 
 if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
     Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
@@ -605,6 +610,10 @@ Write-Output "== crash-safe route save =="
 # SafeFile.WriteAllText - not even the rest of that method, where a plain File.WriteAllText after the swap would
 # pass every check above. A FileStream opened anywhere else fails even for reading, so that a person looks. This reads the IL in code
 # order - a tripwire, not a proof - and whether the drive honours the flush is beyond any check.
+# Since 1.6.0 the plugin also writes its own log file: LogFile.OpenWriter may open exactly one FileStream and one
+# StreamWriter over a Stream (not over a path), and nothing else. File.Move and File.Delete (and FileInfo's) run only in
+# SafeFile and LogRotation.Rotate; and nothing makes BepInEx open a file for it (a DiskLogListener, a ConfigFile of its
+# own, Utility.TryOpenFileStream). Where those log files are is check 20.
 function Get-LocalIndex($i) {
     # The local variable an ldloc/stloc reads or writes, or -1.
     $n = $i.OpCode.Name
@@ -615,6 +624,7 @@ function Get-LocalIndex($i) {
 $checks++
 $writers = @()
 $saveUsesIt = $false
+$logStreams = 0; $logWriters = 0
 foreach ($t in $plug.GetTypes()) {
     foreach ($m in $t.Methods) {
         if (-not $m.HasBody) { continue }
@@ -627,12 +637,22 @@ foreach ($t in $plug.GetTypes()) {
             $opensFile = ($fileApi -and ($op.Name -match '^(Write|Append|Create|Open|Replace|Copy)') -and ($op.Name -notmatch '^Open(Read|Text)$'))
             $newWriter = (($dt -eq "System.IO.FileStream" -or $dt -eq "System.IO.StreamWriter" -or $dt -eq "System.IO.BinaryWriter") -and $op.Name -eq ".ctor")
             $theStream = ($t.FullName -eq "Waypointer.SafeFile" -and $m.Name -eq "WriteAllText" -and $newWriter -and $dt -eq "System.IO.FileStream")
-            if (($opensFile -or $newWriter) -and -not $theStream) { $writers += ("{0}.{1} uses {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
+            $logOpen = ($t.FullName -eq "Waypointer.LogFile" -and $m.Name -eq "OpenWriter" -and $i.OpCode.Name -eq "newobj")
+            if ($logOpen -and $dt -eq "System.IO.FileStream") { $logStreams++ }
+            elseif ($logOpen -and $dt -eq "System.IO.StreamWriter" -and $op.Parameters.Count -ge 1 -and $op.Parameters[0].ParameterType.FullName -eq "System.IO.Stream") { $logWriters++ }
+            elseif (($opensFile -or $newWriter) -and -not $theStream) { $writers += ("{0}.{1} uses {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
+            $bepOpener = ((($dt -eq "BepInEx.Logging.DiskLogListener" -or $dt -eq "BepInEx.Configuration.ConfigFile") -and $op.Name -eq ".ctor") -or ($dt -eq "BepInEx.Utility" -and $op.Name -eq "TryOpenFileStream"))
+            if ($bepOpener) { $writers += ("{0}.{1} makes BepInEx open a file: {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
+            $moveOrDelete = ($fileApi -and $op.Name -match '^(Move|MoveTo|Delete)$')
+            $mayMove = ($t.FullName -eq "Waypointer.SafeFile" -or ($t.FullName -eq "Waypointer.LogRotation" -and $m.Name -eq "Rotate"))
+            if ($moveOrDelete -and -not $mayMove) { $writers += ("{0}.{1} moves or deletes a file: {2}::{3}" -f $t.Name, $m.Name, $op.DeclaringType.Name, $op.Name) }
         }
     }
 }
+if ($logStreams -gt 1) { $writers += ("LogFile.OpenWriter opens {0} FileStreams, expected one" -f $logStreams) }
+if ($logWriters -gt 1) { $writers += ("LogFile.OpenWriter makes {0} StreamWriters, expected one" -f $logWriters) }
 if ($saveUsesIt -and $writers.Count -eq 0) {
-    Write-Output "  ok    routes are saved only through SafeFile.WriteAllText (WaypointManager.SaveIfDirty calls it; nothing but its FileStream opens a file for writing)"
+    Write-Output "  ok    routes are saved only through SafeFile.WriteAllText (WaypointManager.SaveIfDirty calls it; nothing but its FileStream, and the log file's one FileStream and StreamWriter, opens a file for writing; files are moved or deleted only by SafeFile and LogRotation.Rotate)"
 } else {
     if (-not $saveUsesIt) { Write-Output "  FAIL  WaypointManager.SaveIfDirty does not call SafeFile.WriteAllText" }
     foreach ($w in $writers) { Write-Output "  FAIL  a file is opened for writing other than through SafeFile.WriteAllText's FileStream: $w" }
@@ -763,7 +783,7 @@ else {
         if ($stores -eq 0 -or $stores -ne $fromCount) { $dirtyOk = $false }
     }
     if ($dirtySeen -eq 0 -or -not $dirtyOk) { $rrWhy += "RetryRead does not set _dirty from '_queue.Count > 0' (a merged route would not be saved)" }
-    # m1: in Load and RetryRead, the branch on ReadRoute's result: its false edge records the failed read before any
+    # In Load and RetryRead, the branch on ReadRoute's result: its false edge records the failed read before any
     # ret, and its true edge does not.
     foreach ($bm in @(@("Load", $null), @("RetryRead", $rri))) {
         $meth = $bm[1]
@@ -1525,7 +1545,8 @@ else { foreach ($p in $g17) { Write-Output "  FAIL  17: $p" }; $failures++ }
 # Valheim's own click does: each hands its walk over the pins (MinimapAccess.FindClosest or ClosestAdoptable, or its own
 # loop in GetClosestTransientPin) MinimapAccess.ShownIconTypes and SharedPinsFade, called in that lookup, and each walk
 # asks MapClickRules.PinShown once, with those two as its first and third arguments and one pin local's m_type and
-# m_ownerID as its second and fourth, and branches on the result at once; ShownIconTypes reads _visibleIconTypesField and
+# m_ownerID as its second and fourth - since 1.6.0, the local the walk stores pins[i] into - and branches on the result at
+# once; ShownIconTypes reads _visibleIconTypesField and
 # SharedPinsFade _sharedMapDataFadeField (not the other's), each set in Init from AccessTools.Field with the game's name;
 # and the right-click delete (Minimap_RemovePin_Patch.Prefix) and WaypointManager.EnsurePins keep counting hidden pins:
 # they ask GetClosestOwnedWaypointPinEvenHidden and GetClosestAdoptablePinEvenHidden (never the click's lookups), which
@@ -1677,6 +1698,9 @@ function Test-PinShown18($m, [string]$filter, [string]$fade) {
     $t1 = $wi[$pa[1]]; $t3 = $wi[$pa[3]]
     $pinOk = $t1.OpCode.Name -eq "ldfld" -and $t1.Operand.Name -eq "m_type" -and $t3.OpCode.Name -eq "ldfld" -and $t3.Operand.Name -eq "m_ownerID" -and $pa[1] -ge 1 -and $pa[3] -ge 1 -and $wi[$pa[1] - 1].OpCode.Name -like "ldloc*" -and $wi[$pa[3] - 1].OpCode.Name -like "ldloc*" -and (Get-LocalIndex $wi[$pa[1] - 1]) -eq (Get-LocalIndex $wi[$pa[3] - 1])
     if (-not $pinOk) { return ("gives MapClickRules.PinShown {0} and {1} as the pin's type and owner, not one pin's m_type and m_ownerID" -f (Get-InstructionText $t1), (Get-InstructionText $t3)) }
+    # That pin is the one the walk is at: the one local a list's get_Item (pins[i]) is stored into (since 1.6.0).
+    $gi = @(); for ($k = 0; $k -lt $wi.Count - 1; $k++) { if ($wi[$k].OpCode.Name -like "call*" -and $wi[$k].Operand -is [Mono.Cecil.MethodReference] -and $wi[$k].Operand.Name -eq "get_Item" -and $wi[$k + 1].OpCode.Name -like "stloc*") { $gi += (Get-LocalIndex $wi[$k + 1]) } }
+    if ($gi.Count -ne 1 -or (Get-LocalIndex $wi[$pa[1] - 1]) -ne $gi[0]) { return "gives MapClickRules.PinShown the type and owner of a pin other than the one the walk is at (pins[i])" }
     return ""
 }
 $walks18 = @(@("GetClosestOwnedWaypointPin", "FindClosest", 7, 5, 6), @("GetClosestFollowedPin", "FindClosest", 7, 5, 6), @("GetClosestAdoptablePin", "ClosestAdoptable", 5, 3, 4))
@@ -1760,12 +1784,12 @@ else {
 if ($h18.Count -eq 0) { Write-Output "  ok    a map click decides by the right pin (the four nearest pins the map shows asked, MapClickRules.Decide given each one's distance, before WaypointManager's route-changing methods), and ArrivalRules.Step is told whether the player is dead (its playerDead is Character.IsDead)" }
 else { foreach ($p in $h18) { Write-Output "  FAIL  18: $p" }; $failures++ }
 
-# 19 (1.5.2): the Alt-click is the plugin's, and only the Alt-click. Minimap_OnMapLeftClick_Patch.Prefix reads
-# Hotkeys.Held(Plugin.MapModifierKey) once into a local set nowhere else but to false; where that local is false the
-# straight-line code reached returns true (the click left to the game, calling nothing but an info log line on the way);
-# and the method has one "return !held" (ldloc; ldc.i4.0; ceq; ret). Not seen: another return of a constant, or a store
-# of false into the local after it is read, while the modifier is held (a "return true" where the click cannot be placed
-# passes), the window's early return, and a throw before the modifier is read.
+# 19 (1.5.2; stricter since 1.6.0): the Alt-click is the plugin's, and only the Alt-click. Minimap_OnMapLeftClick_Patch.Prefix
+# reads Hotkeys.Held(Plugin.MapModifierKey) once into a local set nowhere else but to false, and never stored again after
+# the call; where that local is false the straight-line code reached returns true (the click left to the game, calling
+# nothing but an info log line on the way); the method has one "return !held" (ldloc; ldc.i4.0; ceq; ret); and after the
+# modifier is read it sets its return value once (the not-held path's) and returns no constant. Not seen: the window's
+# early return, and a throw before the modifier is read.
 $checks++
 $p19 = @()
 $mlc19 = $plug.GetType("Waypointer.Minimap_OnMapLeftClick_Patch")
@@ -1798,11 +1822,552 @@ else {
                 if ($pi19[$k].OpCode.Name -eq "ret" -and $pi19[$k - 1].OpCode.Name -eq "ceq" -and $pi19[$k - 2].OpCode.Name -eq "ldc.i4.0" -and $pi19[$k - 3].OpCode.Name -like "ldloc*" -and (Get-LocalIndex $pi19[$k - 3]) -eq $hl19) { $neg19++ }
             }
             if ($neg19 -ne 1) { $p19 += "Prefix does not return '!held' once (with the modifier held, Valheim's own click could run)" }
+            # Since 1.6.0: after the modifier is read, held is never stored again, and the prefix sets its return value only
+            # once - the not-held path's "return true" - and returns no constant.
+            for ($k = $hd19[0] + 2; $k -lt $pi19.Count; $k++) {
+                if ($pi19[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $pi19[$k]) -eq $hl19) { $p19 += "the local holding Hotkeys.Held's result is set again after the call (with the modifier held, Valheim's own click could run)" }
+            }
+            $rl19 = @(); for ($k = 1; $k -lt $pi19.Count; $k++) { if ($pi19[$k].OpCode.Name -eq "ret" -and $pi19[$k - 1].OpCode.Name -like "ldloc*" -and (Get-LocalIndex $pi19[$k - 1]) -ne $hl19) { $rl19 += (Get-LocalIndex $pi19[$k - 1]) } }
+            $rs19 = 0; $rc19 = 0
+            for ($k = $hd19[0] + 2; $k -lt $pi19.Count; $k++) {
+                if ($pi19[$k].OpCode.Name -like "stloc*" -and $rl19 -contains (Get-LocalIndex $pi19[$k])) { $rs19++ }
+                if ($pi19[$k].OpCode.Name -eq "ret" -and $pi19[$k - 1].OpCode.Name -like "ldc.i4*") { $rc19++ }
+            }
+            if ($rs19 -ne 1 -or $rc19 -ne 0) { $p19 += ("after the modifier is read the prefix sets its return value {0}x and returns a constant {1}x; expected once (the not-held path) and never" -f $rs19, $rc19) }
         }
     }
 }
 if ($p19.Count -eq 0) { Write-Output "  ok    the Alt-click is the plugin's: without the modifier a click is left to the game, and Prefix returns !Hotkeys.Held(MapModifierKey)" }
 else { foreach ($p in $p19) { Write-Output "  FAIL  19: $p" }; $failures++ }
+
+Write-Output ""
+Write-Output "== the plugin's own log file =="
+# 20 (1.6.0): the log file is written beside LogOutput.log under the plugin's own names, and nowhere else.
+# LogFile._folder is set once, in LogFile.Open, straight from BepInEx.Paths.BepInExRootPath, and _edition once, there,
+# to the edition's name; LogFile.PathOf is Path.Combine(_folder, its argument); OpenWriter's one FileStream opens
+# PathOf(its name argument), and only LogFile.OpenLocked calls OpenWriter, giving it _sessionName or a local set only
+# from LogRules.FileName or FallbackName of _edition; _sessionName is set only from OpenWriter's name argument;
+# LogRotation.Rotate is called once, from LogFile.OpenLocked, with _folder and _edition, and every path it gives
+# File.Exists, Move or Delete is Path.Combine(its folder, LogRules.FileName, StageName or FallbackName of its edition);
+# and the only text in those three names is ".log", "-prev.log", ".log." and "-prev.log.new" - so never LogOutput.log,
+# a .cfg or a waypoints_ file. Not seen: which of the plugin's own files is opened when, or with which FileMode (the unit
+# tests run the rotation on a folder of their own).
+$checks++
+$c20 = @()
+$lf20 = $plug.GetType("Waypointer.LogFile"); $lr20 = $plug.GetType("Waypointer.LogRules"); $rot20 = $plug.GetType("Waypointer.LogRotation")
+function Get-Body20($t, [string]$name) {
+    if (-not $t) { return $null }
+    return $t.Methods | Where-Object { $_.Name -eq $name -and $_.HasBody } | Select-Object -First 1
+}
+# The instructions that push a newobj's arguments (Get-CallArgs counts a constructor's "this", which newobj does not take).
+function Get-NewArgs20($ins, [int]$at, $handlers) {
+    $st = Get-StackBefore $ins $at $handlers
+    $n = $ins[$at].Operand.Parameters.Count
+    if ($st.Count -lt $n) { return $null }
+    if ($n -eq 0) { return ,@() }
+    return ,@($st[($st.Count - $n)..($st.Count - 1)])
+}
+# A path Rotate uses: Path.Combine(its folder argument, LogRules.FileName/StageName/FallbackName(its edition argument, ...)),
+# directly or through a local every store of which is one.
+function Test-RotPathValue20($ins, $handlers, [int]$at) {
+    if ((Get-InstructionText $ins[$at]) -ne "call Path::Combine") { return $false }
+    $a = Get-CallArgs $ins $at $handlers
+    if (-not $a -or $a.Count -ne 2 -or $ins[$a[0]].OpCode.Name -ne "ldarg.0") { return $false }
+    $nm = Get-InstructionText $ins[$a[1]]
+    if ($nm -ne "call LogRules::FileName" -and $nm -ne "call LogRules::StageName" -and $nm -ne "call LogRules::FallbackName") { return $false }
+    $na = Get-CallArgs $ins $a[1] $handlers
+    return ($na -and $na.Count -ge 1 -and $ins[$na[0]].OpCode.Name -eq "ldarg.1")
+}
+function Test-RotPath20($ins, $handlers, [int]$at) {
+    $v = $ins[$at]
+    $li = Get-LocalIndex $v
+    if ($v.OpCode.Name -notlike "ldloc*" -or $li -lt 0) { return (Test-RotPathValue20 $ins $handlers $at) }
+    $n = 0
+    for ($k = 0; $k -lt $ins.Count; $k++) {
+        if ($ins[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $ins[$k]) -eq $li) {
+            $st = Get-StackBefore $ins $k $handlers
+            if ($st.Count -lt 1 -or -not (Test-RotPathValue20 $ins $handlers $st[$st.Count - 1])) { return $false }
+            $n++
+        }
+    }
+    return ($n -gt 0)
+}
+if (-not $lf20 -or -not $lr20 -or -not $rot20) { $c20 += "Waypointer.LogFile, LogRules or LogRotation not found" }
+else {
+    # Every store into LogFile's static fields: field name -> list of @(method name, index, instructions).
+    $stores20 = @{}
+    foreach ($m in $lf20.Methods) {
+        if (-not $m.HasBody) { continue }
+        $ins = @($m.Body.Instructions)
+        for ($k = 1; $k -lt $ins.Count; $k++) {
+            if ($ins[$k].OpCode.Name -eq "stsfld" -and $ins[$k].Operand.DeclaringType.FullName -eq "Waypointer.LogFile") {
+                $fn = $ins[$k].Operand.Name
+                if (-not $stores20.ContainsKey($fn)) { $stores20[$fn] = New-Object System.Collections.ArrayList }
+                [void]$stores20[$fn].Add(@($m.Name, $k, $ins))
+            }
+        }
+    }
+    $fs = $stores20["_folder"]
+    if (-not $fs -or $fs.Count -ne 1 -or $fs[0][0] -ne "Open" -or (Get-InstructionText $fs[0][2][$fs[0][1] - 1]) -ne "call Paths::get_BepInExRootPath") {
+        $c20 += "LogFile._folder is not set once, in Open, from BepInEx.Paths.BepInExRootPath"
+    }
+    $es = $stores20["_edition"]
+    if (-not $es -or $es.Count -ne 1 -or $es[0][0] -ne "Open" -or $es[0][2][$es[0][1] - 1].OpCode.Name -ne "ldstr" -or "$($es[0][2][$es[0][1] - 1].Operand)" -ne $Edition) {
+        $c20 += "LogFile._edition is not set once, in Open, to '$Edition'"
+    }
+    $ss = $stores20["_sessionName"]
+    $ssOk = ($null -ne $ss -and $ss.Count -ge 1)
+    if ($ssOk) { foreach ($s in $ss) { if ($s[0] -ne "OpenWriter" -or $s[2][$s[1] - 1].OpCode.Name -ne "ldarg.0") { $ssOk = $false } } }
+    if (-not $ssOk) { $c20 += "LogFile._sessionName is set from something other than OpenWriter's name argument" }
+
+    $po = Get-Body20 $lf20 "PathOf"
+    $poOk = $false
+    if ($po) {
+        $pi = @($po.Body.Instructions)
+        $pc = @(); for ($k = 0; $k -lt $pi.Count; $k++) { if ($pi[$k].Operand -is [Mono.Cecil.MethodReference]) { $pc += $k } }
+        if ($pc.Count -eq 1 -and (Get-InstructionText $pi[$pc[0]]) -eq "call Path::Combine" -and $pi[$pc[0]].Operand.Parameters.Count -eq 2) {
+            $a = Get-CallArgs $pi $pc[0]
+            $poOk = ($a -and (Get-InstructionText $pi[$a[0]]) -eq "ldsfld LogFile::_folder" -and $pi[$a[1]].OpCode.Name -eq "ldarg.0")
+        }
+    }
+    if (-not $poOk) { $c20 += "LogFile.PathOf is not Path.Combine(_folder, its argument)" }
+
+    $ow = Get-Body20 $lf20 "OpenWriter"
+    if (-not $ow) { $c20 += "LogFile.OpenWriter not found" }
+    else {
+        $wi = @($ow.Body.Instructions); $wh = $ow.Body.ExceptionHandlers
+        $fsAt = @(); for ($k = 0; $k -lt $wi.Count; $k++) { if ($wi[$k].OpCode.Name -eq "newobj" -and $wi[$k].Operand.DeclaringType.FullName -eq "System.IO.FileStream") { $fsAt += $k } }
+        $owOk = $false
+        if ($fsAt.Count -eq 1) {
+            $a = Get-NewArgs20 $wi $fsAt[0] $wh
+            if ($a -and $a.Count -ge 1 -and (Get-InstructionText $wi[$a[0]]) -eq "call LogFile::PathOf") {
+                $pa = Get-CallArgs $wi $a[0] $wh
+                $owOk = ($pa -and $wi[$pa[0]].OpCode.Name -eq "ldarg.0")
+            }
+        }
+        if (-not $owOk) { $c20 += "LogFile.OpenWriter's FileStream does not open PathOf(its name argument)" }
+    }
+
+    # Who calls OpenWriter and LogRotation.Rotate, and with what.
+    $owCallers = @(); $rotCalls = New-Object System.Collections.ArrayList
+    foreach ($t in $plug.GetTypes()) {
+        foreach ($m in $t.Methods) {
+            if (-not $m.HasBody) { continue }
+            $ins = @($m.Body.Instructions)
+            for ($k = 0; $k -lt $ins.Count; $k++) {
+                $o = $ins[$k].Operand
+                if (-not ($o -is [Mono.Cecil.MethodReference])) { continue }
+                if ($o.DeclaringType.FullName -eq "Waypointer.LogFile" -and $o.Name -eq "OpenWriter") { $owCallers += ("{0}.{1}" -f $t.Name, $m.Name) }
+                if ($o.DeclaringType.FullName -eq "Waypointer.LogRotation" -and $o.Name -eq "Rotate") { [void]$rotCalls.Add(@(("{0}.{1}" -f $t.Name, $m.Name), $k, $ins, $m.Body.ExceptionHandlers)) }
+            }
+        }
+    }
+    if (@($owCallers | Where-Object { $_ -ne "LogFile.OpenLocked" }).Count -gt 0 -or $owCallers.Count -eq 0) {
+        $c20 += ("LogFile.OpenWriter is called from {0}; expected LogFile.OpenLocked only" -f (($owCallers | Select-Object -Unique) -join ", "))
+    }
+    $ol = Get-Body20 $lf20 "OpenLocked"
+    if ($ol) {
+        $oi = @($ol.Body.Instructions); $oh = $ol.Body.ExceptionHandlers
+        foreach ($c in (Find-Calls $oi "Waypointer.LogFile" "OpenWriter")) {
+            $a = Get-CallArgs $oi $c $oh
+            if (-not $a) { $c20 += "a name OpenLocked gives OpenWriter cannot be traced"; continue }
+            $v = $oi[$a[0]]
+            if ((Get-InstructionText $v) -eq "ldsfld LogFile::_sessionName") { continue }
+            $li = Get-LocalIndex $v
+            $nOk = ($v.OpCode.Name -like "ldloc*" -and $li -ge 0)
+            $nStores = 0
+            if ($nOk) {
+                for ($k = 0; $k -lt $oi.Count; $k++) {
+                    if ($oi[$k].OpCode.Name -like "stloc*" -and (Get-LocalIndex $oi[$k]) -eq $li) {
+                        $nStores++
+                        $st = Get-StackBefore $oi $k $oh
+                        if ($st.Count -lt 1) { $nOk = $false; continue }
+                        $src = $st[$st.Count - 1]
+                        $txt = Get-InstructionText $oi[$src]
+                        if ($txt -ne "call LogRules::FileName" -and $txt -ne "call LogRules::FallbackName") { $nOk = $false; continue }
+                        $ea = Get-CallArgs $oi $src $oh
+                        if (-not $ea -or (Get-InstructionText $oi[$ea[0]]) -ne "ldsfld LogFile::_edition") { $nOk = $false }
+                    }
+                }
+            }
+            if (-not $nOk -or $nStores -eq 0) { $c20 += "OpenLocked gives OpenWriter a name that is not _sessionName or LogRules.FileName/FallbackName of _edition" }
+        }
+    }
+    if ($rotCalls.Count -ne 1 -or $rotCalls[0][0] -ne "LogFile.OpenLocked") { $c20 += ("LogRotation.Rotate is called {0}x; expected once, from LogFile.OpenLocked" -f $rotCalls.Count) }
+    else {
+        $a = Get-CallArgs $rotCalls[0][2] $rotCalls[0][1] $rotCalls[0][3]
+        if (-not $a -or (Get-InstructionText $rotCalls[0][2][$a[0]]) -ne "ldsfld LogFile::_folder" -or (Get-InstructionText $rotCalls[0][2][$a[1]]) -ne "ldsfld LogFile::_edition") {
+            $c20 += "LogFile.OpenLocked does not give LogRotation.Rotate _folder and _edition"
+        }
+    }
+    $rm = Get-Body20 $rot20 "Rotate"
+    if (-not $rm) { $c20 += "LogRotation.Rotate not found" }
+    else {
+        $ri = @($rm.Body.Instructions); $rh = $rm.Body.ExceptionHandlers
+        $fileCalls = 0
+        for ($k = 0; $k -lt $ri.Count; $k++) {
+            $o = $ri[$k].Operand
+            if (-not ($o -is [Mono.Cecil.MethodReference]) -or $o.DeclaringType.FullName -ne "System.IO.File") { continue }
+            $fileCalls++
+            if ($o.Name -ne "Exists" -and $o.Name -ne "Move" -and $o.Name -ne "Delete") { $c20 += ("LogRotation.Rotate calls File.{0}" -f $o.Name); continue }
+            $a = Get-CallArgs $ri $k $rh
+            if (-not $a) { $c20 += ("a path LogRotation.Rotate gives File.{0} cannot be traced" -f $o.Name); continue }
+            foreach ($x in $a) { if (-not (Test-RotPath20 $ri $rh $x)) { $c20 += ("LogRotation.Rotate gives File.{0} a path that is not Path.Combine(folder, one of LogRules' names for its edition)" -f $o.Name) } }
+        }
+        if ($fileCalls -eq 0) { $c20 += "LogRotation.Rotate calls no File method (nothing to check)" }
+    }
+    foreach ($pair in @(@("FileName", ".log|-prev.log"), @("FallbackName", ".log."), @("StageName", "-prev.log.new"))) {
+        $nm = Get-Body20 $lr20 $pair[0]
+        if (-not $nm) { $c20 += ("LogRules.{0} not found" -f $pair[0]); continue }
+        $lits = @(); foreach ($i in $nm.Body.Instructions) { if ($i.OpCode.Name -eq "ldstr") { $lits += "$($i.Operand)" } }
+        $got = (@($lits | Sort-Object -Unique) -join "|"); $want = (@($pair[1] -split '\|' | Sort-Object -Unique) -join "|")
+        if ($got -ne $want) { $c20 += ("LogRules.{0} holds the text '{1}', expected '{2}'" -f $pair[0], $got, $want) }
+    }
+}
+if ($c20.Count -eq 0) { Write-Output "  ok    the log file is written beside LogOutput.log under the plugin's own names only (BepInEx root, LogRules' .log names of this edition, the rotation inside them)" }
+else { foreach ($p in $c20) { Write-Output "  FAIL  20: $p" }; $failures++ }
+
+# 21 (1.6.0): the log file cannot hurt the game. Every LogFile method the rest of the plugin calls (Open, Write,
+# SetLevel, NoteQuit, Close, EmitParkedFailure), its hooks (each method a delegate is made of), Fail, LogRotation.Rotate
+# and every Diag method run wholly inside a catch (System.Exception) that does not rethrow and whose handler calls
+# nothing but LogFile.Fail; every [Conditional("TOMTOM")] trace helper makes its calls inside such a try; OnOwnEvent
+# asks LogRules.Admits once and returns at once when it says no; the log file's code (LogFile, LogRules, LogRotation,
+# LineBudget, RepeatCollapse and Diag) calls no other code of the plugin (Diag may read a name through GameText and a
+# Waypoint's getters), and of BepInEx's logging only its own log event's add and remove, a log event's level and data,
+# and one ManualLogSource call - EmitParkedFailure's LogWarning; nothing calls ManualLogSource.LogDebug or Log(LogLevel,
+# ...); the hooks are added only in LogFile.Open and removed only in LogFile.Close, nothing adds a listener or a source
+# to BepInEx's Logger (Listeners, Sources, CreateLogSource), and nothing hooks Unity's threaded log event; the code that
+# runs under the log file's lock - every region between Monitor.Enter (or TryEnter) and its Monitor.Exit in a LogFile
+# method, nested ones too, LogFile's *Locked methods, OpenWriter, Park, OnFlushTimer and LogRotation.Rotate, and every
+# method of the log file's code they call by name (LogFile, LogRules, LogRotation, LineBudget, RepeatCollapse; each
+# overload), followed to the end - names (calls, constructs or takes the address of) no method outside .NET's System
+# types and the log file's own, and nothing named Invoke, BeginInvoke, DynamicInvoke or InvokeMember; no log type has a
+# virtual method; the static initialisers of LogFile, LogRules, LogRotation, LineBudget and RepeatCollapse only make
+# objects, delegates and arrays, and Diag has none; a Timer is made only in StartTimerLocked and never disposed with a
+# WaitHandle; Update starts with LogFile.EmitParkedFailure, OnApplicationQuit calls NoteQuit, OnDestroy calls
+# LogFile.Close on both of its paths, and Awake opens the log before it binds the other settings; ErrorLog's default is
+# true and TomTom's VerboseLog's false; LogRules' level numbers are BepInEx's LogLevel values; and Diag.Trace carries
+# [Conditional("TOMTOM")]. Not seen: code run on the lock's behalf rather than named there (a delegate handed to a
+# library method, a call through reflection other than Invoke/InvokeMember), what a caught failure leaves behind (the
+# file is closed; a live session shows it), and the order of the steps under the lock.
+$checks++
+$c21 = @()
+$diag21 = $plug.GetType("Waypointer.Diag")
+function Test-Caught21($m) {
+    # "" when every instruction of $m is in the try or the handler of a catch (System.Exception) that does not rethrow and
+    # whose handler calls nothing but LogFile.Fail - except a closing ret, or ldloc; ret.
+    $ins = @($m.Body.Instructions)
+    $hs = @($m.Body.ExceptionHandlers | Where-Object { $_.HandlerType -eq [Mono.Cecil.Cil.ExceptionHandlerType]::Catch -and $_.CatchType.FullName -eq "System.Exception" })
+    if ($hs.Count -eq 0) { return "has no catch (System.Exception)" }
+    for ($k = 0; $k -lt $ins.Count; $k++) {
+        $i = $ins[$k]
+        $covered = $false
+        foreach ($h in $hs) {
+            $tEnd = [int]::MaxValue; if ($h.TryEnd) { $tEnd = $h.TryEnd.Offset }
+            $hEnd = [int]::MaxValue; if ($h.HandlerEnd) { $hEnd = $h.HandlerEnd.Offset }
+            if ($i.Offset -ge $h.TryStart.Offset -and $i.Offset -lt $tEnd) { $covered = $true; break }
+            if ($i.Offset -ge $h.HandlerStart.Offset -and $i.Offset -lt $hEnd) {
+                if ($i.OpCode.Name -eq "throw" -or $i.OpCode.Name -eq "rethrow") { return "rethrows from its catch" }
+                if ($i.Operand -is [Mono.Cecil.MethodReference] -and -not ($i.Operand.DeclaringType.FullName -eq "Waypointer.LogFile" -and $i.Operand.Name -eq "Fail")) { return ("its catch calls {0}" -f (Get-InstructionText $i)) }
+                $covered = $true; break
+            }
+        }
+        if ($covered) { continue }
+        $tail = (($k -eq $ins.Count - 1 -and $i.OpCode.Name -eq "ret") -or ($k -eq $ins.Count - 2 -and $i.OpCode.Name -like "ldloc*" -and $ins[$k + 1].OpCode.Name -eq "ret"))
+        if (-not $tail) { return ("{0} at IL_{1:x4} is outside its try" -f (Get-InstructionText $i), $i.Offset) }
+    }
+    return ""
+}
+if (-not $lf20 -or -not $lr20 -or -not $rot20 -or -not $diag21) { $c21 += "Waypointer.LogFile, LogRules, LogRotation or Diag not found" }
+else {
+    $guarded = @("Open", "Write", "SetLevel", "NoteQuit", "Close", "EmitParkedFailure", "Fail")
+    $logFamily21 = @("Waypointer.LogFile", "Waypointer.LogRules", "Waypointer.LogRotation", "Waypointer.LineBudget", "Waypointer.RepeatCollapse", "Waypointer.Diag", "Waypointer.LogDetail", "Waypointer.LineDecision", "Waypointer.LogRotation/Outcome")
+    $okLogging21 = @("BepInEx.Logging.ManualLogSource::add_LogEvent", "BepInEx.Logging.ManualLogSource::remove_LogEvent", "BepInEx.Logging.ManualLogSource::LogWarning", "BepInEx.Logging.LogEventArgs::get_Level", "BepInEx.Logging.LogEventArgs::get_Data")
+    $hooks21 = @(); $outsideCalls21 = @()
+    $logCalls21 = @(); $hookSites21 = @(); $timerSites21 = @()
+    $condCalls21 = 0
+    foreach ($t in $plug.GetTypes()) {
+        foreach ($m in $t.Methods) {
+            if (-not $m.HasBody) { continue }
+            $where = "{0}.{1}" -f $t.Name, $m.Name
+            $isCond = $false
+            foreach ($ca in $m.CustomAttributes) { if ($ca.AttributeType.FullName -eq "System.Diagnostics.ConditionalAttribute" -and "$($ca.ConstructorArguments[0].Value)" -eq "TOMTOM") { $isCond = $true } }
+            $ins = @($m.Body.Instructions)
+            for ($k = 0; $k -lt $ins.Count; $k++) {
+                $i = $ins[$k]; $o = $i.Operand
+                if (-not ($o -is [Mono.Cecil.MethodReference])) { continue }
+                $dt = $o.DeclaringType.FullName
+                if ($dt -eq "Waypointer.LogFile" -and $i.OpCode.Name -eq "ldftn") { $hooks21 += $o.Name }
+                if ($dt -eq "Waypointer.LogFile" -and $t.FullName -ne "Waypointer.LogFile" -and $i.OpCode.Name -like "call*") { $outsideCalls21 += $o.Name }
+                if ($dt -eq "BepInEx.Logging.ManualLogSource" -and $o.Name -match '^Log') {
+                    if ($o.Name -eq "LogDebug" -or $o.Name -eq "Log") { $c21 += ("{0} calls ManualLogSource.{1}" -f $where, $o.Name) }
+                    if ($logFamily21 -contains $t.FullName) { $logCalls21 += ("{0}:{1}" -f $where, $o.Name) }
+                }
+                $hookName = "{0}::{1}" -f $dt, $o.Name
+                if (@("UnityEngine.Application::add_logMessageReceived", "UnityEngine.Application::remove_logMessageReceived", "BepInEx.Logging.ManualLogSource::add_LogEvent", "BepInEx.Logging.ManualLogSource::remove_LogEvent") -contains $hookName) { $hookSites21 += ("{0}|{1}" -f $hookName, $where) }
+                if ($hookName -eq "UnityEngine.Application::add_logMessageReceivedThreaded" -or $hookName -eq "BepInEx.Logging.Logger::get_Listeners" -or $hookName -eq "BepInEx.Logging.Logger::get_Sources" -or $hookName -eq "BepInEx.Logging.Logger::CreateLogSource") { $c21 += ("{0} calls {1}" -f $where, $hookName) }
+                # The log file's own code: no other plugin code, and of BepInEx's logging only what it needs.
+                if ($logFamily21 -contains $t.FullName) {
+                    if ($dt -like "Waypointer.*" -and $logFamily21 -notcontains $o.DeclaringType.GetElementType().FullName -and -not ($t.FullName -eq "Waypointer.Diag" -and ($dt -eq "Waypointer.GameText" -or ($dt -eq "Waypointer.Waypoint" -and $o.Name -like "get_*")))) { $c21 += ("{0} calls {1} - the log file's code calls no other code of the plugin" -f $where, (Get-InstructionText $i)) }
+                    if ($dt -like "BepInEx.Logging.*" -and $okLogging21 -notcontains $hookName) { $c21 += ("{0} calls {1}" -f $where, $hookName) }
+                }
+                if ($dt -eq "System.Threading.Timer" -and $o.Name -eq "Dispose" -and $o.Parameters.Count -gt 0) { $c21 += ("{0} disposes a Timer with a WaitHandle" -f $where) }
+                if ($dt -eq "System.Threading.Timer" -and $o.Name -eq ".ctor") { $timerSites21 += $where }
+                if ($isCond -and -not ($t.FullName -eq "Waypointer.Diag" -and $m.Name -eq "Trace") -and $i.OpCode.Name -ne "ldftn") {
+                    $condCalls21++
+                    if ((Get-CatchTries $m $i).Count -eq 0) { $c21 += ("the trace helper {0} calls {1} outside a try that catches it" -f $where, (Get-InstructionText $i)) }
+                }
+            }
+        }
+    }
+    foreach ($n in @($outsideCalls21 | Select-Object -Unique)) { if ($guarded -notcontains $n) { $c21 += ("the plugin calls LogFile.{0}, which is not one of the guarded entry points" -f $n) } }
+    $toTest = @($guarded + $hooks21 | Select-Object -Unique)
+    if ($hooks21.Count -lt 3) { $c21 += ("LogFile makes {0} delegates of its own methods; expected its three hooks" -f $hooks21.Count) }
+    foreach ($n in $toTest) {
+        $m = Get-Body20 $lf20 $n
+        if (-not $m) { $c21 += "LogFile.$n not found"; continue }
+        $why = Test-Caught21 $m
+        if ($why -ne "") { $c21 += "LogFile.${n}: $why" }
+    }
+    $rm = Get-Body20 $rot20 "Rotate"
+    if ($rm) { $why = Test-Caught21 $rm; if ($why -ne "") { $c21 += "LogRotation.Rotate: $why" } }
+    foreach ($m in $diag21.Methods) {
+        if (-not $m.HasBody) { continue }
+        if ($m.Name -eq ".cctor") { $c21 += "Diag has a static initialiser"; continue }
+        $why = Test-Caught21 $m
+        if ($why -ne "") { $c21 += ("Diag.{0}: {1}" -f $m.Name, $why) }
+    }
+    if ($logCalls21.Count -ne 1 -or $logCalls21[0] -ne "LogFile.EmitParkedFailure:LogWarning") { $c21 += ("the log file calls BepInEx's logging at {0}; expected once, EmitParkedFailure's LogWarning" -f ($logCalls21 -join ", ")) }
+    $wantHooks = @("UnityEngine.Application::add_logMessageReceived|LogFile.Open", "BepInEx.Logging.ManualLogSource::add_LogEvent|LogFile.Open", "UnityEngine.Application::remove_logMessageReceived|LogFile.Close", "BepInEx.Logging.ManualLogSource::remove_LogEvent|LogFile.Close")
+    $gotHooks = @($hookSites21 | Sort-Object -Unique)
+    if (($gotHooks -join ",") -ne (@($wantHooks | Sort-Object) -join ",") -or $hookSites21.Count -ne 4) { $c21 += ("the log hooks are added or removed at {0}; expected each once, added in LogFile.Open and removed in LogFile.Close" -f ($hookSites21 -join ", ")) }
+    if ($timerSites21.Count -ne 1 -or $timerSites21[0] -ne "LogFile.StartTimerLocked") { $c21 += ("a Timer is made in {0}; expected LogFile.StartTimerLocked only" -f ($timerSites21 -join ", ")) }
+
+    # OnOwnEvent: Admits, then straight out when it says no.
+    $oe = Get-Body20 $lf20 "OnOwnEvent"
+    $gateOk = $false
+    if ($oe) {
+        $ei = @($oe.Body.Instructions)
+        $ad = Find-Calls $ei "Waypointer.LogRules" "Admits"
+        $wc = Find-Calls $ei "Waypointer.LogFile" "WriteCore"
+        if ($ad.Count -eq 1 -and $wc.Count -eq 1 -and $ad[0] + 2 -lt $ei.Count -and $ei[$ad[0] + 1].OpCode.Name -like "brtrue*" -and ($ei[$ad[0] + 2].OpCode.Name -like "leave*" -or $ei[$ad[0] + 2].OpCode.Name -eq "ret") -and $wc[0] -gt $ad[0] + 2) {
+            $target = [array]::IndexOf($ei, $ei[$ad[0] + 1].Operand)
+            $gateOk = ($target -gt $ad[0] + 2 -and $target -le $wc[0])
+        }
+    }
+    if (-not $gateOk) { $c21 += "LogFile.OnOwnEvent does not return at once when LogRules.Admits says a line is not wanted" }
+
+    # Under the lock: nothing in BepInEx, Unity or the rest of the plugin. The roots are every region between
+    # Monitor.Enter and Monitor.Exit in a LogFile method, and the methods named to run under the lock; every LogFile or
+    # LogRotation method they call is followed, to the end.
+    $lockedOk = @("Waypointer.LogFile", "Waypointer.LogRules", "Waypointer.LogRotation", "Waypointer.LineBudget", "Waypointer.RepeatCollapse")
+    $work21 = New-Object System.Collections.ArrayList     # @(label, method, first index, end index)
+    $regions21 = 0
+    foreach ($m in $lf20.Methods) {
+        if (-not $m.HasBody) { continue }
+        $mi = @($m.Body.Instructions)
+        if ($m.Name -like "*Locked" -or @("OpenWriter", "Park", "OnFlushTimer") -contains $m.Name) { [void]$work21.Add(@(("LogFile." + $m.Name), $m, 0, $mi.Count)) }
+        $enters = New-Object System.Collections.ArrayList   # nested locks: every Enter or TryEnter until its Exit
+        for ($k = 0; $k -lt $mi.Count; $k++) {
+            $o = $mi[$k].Operand
+            if (-not ($o -is [Mono.Cecil.MethodReference]) -or $o.DeclaringType.FullName -ne "System.Threading.Monitor") { continue }
+            if ($o.Name -eq "Enter" -or $o.Name -eq "TryEnter") { [void]$enters.Add($k) }
+            elseif ($o.Name -eq "Exit" -and $enters.Count -gt 0) {
+                $from = $enters[$enters.Count - 1]
+                $enters.RemoveAt($enters.Count - 1)
+                [void]$work21.Add(@(("LogFile." + $m.Name + " (inside lock)"), $m, $from, $k)); $regions21++
+            }
+        }
+    }
+    if ($rm) { [void]$work21.Add(@("LogRotation.Rotate", $rm, 0, @($rm.Body.Instructions).Count)) }
+    if ($regions21 -lt 7) { $c21 += ("only {0} lock regions found in LogFile; expected one in each entry point at least" -f $regions21) }
+    $seen21 = @{}
+    for ($w = 0; $w -lt $work21.Count; $w++) {
+        $u = $work21[$w]
+        $ui = @($u[1].Body.Instructions)
+        for ($k = $u[2]; $k -lt $u[3]; $k++) {
+            $o = $ui[$k].Operand
+            if (-not ($o -is [Mono.Cecil.MethodReference])) { continue }
+            $dt = $o.DeclaringType.GetElementType().FullName
+            $mine = @($lockedOk | Where-Object { $dt -eq $_ -or $dt -like ($_ + "/*") }).Count -gt 0
+            if (-not ($dt -like "System.*" -or $mine)) { $c21 += ("{0}, which runs under the log file's lock, calls {1} - only .NET's System types and the log file's own may be named there" -f $u[0], (Get-InstructionText $ui[$k])) }
+            if (@("Invoke", "BeginInvoke", "DynamicInvoke", "InvokeMember") -contains $o.Name) { $c21 += ("{0}, which runs under the log file's lock, invokes {1} (code of someone else's choosing)" -f $u[0], (Get-InstructionText $ui[$k])) }
+            if ($lockedOk -contains $dt) {
+                $key = $o.FullName
+                if ($seen21.ContainsKey($key)) { continue }
+                $seen21[$key] = $true
+                $callee = $null
+                try { $callee = $o.Resolve() } catch { }
+                if ($callee -and $callee.HasBody) { [void]$work21.Add(@(($o.DeclaringType.Name + "." + $o.Name + " (called under the lock)"), $callee, 0, @($callee.Body.Instructions).Count)) }
+            }
+        }
+    }
+
+    # Static initialisers: objects, delegates and arrays only.
+    $okNew = @("System.Object", "System.Text.UTF8Encoding", "System.Threading.TimerCallback", "System.EventHandler``1", "UnityEngine.Application/LogCallback")
+    $lb21 = $plug.GetType("Waypointer.LineBudget"); $rc21 = $plug.GetType("Waypointer.RepeatCollapse")
+    foreach ($t in @($lf20, $lr20, $rot20, $lb21, $rc21)) {
+        if (-not $t) { continue }
+        foreach ($m in $t.Methods) { if ($m.IsVirtual) { $c21 += ("{0}.{1} is virtual: code named Object::{1} under the lock could run it" -f $t.Name, $m.Name) } }
+    }
+    foreach ($t in @($lf20, $lr20, $rot20, $lb21, $rc21)) {
+        if (-not $t) { continue }
+        foreach ($m in $t.Methods) {
+            if ($m.Name -ne ".cctor" -or -not $m.HasBody) { continue }
+            foreach ($i in $m.Body.Instructions) {
+                $o = $i.Operand
+                if (-not ($o -is [Mono.Cecil.MethodReference])) { continue }
+                $dt = $o.DeclaringType.GetElementType().FullName
+                $fine = ($i.OpCode.Name -eq "ldftn" -and $dt -eq $t.FullName) -or ($i.OpCode.Name -eq "newobj" -and $okNew -contains $dt) -or ($dt -eq "System.Runtime.CompilerServices.RuntimeHelpers" -and $o.Name -eq "InitializeArray")
+                if (-not $fine) { $c21 += ("{0}'s static initialiser calls {1}" -f $t.Name, (Get-InstructionText $i)) }
+            }
+        }
+    }
+
+    # The plugin's own wiring.
+    $up = Get-Body20 $pluginType "Update"
+    if (-not $up -or (Get-InstructionText @($up.Body.Instructions)[0]) -ne "call LogFile::EmitParkedFailure") { $c21 += "Plugin.Update does not start with LogFile.EmitParkedFailure" }
+    $oq = Get-Body20 $pluginType "OnApplicationQuit"
+    if (-not $oq -or (Find-Calls @($oq.Body.Instructions) "Waypointer.LogFile" "NoteQuit").Count -ne 1) { $c21 += "Plugin.OnApplicationQuit does not call LogFile.NoteQuit" }
+    $od = Get-Body20 $pluginType "OnDestroy"
+    if (-not $od -or (Find-Calls @($od.Body.Instructions) "Waypointer.LogFile" "Close").Count -ne 2) { $c21 += "Plugin.OnDestroy does not call LogFile.Close on both of its paths" }
+    $aw = Get-Body20 $pluginType "Awake"
+    $openAt = @(); $bindAt = @()
+    if ($aw) { $ai = @($aw.Body.Instructions); $openAt = Find-Calls $ai "Waypointer.LogFile" "Open"; $bindAt = Find-Calls $ai "Waypointer.Plugin" "BindServerConfig" }
+    if ($openAt.Count -ne 1 -or $bindAt.Count -ne 1 -or $openAt[0] -gt $bindAt[0]) { $c21 += "Plugin.Awake does not open the log file once, before it binds the other settings" }
+
+    # Defaults, level numbers, the trace's attribute.
+    $defaults = @{}
+    foreach ($m in $pluginType.Methods) {
+        if (-not $m.HasBody) { continue }
+        $bi = @($m.Body.Instructions)
+        for ($k = 0; $k -lt $bi.Count; $k++) {
+            $o = $bi[$k].Operand
+            if (-not ($o -is [Mono.Cecil.MethodReference]) -or $o.DeclaringType.FullName -ne "BepInEx.Configuration.ConfigFile" -or $o.Name -ne "Bind") { continue }
+            $a = Get-CallArgs $bi $k $m.Body.ExceptionHandlers
+            if (-not $a -or $a.Count -lt 4 -or $bi[$a[2]].OpCode.Name -ne "ldstr") { continue }
+            $key = "$($bi[$a[2]].Operand)"
+            if ($key -eq "ErrorLog" -or $key -eq "VerboseLog") { $defaults[$key] = $bi[$a[3]].OpCode.Name }
+        }
+    }
+    if ($defaults["ErrorLog"] -ne "ldc.i4.1") { $c21 += ("ErrorLog's default is '{0}', expected true" -f $defaults["ErrorLog"]) }
+    if ($Edition -eq "TomTom" -and $defaults["VerboseLog"] -ne "ldc.i4.0") { $c21 += ("VerboseLog's default is '{0}', expected false" -f $defaults["VerboseLog"]) }
+    $ll21 = Find-GameType "BepInEx.Logging.LogLevel"
+    if (-not $ll21) { $c21 += "BepInEx.Logging.LogLevel not found" }
+    else {
+        foreach ($n in @("Fatal", "Error", "Warning", "Message", "Info", "Debug", "All")) {
+            $f = $lr20.Fields | Where-Object { $_.Name -eq $n -and $_.HasConstant } | Select-Object -First 1
+            $g = $ll21.Fields | Where-Object { $_.Name -eq $n -and $_.HasConstant } | Select-Object -First 1
+            if (-not $f -or -not $g -or [int]$f.Constant -ne [int]$g.Constant) { $c21 += ("LogRules.{0} is not BepInEx's LogLevel.{0}" -f $n) }
+        }
+    }
+    $tr = Get-Body20 $diag21 "Trace"
+    $hasCond = $false
+    if ($tr) { foreach ($ca in $tr.CustomAttributes) { if ($ca.AttributeType.FullName -eq "System.Diagnostics.ConditionalAttribute" -and "$($ca.ConstructorArguments[0].Value)" -eq "TOMTOM") { $hasCond = $true } } }
+    if (-not $hasCond) { $c21 += "Diag.Trace does not carry [Conditional(""TOMTOM"")]" }
+}
+if ($c21.Count -eq 0) { Write-Output "  ok    the log file cannot hurt the game (guarded entry points and trace helpers, the level gate, one log call of its own, its hooks, a leaf lock, plain initialisers, the plugin's wiring, its defaults)" }
+else { foreach ($p in $c21) { Write-Output "  FAIL  21: $p" }; $failures++ }
+
+# 22 (1.6.0): Wayfinder has no verbose log, and no trace sits in code the checks above read by its exact shape. In
+# Wayfinder: LogDetail is exactly Off = 0 and Errors = 1, LogRules.IsVerbose returns false, nothing binds a VerboseLog
+# setting, and no method outside Diag calls Diag or a [Conditional("TOMTOM")] method (its compiler dropped every trace).
+# In TomTom: LogDetail also has Verbose = 2, VerboseLog is bound, and Diag.Trace and the trace helpers are called (so
+# TOMTOM was defined for its build). In both: no call to Diag, LogFile or a [Conditional("TOMTOM")] method, and no
+# read of Diag.On, in Minimap_OnMapLeftClick_Patch.Prefix, in HandleWaypointClick before MapClickRules.Decide, in
+# WaypointManager.CreateLocalOnlyPin, in SafeFile, in LocationSearch.Ask or AnswersIntercepted, in the answer and
+# WhoMayFind patches (Game_RPC_DiscoverLocationResponse_Patch, Game_RPC_DiscoverClosestLocation_Patch,
+# ZRoutedRpc_RPC_RoutedRPC_Patch), in FindServer.CallerMayFind, Allowed, IsAdmin or CallingPeer, or in FindLink.SendFind
+# or OnToClient. Not seen: what a trace's text holds.
+$checks++
+$c22 = @()
+$cond22 = @{}
+foreach ($t in $plug.GetTypes()) {
+    foreach ($m in $t.Methods) {
+        foreach ($ca in $m.CustomAttributes) {
+            if ($ca.AttributeType.FullName -eq "System.Diagnostics.ConditionalAttribute" -and "$($ca.ConstructorArguments[0].Value)" -eq "TOMTOM") { $cond22[$t.FullName + "::" + $m.Name] = $true }
+        }
+    }
+}
+function Test-Trace22($i, [bool]$withOn) {
+    $o = $i.Operand
+    if ($o -is [Mono.Cecil.MethodReference]) {
+        $dt = $o.DeclaringType.FullName
+        if ($dt -eq "Waypointer.Diag") { return $true }
+        if ($cond22.ContainsKey($dt + "::" + $o.Name)) { return $true }
+    }
+    if ($withOn -and $o -is [Mono.Cecil.FieldReference] -and $o.DeclaringType.FullName -eq "Waypointer.Diag" -and $i.OpCode.Name -like "ldsfld*") { return $true }
+    return $false
+}
+$traceCalls22 = 0; $helperCalls22 = 0
+foreach ($t in $plug.GetTypes()) {
+    if ($t.FullName -eq "Waypointer.Diag") { continue }
+    foreach ($m in $t.Methods) {
+        if (-not $m.HasBody) { continue }
+        foreach ($i in $m.Body.Instructions) {
+            if (-not (Test-Trace22 $i $false)) { continue }
+            if ($i.Operand.DeclaringType.FullName -eq "Waypointer.Diag") { $traceCalls22++ } else { $helperCalls22++ }
+        }
+    }
+}
+$ld22 = $plug.GetType("Waypointer.LogDetail")
+$members22 = @(); if ($ld22) { foreach ($f in $ld22.Fields) { if ($f.HasConstant) { $members22 += ("{0}={1}" -f $f.Name, $f.Constant) } } }
+$verboseBinds22 = 0
+foreach ($m in $pluginType.Methods) {
+    if (-not $m.HasBody) { continue }
+    $bi = @($m.Body.Instructions)
+    for ($k = 0; $k -lt $bi.Count; $k++) {
+        $o = $bi[$k].Operand
+        if (-not ($o -is [Mono.Cecil.MethodReference]) -or $o.DeclaringType.FullName -ne "BepInEx.Configuration.ConfigFile" -or $o.Name -ne "Bind") { continue }
+        $a = Get-CallArgs $bi $k $m.Body.ExceptionHandlers
+        if ($a -and $a.Count -ge 3 -and $bi[$a[2]].OpCode.Name -eq "ldstr" -and "$($bi[$a[2]].Operand)" -eq "VerboseLog") { $verboseBinds22++ }
+    }
+}
+if ($Edition -eq "Wayfinder") {
+    if ((@($members22 | Sort-Object) -join ",") -ne "Errors=1,Off=0") { $c22 += ("LogDetail is {0}; expected exactly Off=0 and Errors=1" -f ($members22 -join ", ")) }
+    $iv = $null; if ($lr20) { $iv = Get-Body20 $lr20 "IsVerbose" }
+    $ivIns = @(); if ($iv) { $ivIns = @($iv.Body.Instructions) }
+    if ($ivIns.Count -ne 2 -or $ivIns[0].OpCode.Name -ne "ldc.i4.0" -or $ivIns[1].OpCode.Name -ne "ret") { $c22 += "LogRules.IsVerbose does not return false outright" }
+    if ($verboseBinds22 -ne 0) { $c22 += "a VerboseLog setting is bound" }
+    if ($traceCalls22 + $helperCalls22 -ne 0) { $c22 += ("{0} calls to Diag and {1} to trace helpers are left (the verbose log is TomTom's only)" -f $traceCalls22, $helperCalls22) }
+} else {
+    if ((@($members22 | Sort-Object) -join ",") -ne "Errors=1,Off=0,Verbose=2") { $c22 += ("LogDetail is {0}; expected Off=0, Errors=1 and Verbose=2" -f ($members22 -join ", ")) }
+    if ($verboseBinds22 -ne 1) { $c22 += ("VerboseLog is bound {0}x, expected once" -f $verboseBinds22) }
+    if ($traceCalls22 -eq 0 -or $helperCalls22 -eq 0) { $c22 += ("Diag.Trace is called {0}x and the trace helpers {1}x - TOMTOM was not defined for this build" -f $traceCalls22, $helperCalls22) }
+}
+# The exclusion zones: type, method ("*" = every method), and whether only the part before MapClickRules.Decide counts.
+$zones22 = @(
+    @("Waypointer.Minimap_OnMapLeftClick_Patch", "Prefix", $false), @("Waypointer.Minimap_OnMapLeftClick_Patch", "HandleWaypointClick", $true),
+    @("Waypointer.WaypointManager", "CreateLocalOnlyPin", $false), @("Waypointer.SafeFile", "*", $false),
+    @("Waypointer.LocationSearch", "Ask", $false), @("Waypointer.LocationSearch", "AnswersIntercepted", $false),
+    @("Waypointer.Game_RPC_DiscoverLocationResponse_Patch", "*", $false), @("Waypointer.Game_RPC_DiscoverClosestLocation_Patch", "*", $false),
+    @("Waypointer.ZRoutedRpc_RPC_RoutedRPC_Patch", "*", $false), @("Waypointer.FindServer", "CallerMayFind", $false),
+    @("Waypointer.FindServer", "Allowed", $false), @("Waypointer.FindServer", "IsAdmin", $false), @("Waypointer.FindServer", "CallingPeer", $false),
+    @("Waypointer.FindLink", "SendFind", $false), @("Waypointer.FindLink", "OnToClient", $false))
+foreach ($z in $zones22) {
+    $zt = $plug.GetType($z[0])
+    $ms = @(); if ($zt) { $ms = @($zt.Methods | Where-Object { $_.HasBody -and ($z[1] -eq "*" -or $_.Name -eq $z[1]) }) }
+    if ($ms.Count -eq 0) { $c22 += ("{0}.{1} not found (a trace exclusion zone)" -f $z[0], $z[1]); continue }
+    foreach ($m in $ms) {
+        $zi = @($m.Body.Instructions)
+        $end = $zi.Count
+        if ($z[2]) {
+            $dc = Find-Calls $zi "Waypointer.MapClickRules" "Decide"
+            if ($dc.Count -ne 1) { $c22 += ("{0}.{1} does not call MapClickRules.Decide once" -f $z[0], $m.Name); continue }
+            $end = $dc[0]
+        }
+        for ($k = 0; $k -lt $end; $k++) {
+            $zo = $zi[$k].Operand
+            $direct = ($zo -is [Mono.Cecil.MethodReference] -and $zo.DeclaringType.FullName -eq "Waypointer.LogFile")
+            if ($direct -or (Test-Trace22 $zi[$k] $true)) { $c22 += ("{0}.{1} traces ({2}) where checks read its exact shape" -f $zt.Name, $m.Name, (Get-InstructionText $zi[$k])); break }
+        }
+    }
+}
+if ($c22.Count -eq 0) {
+    if ($Edition -eq "Wayfinder") { Write-Output "  ok    Wayfinder has no verbose log (LogDetail Off/Errors, no VerboseLog, no trace left), and no trace sits where checks read exact shapes" }
+    else { Write-Output ("  ok    TomTom's verbose log is built in ({0} Diag calls, {1} trace-helper calls), and no trace sits where checks read exact shapes" -f $traceCalls22, $helperCalls22) }
+}
+else { foreach ($p in $c22) { Write-Output "  FAIL  22: $p" }; $failures++ }
 
 Write-Output ""
 Write-Output "== the server side =="

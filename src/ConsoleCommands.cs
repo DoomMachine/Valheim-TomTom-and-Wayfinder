@@ -99,6 +99,7 @@ namespace Waypointer
 
                     case "gui":
                     case "window":
+                        Diag.Trace("console: waypoint window");
                         WaypointWindow.Toggle();
                         Print(context, Edition.Name + (WaypointWindow.IsOpen ? " window opened." : " window closed."));
                         return;
@@ -150,6 +151,7 @@ namespace Waypointer
             }
 
             Vector3 world = CoordinateParser.ToWorld(parsed, Plugin.RawValheimOrder.Value);
+            Diag.Trace("console: waypoint <coordinates>");
             Waypoint wp = WaypointManager.Add(world, parsed.Name, parsed.HasElevation);
             Print(context, "Waypoint added: " + wp.DisplayName + " at " + CoordinateFormat.Format(wp.Pos, wp.HasElevation));
         }
@@ -165,6 +167,7 @@ namespace Waypointer
             if (player == null) { Print(context, "No player."); return; }
 
             string name = argv.Length > 2 ? JoinFrom(argv, 2) : "Marked spot";
+            Diag.Trace("console: waypoint here");
             Waypoint wp = WaypointManager.Add(player.transform.position, name, true);
 #if WAYFINDER
             // Printing the position here would be a GPS readout, which vanilla keeps behind devcommands.

@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.5.2 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.6.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (a click on
@@ -133,14 +133,15 @@ needs a plugin update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.5.2]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.6.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
 
 Delete the plugin's folder (`BepInEx/plugins/DoomMachine-Wayfinder/`). Its settings
 (`BepInEx/config/DoomMachine.Wayfinder.cfg`) and saved routes (`BepInEx/config/DoomMachine.Wayfinder/`, one file per world,
-shared by every character on this PC) stay until you delete them as well. The markers are never saved into your map,
+shared by every character on this PC) stay until you delete them as well, and so do its log files
+(`BepInEx/Wayfinder.log`, `Wayfinder-prev.log` and any `Wayfinder.log.1` to `.4`). The markers are never saved into your map,
 so nothing is left there.
 
 ## Console
@@ -217,14 +218,14 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.5.2]
+   Loading [Wayfinder 1.6.0]
    Applied 2 of 2 patches.
-   Wayfinder 1.5.2 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.6.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
-   The last one comes when the world loads.
+   The last one comes when the world loads. Wayfinder's own log, `BepInEx\Wayfinder.log`, is beside it (see Log file).
 7. To change who may use Find: stop the server, open `BepInEx\config\DoomMachine.Wayfinder.cfg` (the first start writes
-   it; on a server it holds only `[6 - Server]`), set `WhoMayFind`, and start the server again.
+   it; on a server it holds only `[6 - Server]` and `[7 - Logging]`), set `WhoMayFind`, and start the server again.
    - `AdminsOnly` uses the game's own admin list, `adminlist.txt`, in the server's save folder: the `-savedir`
      folder if the server is started with one, otherwise `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim`. One
      ID per line - the same IDs as for the game's own admin commands (kick, ban): for a Steam player, the
@@ -271,6 +272,30 @@ F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `Do
 key, as if it were unbound; everything else keeps working. Keys the game ignores outright - Mouse5,
 Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warning.
 
+## Log file
+
+Besides `BepInEx/LogOutput.log`, Wayfinder keeps a log of its own beside it: `BepInEx/Wayfinder.log`. Each start of the
+game normally begins a new file and keeps the last game's as `Wayfinder-prev.log` (older ones are replaced); if another
+program holds one of these files open, the new lines are added after the last game's instead, or - when that program
+does not let others write to it - go to `Wayfinder.log.1`. On Windows, while another copy of the game on this PC is
+writing the file, that copy writes `Wayfinder.log.1` (up to `.4`), adding to what an earlier second copy wrote there.
+These numbered files are kept until you delete them; once all four hold more than 8 MiB, a second copy writes none. You
+can open the log while the game runs, as you can `LogOutput.log`.
+
+With **`ErrorLog`** (`[7 - Logging]`, on by default) it holds Wayfinder's warnings and errors, and any game error whose
+stack trace runs through Wayfinder's code, with that trace - the file to send with a bug report. A game without
+problems leaves only a few lines, naming the versions of Wayfinder, Valheim, Unity and BepInEx. Turned off, nothing is
+written; the files already there stay. A change in game through ConfigurationManager takes effect at once. To edit the
+`.cfg` file instead, quit the game (or stop the server), edit it and start again: an edit made while the game runs is
+not read, and the plugin rewrites its settings file, with the old value, whenever one of its settings changes (for
+example when you start a Find with a new range). Lines are written at once; a line repeated many times in a row is
+written once, and a file stops at 16 MiB.
+
+Unlike TomTom, Wayfinder has no more detailed log: a line for every click and Find would tell where things are. In its
+file, the config, BepInEx and game folders and your user folder are written as `<config>`, `<BepInEx>`, `<game>` and
+`<home>`, and numbers that look like a position - a number with a fraction, or two or three whole numbers joined by
+commas - as `#`.
+
 ## Configuration
 
 `BepInEx/config/DoomMachine.Wayfinder.cfg`, also editable in-game through ConfigurationManager.
@@ -291,6 +316,7 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 | `SearchRange` | `1000` | metres Find looks around you (the slider sets it) |
 | `MaxSearchWaypoints` | `50` | the most waypoints one Find queues |
 | `WhoMayFind` | `Everyone` | used only when this game is the server: which joining players may use Find (see Servers) |
+| `ErrorLog` | `true` | Wayfinder's own log of warnings and errors, `BepInEx/Wayfinder.log` (see Log file) |
 
 Saved queues: `BepInEx/config/DoomMachine.Wayfinder/waypoints_<worldUID>.txt`, one per world — kept
 apart from TomTom's, so coordinates entered in TomTom never carry over into Wayfinder.

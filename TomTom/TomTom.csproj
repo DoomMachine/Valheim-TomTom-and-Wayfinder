@@ -8,6 +8,8 @@
   <PropertyGroup>
     <EditionName>TomTom</EditionName>
     <OtherEditionName>Wayfinder</OtherEditionName>
+    <!-- TOMTOM keeps Diag.Trace's [Conditional("TOMTOM")] calls; Wayfinder's compiler drops them, arguments and all. -->
+    <DefineConstants>$(DefineConstants);TOMTOM</DefineConstants>
     <Description>TomTom-style waypoints for Valheim: enter or paste coordinates, or place waypoints on the world map, then follow an on-screen arrow.</Description>
 
     <!-- TomTom is the edition installed into the game by default. Disable with -p:DeployToGame=false -->

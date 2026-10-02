@@ -5,21 +5,30 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-10-01, with v1.5.2.
+Last updated: 2026-10-02, with v1.6.0.
 
 ## Not yet tried in play
 
-1.5.2 and 1.5.1 have not been played yet. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single player: its logs show
-waypoints reached, no Find run and no error from the plugin; 1.5.0 does not log map clicks, so the map-click checks
-below cannot be read from them. 1.4.1 has not been
-played on its own; all its changes are in 1.5.0. 1.4.0 was used in four short sessions, 1.3.1 in at least two and
-1.3.0 in at least two, all on Windows.
+1.6.0 has not been played yet. 1.5.2 was played in two single-player sessions on 2026-10-02, with no warning or error
+from the plugin: Alt-clicks followed pins (a death pin among them), placed waypoints on the spot and removed markers, a
+second followed pin was queued behind the first, map deletes removed waypoint markers, two Finds for axe heads ran, and
+waypoints were reached - the 1.5.1 Alt-click rule and its log lines working. 1.5.1 was never played on its own; all its
+changes are in 1.5.2. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single player: its logs show waypoints reached,
+no Find run and no error from the plugin. 1.4.1 has not been played on its own; all its changes are in 1.5.0. 1.4.0 was
+used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, all on Windows.
+
+- **1.6.0, the log file:** its first lines at a game's start, and at the end "the game is quitting" then "log closed"
+  (that the plugin is told the game is quitting, and is shut down, is read from the code, not seen); the second start
+  keeping the first game's file as `-prev`; `ErrorLog` turned off and on again in a game (the file closes and opens
+  again, after the lines it holds); `VerboseLog`'s lines during a Find, a death and a map click, and back to `ErrorLog`
+  only; a game error caught with its stack trace; a second copy of the game writing `.log.1`; Wayfinder's file; the
+  file on a dedicated server, where nothing has been loaded since 1.3.0 (below).
 
 - **1.5.2:** an Alt-click near a pin whose icon type the map's filter hides, and near a shared pin while shared pins
   are hidden (the pin the map shows counts).
 - **1.5.1:** an Alt-click with several pins within reach (the nearest one counts), and one on a ping or another
-  player's marker (a waypoint on the spot); following a second pin ("Waypoint queued (2nd)"); dying close to the
-  waypoint being followed (it stays in the route); the new log lines.
+  player's marker (a waypoint on the spot); the on-screen "Waypoint queued (2nd)" (a second pin was followed on
+  2026-10-02; the message is not logged); dying close to the waypoint being followed (it stays in the route).
 - **1.5.0:** a Wooden Greatsword Find at an Infested Mine, a Ruined Dvergr Tower and a Rock Spire; a mine whose chests
   have all been emptied being left out, as the host; pasting Valheim's `pos` line and Server Devcommands' `pos` line;
   with `Use3DDistance` on, a clifftop map click (on the terrain and on a Mistlands rock), and a Find place still
@@ -68,14 +77,30 @@ played on its own; all its changes are in 1.5.0. 1.4.0 was used in four short se
   its room; where the chests sit in those rooms has not been read from the game's data.
 - **Servers with other mods:** mods that rename or remove locations, anti-cheat plugins, and limits on message size
   have not been tried.
+- **The log file and other programs:** which programs can open it while the game runs (it is shared for reading the
+  way BepInEx shares `LogOutput.log`); and two copies of the game started from one folder have not been tried with it
+  (on Windows the second copy adds to `.log.1`; on Linux, where an open file can still be renamed, it would move the
+  first copy's file aside to `-prev` - read from the code, not tried).
 
 ## Next release (small, planned)
 
-- **Preflight:** in the map click's test of a hidden pin, which way it branches, another test joined to it, which pin
-  it is given, and which way the two helpers that read the map's icon filter and shared-pin fade test the map are not
-  checked; nor are the pin lookups' owned and followed flags and the right-click's second lookup. In the map click's
-  prefix, another return of a constant, or a store of false into the modifier's local, while the modifier is held is not
-  checked (the game's own left click would then run during an Alt-click).
+- **Preflight:** in the map click's test of a hidden pin, which way it branches, another test joined to it, and which
+  way the two helpers that read the map's icon filter and shared-pin fade test the map are not checked; nor are the pin
+  lookups' owned and followed flags and the right-click's second lookup, or the map click prefix's early return over the
+  window. For the log file, which of its own files is opened when, and with which file mode, is not checked: the unit
+  tests run the rotation's choice for the plain file only; the numbered files' mode (appended to) and a reopen's were
+  tried with a test harness, not by a test. Check 21 does not see code run on the log file's lock's behalf rather than
+  named there (a delegate handed to a library method, reflection by other means), nor check 22 a trace inside a lambda
+  written in one of the methods it guards.
+- **Saved routes in a mod manager's profile export:** r2modman's export (a profile as a code or as a file) copies the
+  whole `BepInEx/config` folder, so the saved routes (`waypoints_<world>.txt`, with positions) go to whoever imports the
+  profile - for Wayfinder, a friend would get the sharer's waypoints for the same world. To decide: say so in the
+  package READMEs, or keep the routes where an export does not copy them (existing routes would have to move with
+  them). Seen in r2modman's source (its development branch, 2026-10-02); its released build, Thunderstore Mod Manager
+  and Gale were not checked. The log file is kept beside `LogOutput.log` for this reason.
+- **Wayfinder's "part of the server's answer did not arrive" warning** is written only when the server's plugin found
+  at least one place in range, before the explored filter, so its presence hints that something is there. It needs a
+  lost network message, which a player cannot cause. To decide: keep it (a server failure) or leave it out of Wayfinder.
 - **Tests:** a Find place's height is marked as an estimate and carried into and out of the route file; only the
   route file's format and the arrival rule are tested, not the code that marks the flag in Find and carries it to and
   from the queue and the file. Two more planted defects pass every check and test: a chest check measured in 3D (it
@@ -187,6 +212,13 @@ Wayfinder:
 
 Everything up to v1.5.0 is in the README's History. From here on, a finished item moves here with its version.
 
+- **1.6.0:** a log file of the plugin's own, `BepInEx/TomTom.log` or `BepInEx/Wayfinder.log`, with the last game's
+  kept as `-prev.log`: warnings and errors and the game errors that run through the plugin's code (`ErrorLog`, on by
+  default), and in TomTom a line for each event (`VerboseLog`, off by default); warnings where something failed
+  silently; the explored-map test's failure and an unreadable message from the server's plugin are logged once a game
+  session instead of once each; preflight checks where the log is written, that it cannot hurt the game and that
+  Wayfinder has no verbose log, and the stricter map-click checks (a return value set twice or the modifier reset in
+  the click's prefix, the pin a hidden-pin test is given).
 - **1.5.2:** pins the map hides (an icon type filtered out, shared pins while hidden) no longer take an Alt-click; the
   game's own left click never runs while the modifier is held, even when the plugin cannot tell where the click
   landed;
