@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.6.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.7.0 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (a click on
@@ -133,7 +133,7 @@ needs a plugin update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.6.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.7.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -218,9 +218,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.6.0]
+   Loading [Wayfinder 1.7.0]
    Applied 2 of 2 patches.
-   Wayfinder 1.6.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.7.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads. Wayfinder's own log, `BepInEx\Wayfinder.log`, is beside it (see Log file).
@@ -275,12 +275,13 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 ## Log file
 
 Besides `BepInEx/LogOutput.log`, Wayfinder keeps a log of its own beside it: `BepInEx/Wayfinder.log`. Each start of the
-game normally begins a new file and keeps the last game's as `Wayfinder-prev.log` (older ones are replaced); if another
-program holds one of these files open, the new lines are added after the last game's instead, or - when that program
-does not let others write to it - go to `Wayfinder.log.1`. On Windows, while another copy of the game on this PC is
+game normally begins a new file and keeps the last game's as `Wayfinder-prev.log` (older ones are replaced). On
+Windows, if another program holds one of these files open, the new lines are added after the last game's in `Wayfinder.log` instead, or -
+when that program holds `Wayfinder.log` itself and does not let others write to it - go to the first numbered file
+that can be written, `Wayfinder.log.1` (up to `.4`). On Windows, while another copy of the game on this PC is
 writing the file, that copy writes `Wayfinder.log.1` (up to `.4`), adding to what an earlier second copy wrote there.
 These numbered files are kept until you delete them; once all four hold more than 8 MiB, a second copy writes none. You
-can open the log while the game runs, as you can `LogOutput.log`.
+can open the log while the game runs, as you can `LogOutput.log`. Each entry starts with the local time and `f` with the game's frame number (a stack trace's further lines are indented and start with `|`); `f-` marks the header lines and any line written off the game's main thread.
 
 With **`ErrorLog`** (`[7 - Logging]`, on by default) it holds Wayfinder's warnings and errors, and any game error whose
 stack trace runs through Wayfinder's code, with that trace - the file to send with a bug report. A game without

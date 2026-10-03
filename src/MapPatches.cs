@@ -120,7 +120,7 @@ namespace Waypointer
 #if WAYFINDER
             WaypointManager.Notify(MapClickRules.AddedMessage(WaypointManager.IndexOf(added)));   // no coordinates: a readout would let clicks be steered
 #else
-            WaypointManager.Notify(MapClickRules.AddedMessage(WaypointManager.IndexOf(added)) + " at " + CoordinateFormat.Format(added.Pos, false));
+            WaypointManager.Notify(MapClickRules.AddedMessage(WaypointManager.IndexOf(added), added.CoordText, Plugin.ShowCoordinates.Value));
 #endif
             return true;
         }

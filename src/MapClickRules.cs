@@ -17,7 +17,8 @@ namespace Waypointer
     }
 
     /// <summary>
-    /// The map click's decision and the words it shows. Unity-free, so the tests exercise them.
+    /// The map click's decision and the words it shows, and what the screen calls a waypoint. Unity-free, so the tests
+    /// exercise them.
     /// </summary>
     internal static class MapClickRules
     {
@@ -102,13 +103,34 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// The message for a waypoint the click adds on the spot, before any position TomTom appends: "Waypoint added"
-        /// when it is the arrow's target now, "Waypoint queued (2nd)" when it waits behind others.
+        /// The message for a waypoint the click adds on the spot: "Waypoint added" when it is the arrow's target now,
+        /// "Waypoint queued (2nd)" when it waits behind others. TomTom's overload below can add the spot's position.
         /// </summary>
         public static string AddedMessage(int index)
         {
             if (index <= 0) return "Waypoint added";
             return "Waypoint queued (" + Ordinal(index + 1) + ")";
+        }
+
+#if !WAYFINDER
+        /// <summary>TomTom: AddedMessage(index), then " at " and the spot's coordinates while ShowCoordinates is on and
+        /// they are known ("Waypoint added at 1234, -567", as 1.6.0 wrote it); without them while it is off.</summary>
+        public static string AddedMessage(int index, string coordText, bool showCoordinates)
+        {
+            string message = AddedMessage(index);
+            return showCoordinates && !string.IsNullOrEmpty(coordText) ? message + " at " + coordText : message;
+        }
+#endif
+
+        /// <summary>What the arrow's caption and the messages at the top left call a waypoint (Waypoint.ScreenName): its
+        /// name; for one without, its coordinates while they are to be shown and known (TomTom's ShowCoordinates), else
+        /// the PinLabel setting, or "Waypoint" when that is empty. Returns one of its arguments or that constant, never new
+        /// text. The window, the console and the log use Waypoint.DisplayName.</summary>
+        public static string ScreenName(string name, string label, string coordText, bool showCoordinates)
+        {
+            if (!string.IsNullOrEmpty(name)) return name;
+            if (showCoordinates && !string.IsNullOrEmpty(coordText)) return coordText;
+            return string.IsNullOrEmpty(label) ? "Waypoint" : label;
         }
     }
 }

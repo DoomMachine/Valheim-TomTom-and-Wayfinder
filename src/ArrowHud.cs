@@ -129,7 +129,7 @@ namespace Waypointer
                 // The outline draws the text one pixel either side, hence the 2 px kept free.
                 float max = Mathf.Max(0f, Screen.width - 2f * CaptionMargin - 2f);
                 float nameWidth;
-                string name = _captions.FittedName(wp.DisplayName, WaypointManager.Queue.Count, max, out nameWidth);
+                string name = _captions.FittedName(wp.ScreenName, WaypointManager.Queue.Count, max, out nameWidth);
                 DrawOutlinedLabel(CaptionRect(centre, y, nameWidth), name, Color.white);
                 y += 20f;
             }
@@ -230,7 +230,7 @@ namespace Waypointer
         [System.Diagnostics.Conditional("TOMTOM")]
         private static void TraceArrow(string state)
         {
-            if (!Diag.On) return;
+            if (!Diag.On) { _tracedArrow = null; return; }   // the next turn-on states the arrow afresh
             try
             {
                 if (ReferenceEquals(state, _tracedArrow)) return;

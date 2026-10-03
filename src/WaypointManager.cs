@@ -100,6 +100,22 @@ namespace Waypointer
 #endif
             }
         }
+
+        /// <summary>What the arrow's caption and the top-left messages call this waypoint (MapClickRules.ScreenName). The
+        /// window, the console and the log use DisplayName.</summary>
+        public string ScreenName
+        {
+            get
+            {
+                // Plain loads only, no ?: inside the call: preflight check 23 traces these arguments.
+                string label = Plugin.PinLabel != null ? Plugin.PinLabel.Value : null;
+#if WAYFINDER
+                return MapClickRules.ScreenName(GameText.Localize(Name), label, null, false);
+#else
+                return MapClickRules.ScreenName(GameText.Localize(Name), label, CoordText, Plugin.ShowCoordinates.Value);
+#endif
+            }
+        }
     }
 
     /// <summary>
@@ -336,8 +352,9 @@ namespace Waypointer
         }
 
         // One log line per change to the route, so a waypoint that went missing in play can be traced from the log.
-        // Names and places in the route only - no positions: Wayfinder shows none, and
-        // TomTom's map click logs its own.
+        // Names and places in the route only - no positions: Wayfinder shows none; TomTom's are in VerboseLog's
+        // "added at" and "following" lines (TraceAdded, TraceFollowing) and, for a waypoint without a name, in
+        // "Reached waypoint" (LogReached).
         private static void LogAdded(string what, Waypoint wp)
         {
             int index = _queue.IndexOf(wp);
@@ -459,13 +476,21 @@ namespace Waypointer
             _dirty = true;
             ResetSpeedEstimate();
 
+            TraceHud("Location Reached");
             if (MessageHud.instance != null)
                 MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, "Location Reached", 0, null, false, false);
 
-            Plugin.Log.LogInfo("Reached waypoint " + wp.DisplayName);
+            LogReached(wp);
 
             Waypoint next = Active;
-            if (next != null) Notify("Next waypoint: " + next.DisplayName);
+            if (next != null) Notify("Next waypoint: " + next.ScreenName);
+        }
+
+        // A method of its own: preflight check 23 refuses DisplayName in a method that shows text. The log keeps TomTom's
+        // coordinates for a waypoint without a name.
+        private static void LogReached(Waypoint wp)
+        {
+            Plugin.Log.LogInfo("Reached waypoint " + wp.DisplayName);
         }
 
         /// <summary>Shows a short message in the top-left corner of the HUD, if the HUD exists.</summary>
@@ -700,6 +725,7 @@ namespace Waypointer
         private static bool _worldUidWarned;
         private static bool _tracedPlayer, _tracedDead, _tracedMap;
         private static int _tracedMapMode = -1;
+        private static bool _presenceTraced;   // false until the first look after VerboseLog (re)starts
 
         /// <summary>Saved-route lines that could not be read are left out. Never quotes a line: it holds a position.</summary>
         private static void WarnUnreadableLines(long worldUid, int count)
@@ -721,10 +747,29 @@ namespace Waypointer
         [System.Diagnostics.Conditional("TOMTOM")]
         private static void TracePresence(Player player, Minimap mm)
         {
-            if (!Diag.On) return;
+            if (!Diag.On) { _presenceTraced = false; return; }   // no text built; the next turn-on looks afresh
             try
             {
                 bool hasPlayer = player != null;
+                bool dead = hasPlayer && player.IsDead();
+                bool hasMap = mm != null;
+                int mode = hasMap ? (int)mm.m_mode : -1;
+                if (!_presenceTraced)
+                {
+                    // The first look after VerboseLog starts: the state as it is, not events.
+                    _presenceTraced = true;
+                    _tracedPlayer = hasPlayer;
+                    _tracedDead = dead;
+                    _tracedMap = hasMap;
+                    _tracedMapMode = mode;
+                    Diag.Trace("state now: " + (hasPlayer
+                        ? "local player in world " + CurrentWorldUid().ToString(CultureInfo.InvariantCulture) + " ("
+                          + Diag.N(_queue.Count) + " waypoint(s) queued"
+                          + (QueueBelongsToCurrentWorld ? ", this world's), " : ", not this world's yet), ")
+                          + (dead ? "dead" : "alive")
+                        : "no local player") + (hasMap ? "; map mode " + mm.m_mode : "; no map"));
+                    return;
+                }
                 if (hasPlayer != _tracedPlayer)
                 {
                     _tracedPlayer = hasPlayer;
@@ -733,19 +778,17 @@ namespace Waypointer
                           + Diag.N(_queue.Count) + " waypoint(s) queued" + (QueueBelongsToCurrentWorld ? ", this world's)" : ", not this world's yet)")
                         : "local player gone");
                 }
-                bool dead = hasPlayer && player.IsDead();
-                if (dead != _tracedDead)
+                // Only while a player exists: when the game removes the dead player, "player alive" waits for the new one.
+                if (hasPlayer && dead != _tracedDead)
                 {
                     _tracedDead = dead;
                     Diag.Trace(dead ? "player died: no arming or arrival until alive" : "player alive");
                 }
-                bool hasMap = mm != null;
                 if (hasMap != _tracedMap)
                 {
                     _tracedMap = hasMap;
                     Diag.Trace(hasMap ? "map present" : "no map");
                 }
-                int mode = hasMap ? (int)mm.m_mode : -1;
                 if (mode != _tracedMapMode)
                 {
                     _tracedMapMode = mode;

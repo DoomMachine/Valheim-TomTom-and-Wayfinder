@@ -1308,6 +1308,35 @@ namespace Waypointer
                 MapClickRules.PinShown(null, 1, 1f, 0L) && MapClickRules.PinShown(filter, 3, 1f, 0L) && MapClickRules.PinShown(filter, -1, 1f, 0L), "");
             Check("pins shown: an unusable fade hides shared pins, as the game's own test does",
                 !MapClickRules.PinShown(filter, 0, float.NaN, 12345L) && MapClickRules.PinShown(filter, 0, float.NaN, 0L), "");
+
+            // What the arrow's caption and the top-left messages call a waypoint (1.7.0): a waypoint without a name shows
+            // its coordinates there only with TomTom's ShowCoordinates (off by default), else the marker label.
+            const string at = "1234, -567";
+            Check("screen name: a named waypoint is called by its name, whatever ShowCoordinates says",
+                MapClickRules.ScreenName("Silver vein", "Waypoint", at, false) == "Silver vein"
+                && MapClickRules.ScreenName("Silver vein", "Waypoint", at, true) == "Silver vein", "");
+            Check("screen name: an unnamed waypoint is called by the marker label while ShowCoordinates is off (the default)",
+                MapClickRules.ScreenName("", "Waypoint", at, false) == "Waypoint" && MapClickRules.ScreenName(null, "Flag", at, false) == "Flag",
+                MapClickRules.ScreenName("", "Waypoint", at, false));
+            Check("screen name: ...and by its coordinates while it is on",
+                MapClickRules.ScreenName("", "Waypoint", at, true) == at && MapClickRules.ScreenName(null, "Flag", at, true) == at, "");
+            Check("screen name: an empty marker label gives 'Waypoint', as Wayfinder's arrow does",
+                MapClickRules.ScreenName("", "", at, false) == "Waypoint" && MapClickRules.ScreenName(null, null, null, false) == "Waypoint", "");
+            Check("screen name: no coordinates to show (Wayfinder hands none) - the label, even with the setting on",
+                MapClickRules.ScreenName("", "Flag", null, true) == "Flag" && MapClickRules.ScreenName("", "", "", true) == "Waypoint", "");
+            string label = new string("Flag".ToCharArray()), name = new string("Day 3".ToCharArray()), coords = new string(at.ToCharArray());
+            Check("screen name: the answer is the very string handed in - the arrow builds no text for it each frame",
+                object.ReferenceEquals(MapClickRules.ScreenName(name, label, coords, true), name)
+                && object.ReferenceEquals(MapClickRules.ScreenName("", label, coords, true), coords)
+                && object.ReferenceEquals(MapClickRules.ScreenName("", label, coords, false), label), "");
+            Check("map click: no position in the message while ShowCoordinates is off",
+                MapClickRules.AddedMessage(0, "-473, 532", false) == "Waypoint added" && MapClickRules.AddedMessage(1, "-42, 584", false) == "Waypoint queued (2nd)",
+                MapClickRules.AddedMessage(1, "-42, 584", false));
+            Check("map click: the spot's position while it is on, as 1.6.0 wrote it",
+                MapClickRules.AddedMessage(0, CoordinateFormat.Format(new Vector3(-473f, 0f, 532f), false), true) == "Waypoint added at -473, 532"
+                && MapClickRules.AddedMessage(1, "-42, 584", true) == "Waypoint queued (2nd) at -42, 584", MapClickRules.AddedMessage(1, "-42, 584", true));
+            Check("map click: on, but no position known - no ' at '",
+                MapClickRules.AddedMessage(0, null, true) == "Waypoint added" && MapClickRules.AddedMessage(2, "", true) == "Waypoint queued (3rd)", "");
         }
 
         // ---------------------------------------------------------------- a route that could not be read (1.4.1)

@@ -62,6 +62,9 @@ namespace Waypointer
         public static ConfigEntry<bool> ShowDistance;
         public static ConfigEntry<bool> ShowWaypointName;
         public static ConfigEntry<bool> ShowEta;
+#if !WAYFINDER
+        public static ConfigEntry<bool> ShowCoordinates;
+#endif
         public static ConfigEntry<bool> HideArrowWhenMapOpen;
         public static ConfigEntry<string> ArrowColorGood;
         public static ConfigEntry<string> ArrowColorMiddle;
@@ -299,8 +302,12 @@ namespace Waypointer
                 foreach (ConfigDefinition d in Config.Keys)
                 {
                     ConfigEntryBase s = Config[d];
+#if !WAYFINDER
+                    if (ReferenceEquals(s, VerboseLog)) continue;   // the "log: VerboseLog on" line says it
+#endif
                     if (s != null && !Equals(s.BoxedValue, s.DefaultValue))
-                        Diag.Trace("setting: [" + d.Section + "] " + d.Key + " = " + s.BoxedValue + " (not the default)");
+                        Diag.Trace("setting: [" + d.Section + "] " + d.Key + " = "
+                            + Convert.ToString(s.BoxedValue, System.Globalization.CultureInfo.InvariantCulture) + " (not the default)");
                 }
             }
             catch (Exception) { }
@@ -320,6 +327,9 @@ namespace Waypointer
             try
             {
                 if (!Diag.On || e == null || e.ChangedSetting == null) return;
+#if !WAYFINDER
+                if (ReferenceEquals(e.ChangedSetting, VerboseLog)) return;   // the "log:" line says it
+#endif
                 ConfigEntryBase s = e.ChangedSetting;
                 string held = null, now = null;
                 lock (SettingTraceLock)                    // any thread: a configuration reload runs this on its own
@@ -366,7 +376,8 @@ namespace Waypointer
         private static string SettingText(ConfigEntryBase s, int heldChanges)
         {
             ConfigDefinition d = s.Definition;
-            return "setting changed: [" + d.Section + "] " + d.Key + " = " + s.BoxedValue
+            return "setting changed: [" + d.Section + "] " + d.Key + " = "
+                   + Convert.ToString(s.BoxedValue, System.Globalization.CultureInfo.InvariantCulture)
                    + (heldChanges > 0 ? " (after " + heldChanges.ToString(System.Globalization.CultureInfo.InvariantCulture)
                       + " quicker changes)" : "");
         }
@@ -468,6 +479,16 @@ namespace Waypointer
             ShowWaypointName = Config.Bind("4 - Arrow", "ShowWaypointName", true, "Show the waypoint name under the arrow.");
             ShowEta = Config.Bind("4 - Arrow", "ShowTimeToArrival", true,
                 "Show an estimated time of arrival based on how fast you are closing in.");
+#if !WAYFINDER
+            ShowCoordinates = Config.Bind("4 - Arrow", "ShowCoordinates", false,
+                "Off (default): a waypoint without a name - a map click on open ground, coordinates typed without a name, "
+                + "a pin with no name that you follow - is called by the PinLabel setting (\"Waypoint\" if that is empty) "
+                + "under the arrow and in the \"Next waypoint\" message at the top left, and a map click that puts a waypoint on the "
+                + "spot says just "
+                + "\"Waypoint added\" or \"Waypoint queued (2nd)\". On: those places show its coordinates instead, as before "
+                + "1.7.0 (\"Waypoint added at 1234, -567\"). The window and the console show coordinates either way. A change "
+                + "in game (ConfigurationManager) shows under the arrow at once and in the next message.");
+#endif
             HideArrowWhenMapOpen = Config.Bind("4 - Arrow", "HideArrowWhenMapOpen", true,
                 "Hide the arrow while the full world map is open.");
 

@@ -537,7 +537,8 @@ namespace Waypointer
             NoteLocked(LogRules.Info, _edition, (_facts ?? _edition) + " - " + LogRules.DetailText(_level), -1, local);
             NoteLocked(LogRules.Info, _edition, why + " " + local.ToString("yyyy-MM-dd HH:mm:ss",
                        System.Globalization.CultureInfo.InvariantCulture) + " (" + LogRules.FormatOffset(_offset)
-                       + "); times are local, f<n> is the game's frame", -1, local);
+                       + "); times are local; f<n> is the game's frame, f- a header line or one written off the game's "
+                       + "main thread", -1, local);
 #if WAYFINDER
             NoteLocked(LogRules.Info, _edition, "folders are written as <config>, <BepInEx>, <game> and <home>, and numbers "
                        + "that could be a position as #; every line is written at once; the file stops at 16 MiB", -1, local);

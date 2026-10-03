@@ -5,11 +5,15 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-10-02, with v1.6.0.
+Last updated: 2026-10-03, with v1.7.0.
 
 ## Not yet tried in play
 
-1.6.0 has not been played yet. 1.5.2 was played in two single-player sessions on 2026-10-02, with no warning or error
+1.7.0 has not been played yet. 1.6.0 was played in single player on 2026-10-03, over twelve game starts, with no warning
+or error from the plugin: map clicks placed waypoints on the spot and queued a second one ("Waypoint queued (2nd)"),
+waypoints were reached, a Bee Nest Find and a Wooden Axe Find ran, a route of 44 places was kept across a quit from
+inside the world and a restart, and the log file was seen at work (below). 1.5.2 was played in two single-player
+sessions on 2026-10-02, with no warning or error
 from the plugin: Alt-clicks followed pins (a death pin among them), placed waypoints on the spot and removed markers, a
 second followed pin was queued behind the first, map deletes removed waypoint markers, two Finds for axe heads ran, and
 waypoints were reached - the 1.5.1 Alt-click rule and its log lines working. 1.5.1 was never played on its own; all its
@@ -17,29 +21,35 @@ changes are in 1.5.2. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single p
 no Find run and no error from the plugin. 1.4.1 has not been played on its own; all its changes are in 1.5.0. 1.4.0 was
 used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, all on Windows.
 
-- **1.6.0, the log file:** its first lines at a game's start, and at the end "the game is quitting" then "log closed"
-  (that the plugin is told the game is quitting, and is shut down, is read from the code, not seen); the second start
-  keeping the first game's file as `-prev`; `ErrorLog` turned off and on again in a game (the file closes and opens
-  again, after the lines it holds); `VerboseLog`'s lines during a Find, a death and a map click, and back to `ErrorLog`
-  only; a game error caught with its stack trace; a second copy of the game writing `.log.1`; Wayfinder's file; the
-  file on a dedicated server, where nothing has been loaded since 1.3.0 (below).
+- **1.7.0:** an Alt-click on open ground saying just "Waypoint added", and the arrow calling such a waypoint
+  "Waypoint", with `ShowCoordinates` off; the coordinates back with it on, and turning it on and off in a game; with
+  `VerboseLog`, the "state now" line when it is turned on, "on screen: Location Reached" at an arrival, `VerboseLog`
+  named once, and "player alive" written after a respawn rather than when the dead player is removed.
+- **1.6.0, the log file:** seen on 2026-10-03 - its first lines at a game's start; "the game is quitting" then "log
+  closed" at a quit from the main menu and from inside a world; the next start keeping the last game's file as
+  `-prev`; `ErrorLog` turned off and on again in a game (the file closed, then its header written again, "turned on
+  again"); `VerboseLog` turned on and off in a game, with its lines for map clicks, arrivals, two Finds and the route's
+  saves; a line repeated 44 times in a row written once, with a count. Not yet: `VerboseLog` during a death; a game error
+  caught with its stack trace; a second copy of the game writing `.log.1`; Wayfinder's file; the file on a dedicated
+  server, where nothing has been loaded since 1.3.0 (below).
 
 - **1.5.2:** an Alt-click near a pin whose icon type the map's filter hides, and near a shared pin while shared pins
   are hidden (the pin the map shows counts).
 - **1.5.1:** an Alt-click with several pins within reach (the nearest one counts), and one on a ping or another
-  player's marker (a waypoint on the spot); the on-screen "Waypoint queued (2nd)" (a second pin was followed on
-  2026-10-02; the message is not logged); dying close to the waypoint being followed (it stays in the route).
+  player's marker (a waypoint on the spot); the on-screen "Waypoint queued (2nd): <name>" for a followed pin (a
+  second pin was followed on 2026-10-02; the on-the-spot form was seen on 2026-10-03, and since 1.6.0 `VerboseLog`
+  writes each message as "on screen: ..."); dying close to the waypoint being followed (it stays in the route).
 - **1.5.0:** a Wooden Greatsword Find at an Infested Mine, a Ruined Dvergr Tower and a Rock Spire; a mine whose chests
   have all been emptied being left out, as the host; pasting Valheim's `pos` line and Server Devcommands' `pos` line;
   with `Use3DDistance` on, a clifftop map click (on the terrain and on a Mistlands rock), and a Find place still
   measured at the ground after closing the game and opening the world again (going to the main menu and back to the
-  same world does not read the saved route).
+  same world does not read the saved route). A Find place's mark as an estimate came back after a restart on
+  2026-10-03; an arrival there after one was not tried.
 - **1.4.1:** a saved route held open by another program while the world loads (the file must survive, and the plugin
   tries to read it again after waits of 2, 4, 6 ... seconds, then every 30 seconds until it can); a leftover `.old`
   file held open (the `.old2` spare); `PersistWaypoints` turned on in the middle of a world; the warning for a key the
   game cannot read, given per setting; the "Rock" label; a coordinate line refused as ambiguous; a rock or Bee Nest
   spawned with the console's `spawn` command (the game's cheat-check bypass off) left out of Find.
-- **1.4.0:** a Bee Nest Find.
 - **1.3.1:** the "Sealed Tower" label (a Wooden Atgeir Find); a caption too wide for the screen, whose name is
   shortened with "..." and its count kept; and a caption kept on screen when the arrow is moved toward an edge
   (`ArrowScreenX`). Long captions have been seen whole under the arrow in its default place.
@@ -90,8 +100,14 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
   window. For the log file, which of its own files is opened when, and with which file mode, is not checked: the unit
   tests run the rotation's choice for the plain file only; the numbered files' mode (appended to) and a reopen's were
   tried with a test harness, not by a test. Check 21 does not see code run on the log file's lock's behalf rather than
-  named there (a delegate handed to a library method, reflection by other means), nor check 22 a trace inside a lambda
-  written in one of the methods it guards.
+  named there (a delegate handed to a library method, reflection by other means), a lock released early on one path
+  or taken and released in two helpers, or a type of the plugin's own declared in a `System` namespace; nor check 22
+  a trace inside a lambda written in one of the methods it guards. Check 23 (coordinates on screen) does not see a
+  position formatted in place (a waypoint's position turned into text without its coordinate text), text built in
+  another method or kept in a field and then shown, a message shown through a delegate, the setting's value changed
+  after it is bound, other ways of putting text on screen, or which waypoint's coordinates are passed; what its two
+  rules decide is left to the unit tests.
+- **`VerboseLog`'s 3D arrival line** does not say whether it measured to the loaded ground or to the player's height.
 - **Saved routes in a mod manager's profile export:** r2modman's export (a profile as a code or as a file) copies the
   whole `BepInEx/config` folder, so the saved routes (`waypoints_<world>.txt`, with positions) go to whoever imports the
   profile - for Wayfinder, a friend would get the sharer's waypoints for the same world. To decide: say so in the
@@ -167,6 +183,9 @@ Wayfinder:
 - **Markers are yours alone:** every marker is made with the game's `save: false` flag and no owner, so it never
   reaches the Cartography Table or your saved map.
 - **Wayfinder shows and takes no coordinates**, in or out.
+- **TomTom shows coordinates in its window and its console;** under the arrow and in the messages at the top left only
+  with `ShowCoordinates` (off by default since 1.7.0) - without it, a waypoint without a name is called by the marker
+  label there.
 - **Removing a marker wins:** when one of this mod's markers is within reach of a right-click, or of the controller's
   delete button on the big map, the waypoint is what gets removed, never one of your own pins - even while the map
   hides the marker's icon type.
@@ -212,6 +231,13 @@ Wayfinder:
 
 Everything up to v1.5.0 is in the README's History. From here on, a finished item moves here with its version.
 
+- **1.7.0:** TomTom's arrow and top-left messages no longer show a waypoint's coordinates unless `ShowCoordinates`
+  is on (a waypoint without a name is called by `PinLabel`); `VerboseLog` writes the player's and the map's state in
+  one line when it is turned on, logs
+  "Location Reached", names itself once, writes setting values the same on every PC, and writes "player alive"
+  once the new player is there; the log header says what `f-` means, and the package READMEs which file a held log
+  goes to; preflight check 23 (coordinates on screen), and check 6 counts the new setting; `run-tests.sh` runs under a
+  folder name with brackets.
 - **1.6.0:** a log file of the plugin's own, `BepInEx/TomTom.log` or `BepInEx/Wayfinder.log`, with the last game's
   kept as `-prev.log`: warnings and errors and the game errors that run through the plugin's code (`ErrorLog`, on by
   default), and in TomTom a line for each event (`VerboseLog`, off by default); warnings where something failed

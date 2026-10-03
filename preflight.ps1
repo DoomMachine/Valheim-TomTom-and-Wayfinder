@@ -31,9 +31,13 @@
 #      the game and returns !held
 #  20. the plugin's own log file is written beside LogOutput.log under the plugin's own names, and nowhere else
 #  21. the log file cannot hurt the game: every way into it catches what goes wrong, it logs nothing through BepInEx but
-#      one warning, under its lock it names nothing outside .NET's base library and its own code, and its defaults are
-#      ErrorLog on and (TomTom) VerboseLog off
+#      one warning, under its lock it names nothing outside .NET's System types and its own code (not seen: a lock
+#      released early on one path or across two helpers, a type of its own in a System namespace), and its defaults
+#      are ErrorLog on and (TomTom) VerboseLog off
 #  22. Wayfinder has no verbose log at all; TomTom's is built in; and no trace sits where checks read exact shapes
+#  23. the arrow and the messages call no Waypoint text but ScreenName (and, in TomTom, CoordText), and in TomTom every
+#      CoordText or CoordinateFormat call there goes to MapClickRules' two rules told ShowCoordinates (bound once, off
+#      by default); Wayfinder hands them none
 #  14. the server side: the plugin runs in valheim_server too; the server's WhoMayFind decides only this plugin's
 #      requests, knows a player by the connection their call came on, and every place in range is sent back
 #  15. when Valheim's dedicated server is installed beside the game (or at -ServerDir), every reference also
@@ -60,7 +64,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.6.0"
+$expectedVersion = "1.7.0"
 
 if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
     Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
@@ -495,7 +499,7 @@ $coordMethods = @(
     @("Waypointer.WaypointWindow", "ApplyInput"),                    # its Add / Replace buttons
     @("Waypointer.Waypoint", "get_CoordText")                        # cached coordinate text for display
 )
-$coordConfigKey = "InputIsRawValheimXYZ"
+$coordConfigKeys = @("InputIsRawValheimXYZ", "ShowCoordinates")
 
 $present = @()
 foreach ($n in $coordTypes) { if ($plug.GetType($n)) { $present += $n } }
@@ -503,21 +507,21 @@ foreach ($pair in $coordMethods) {
     $t = $plug.GetType($pair[0])
     if ($t -and @($t.Methods | Where-Object { $_.Name -eq $pair[1] }).Count -gt 0) { $present += ($pair[0] + "." + $pair[1]) }
 }
-$hasConfigKey = $false
+$foundConfigKeys = @{}
 $hasCoordFormatString = $false
 foreach ($t in $plug.GetTypes()) { foreach ($m in $t.Methods) {
     if (-not $m.HasBody) { continue }
     foreach ($i in $m.Body.Instructions) {
         if ($i.OpCode.Name -ne "ldstr") { continue }
         $s = "$($i.Operand)"
-        if ($s -eq $coordConfigKey) { $hasConfigKey = $true }
+        if ($coordConfigKeys -contains $s) { $foundConfigKeys[$s] = $true }
         # "{0:0}, {1:0}" is the shape of an x, z readout - it should exist only in CoordinateFormat.
         if ($s -like "*{0:0}, {1:0}*") { $hasCoordFormatString = $true }
     }
 } }
-if ($hasConfigKey) { $present += ("config key " + $coordConfigKey) }
+foreach ($k in $coordConfigKeys) { if ($foundConfigKeys.ContainsKey($k)) { $present += ("config key " + $k) } }
 if ($hasCoordFormatString) { $present += "a coordinate format string ""{0:0}, {1:0}""" }
-$expectedCount = $coordTypes.Count + $coordMethods.Count + 2
+$expectedCount = $coordTypes.Count + $coordMethods.Count + $coordConfigKeys.Count + 1
 
 $checks++
 if ($Edition -eq "Wayfinder") {
@@ -2048,8 +2052,10 @@ else { foreach ($p in $c20) { Write-Output "  FAIL  20: $p" }; $failures++ }
 # LogFile.Close on both of its paths, and Awake opens the log before it binds the other settings; ErrorLog's default is
 # true and TomTom's VerboseLog's false; LogRules' level numbers are BepInEx's LogLevel values; and Diag.Trace carries
 # [Conditional("TOMTOM")]. Not seen: code run on the lock's behalf rather than named there (a delegate handed to a
-# library method, a call through reflection other than Invoke/InvokeMember), what a caught failure leaves behind (the
-# file is closed; a live session shows it), and the order of the steps under the lock.
+# library method, a call through reflection other than Invoke/InvokeMember), a lock released early on one path or
+# taken and released in two helpers (the rest of its region is not read), a type of the plugin's own declared in a
+# System namespace, what a caught failure leaves behind (the file is closed; a live session shows it), and the order
+# of the steps under the lock.
 $checks++
 $c21 = @()
 $diag21 = $plug.GetType("Waypointer.Diag")
@@ -2157,9 +2163,9 @@ else {
     }
     if (-not $gateOk) { $c21 += "LogFile.OnOwnEvent does not return at once when LogRules.Admits says a line is not wanted" }
 
-    # Under the lock: nothing in BepInEx, Unity or the rest of the plugin. The roots are every region between
-    # Monitor.Enter and Monitor.Exit in a LogFile method, and the methods named to run under the lock; every LogFile or
-    # LogRotation method they call is followed, to the end.
+    # Under the lock: only .NET's System types and the log file's own code (an allow-list). The roots are every region
+    # between Monitor.Enter (or TryEnter) and its Monitor.Exit in a LogFile method, nested ones too, and the methods
+    # named to run under the lock; every LogFile or LogRotation method they call is followed, to the end.
     $lockedOk = @("Waypointer.LogFile", "Waypointer.LogRules", "Waypointer.LogRotation", "Waypointer.LineBudget", "Waypointer.RepeatCollapse")
     $work21 = New-Object System.Collections.ArrayList     # @(label, method, first index, end index)
     $regions21 = 0
@@ -2368,6 +2374,85 @@ if ($c22.Count -eq 0) {
     else { Write-Output ("  ok    TomTom's verbose log is built in ({0} Diag calls, {1} trace-helper calls), and no trace sits where checks read exact shapes" -f $traceCalls22, $helperCalls22) }
 }
 else { foreach ($p in $c22) { Write-Output "  FAIL  22: $p" }; $failures++ }
+
+Write-Output ""
+Write-Output "== coordinates on screen =="
+# 23. The methods read are every method of ArrowHud, Waypoint.get_ScreenName, and every method that calls
+# WaypointManager.Notify or a MessageHud method. In both editions they call no Waypoint member that returns text other
+# than ScreenName and CoordText (DisplayName, the window's and the log's name, is never called there - a log line that
+# names a waypoint goes in a helper, as LogReached does); ArrowHud.DrawCaptions and WaypointManager.OnReached call
+# ScreenName; Waypoint.ScreenName calls MapClickRules.ScreenName once and returns its result. In TomTom every call of
+# Waypoint.CoordText or CoordinateFormat.Format in those methods is the coordinates argument (second to last) of
+# MapClickRules.ScreenName(String,String,String,Boolean) or AddedMessage(Int32,String,Boolean), whose last argument is
+# Plugin.ShowCoordinates' value read right there; HandleWaypointClick makes one such AddedMessage call; ShowCoordinates
+# is bound once, default false. In Wayfinder those calls hand the rule null and false. Not seen: a position formatted in
+# place (Waypoint.Pos or any vector turned into text without CoordText or CoordinateFormat), text built in another
+# method or kept in a field and then shown, a message shown through a delegate, ShowCoordinates' value set after its
+# bind, a Waypoint field read into a message (a name never holds coordinates), other ways of putting text on screen
+# (Player.Message, the chat, a GUI label outside ArrowHud), which waypoint's CoordText is passed, what the two rules
+# decide (the unit tests check that), and the window and the console, which show coordinates on purpose.
+$checks++
+$c23 = @()
+function Test-Show23($ins, $hd, [int]$at) {
+    $i = $ins[$at]; $o = $i.Operand
+    if (-not ($i.OpCode.Name -like "call*" -and $o -is [Mono.Cecil.MethodReference] -and $o.Name -eq "get_Value" -and $o.DeclaringType.GetElementType().FullName -eq 'BepInEx.Configuration.ConfigEntry`1')) { return $false }
+    $a = Get-CallArgs $ins $at $hd
+    return ($null -ne $a -and (Get-InstructionText $ins[$a[0]]) -eq "ldsfld Plugin::ShowCoordinates")
+}
+function Get-Sig23($o) { "{0}({1})" -f $o.Name, (@($o.Parameters | ForEach-Object { $_.ParameterType.FullName }) -join ",") }
+$gate23 = @("ScreenName(System.String,System.String,System.String,System.Boolean)", "AddedMessage(System.Int32,System.String,System.Boolean)")
+$sinks23 = @()
+foreach ($t in @($plug.Types | ForEach-Object { Get-TypesDeep17 $_ })) { foreach ($m in $t.Methods) {
+    if (-not $m.HasBody) { continue }
+    $is = ($t.FullName -like "Waypointer.ArrowHud*") -or ($t.FullName -eq "Waypointer.Waypoint" -and $m.Name -eq "get_ScreenName")
+    foreach ($i in $m.Body.Instructions) { $o = $i.Operand
+        if ($i.OpCode.Name -like "call*" -and $o -is [Mono.Cecil.MethodReference] -and (($o.DeclaringType.FullName -eq "Waypointer.WaypointManager" -and $o.Name -eq "Notify") -or $o.DeclaringType.FullName -eq "MessageHud")) { $is = $true } }
+    if ($is) { $sinks23 += $m }
+} }
+$gated23 = 0; $clickGate23 = 0
+foreach ($m in $sinks23) {
+    $ins = @($m.Body.Instructions); $hd = $m.Body.ExceptionHandlers; $w = $m.DeclaringType.Name + "." + $m.Name; $ok = @{}
+    for ($k = 0; $k -lt $ins.Count; $k++) { $o = $ins[$k].Operand
+        if (-not ($ins[$k].OpCode.Name -like "call*" -and $o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.FullName -eq "Waypointer.MapClickRules" -and $gate23 -contains (Get-Sig23 $o))) { continue }
+        $a = Get-CallArgs $ins $k $hd
+        if ($null -eq $a) { $c23 += "${w}: MapClickRules.$($o.Name)'s arguments cannot be traced"; continue }
+        $coord = $a[$a.Count - 2]; $show = $a[$a.Count - 1]
+        if ($Edition -eq "TomTom") {
+            if (Test-Show23 $ins $hd $show) { $ok[$coord] = $true; $gated23++; if ($o.Name -eq "AddedMessage" -and $m.Name -eq "HandleWaypointClick") { $clickGate23++ } }
+            else { $c23 += ("{0}: MapClickRules.{1} is told '{2}', not ShowCoordinates' value" -f $w, $o.Name, (Get-InstructionText $ins[$show])) }
+        } elseif ($ins[$coord].OpCode.Name -ne "ldnull" -or $ins[$show].OpCode.Name -ne "ldc.i4.0") { $c23 += "${w}: Wayfinder hands MapClickRules.$($o.Name) coordinates or true" }
+    }
+    for ($k = 0; $k -lt $ins.Count; $k++) { $o = $ins[$k].Operand
+        if (-not ($ins[$k].OpCode.Name -like "call*" -and $o -is [Mono.Cecil.MethodReference])) { continue }
+        $dt = $o.DeclaringType.FullName
+        if (($dt -eq "Waypointer.Waypoint" -and $o.Name -eq "get_CoordText") -or $dt -eq "Waypointer.CoordinateFormat") {
+            if (-not $ok.ContainsKey($k)) { $c23 += ("{0} shows {1}.{2} without ShowCoordinates" -f $w, $o.DeclaringType.Name, $o.Name) } }
+        elseif ($dt -eq "Waypointer.Waypoint" -and $o.ReturnType.FullName -eq "System.String" -and $o.Name -ne "get_ScreenName") { $c23 += ("{0} calls Waypoint.{1}: the screen names a waypoint through ScreenName" -f $w, $o.Name) }
+    }
+}
+$wt23 = $plug.GetType("Waypointer.Waypoint"); $sn23 = $null
+if ($wt23) { $sn23 = $wt23.Methods | Where-Object { $_.Name -eq "get_ScreenName" -and $_.HasBody } | Select-Object -First 1 }
+if (-not $sn23) { $c23 += "Waypoint.ScreenName not found" }
+else { $si = @($sn23.Body.Instructions); $sh = $sn23.Body.ExceptionHandlers
+    $sc = Find-Calls $si "Waypointer.MapClickRules" "ScreenName"; $rets = @(); for ($k = 0; $k -lt $si.Count; $k++) { if ($si[$k].OpCode.Name -eq "ret") { $rets += $k } }
+    if ($sc.Count -ne 1 -or $rets.Count -ne 1) { $c23 += ("Waypoint.ScreenName calls MapClickRules.ScreenName {0}x and returns in {1} places; expected once each" -f $sc.Count, $rets.Count) }
+    else { $st = Get-StackBefore $si $rets[0] $sh
+        if ($st.Count -lt 1 -or (Resolve-Value $si $st[$st.Count - 1] $sh) -ne "call MapClickRules::ScreenName") { $c23 += "Waypoint.ScreenName does not return what MapClickRules.ScreenName returns" } } }
+foreach ($need in @(@("Waypointer.ArrowHud", "DrawCaptions"), @("Waypointer.WaypointManager", "OnReached"))) {
+    $nt = $plug.GetType($need[0]); $nm = $null; if ($nt) { $nm = $nt.Methods | Where-Object { $_.Name -eq $need[1] -and $_.HasBody } | Select-Object -First 1 }
+    if (-not $nm -or (Find-Calls @($nm.Body.Instructions) "Waypointer.Waypoint" "get_ScreenName").Count -eq 0) { $c23 += ("{0}.{1} does not ask Waypoint.ScreenName" -f $need[0], $need[1]) } }
+if ($Edition -eq "TomTom") {
+    if ($clickGate23 -ne 1) { $c23 += ("HandleWaypointClick calls MapClickRules.AddedMessage(Int32, String, Boolean) told ShowCoordinates {0}x; expected once" -f $clickGate23) }
+    $binds23 = 0; $def23 = $null
+    foreach ($m in $pluginType.Methods) { if (-not $m.HasBody) { continue }; $bi = @($m.Body.Instructions)
+        for ($k = 0; $k -lt $bi.Count; $k++) { $o = $bi[$k].Operand
+            if (-not ($o -is [Mono.Cecil.MethodReference]) -or $o.DeclaringType.FullName -ne "BepInEx.Configuration.ConfigFile" -or $o.Name -ne "Bind") { continue }
+            $a = Get-CallArgs $bi $k $m.Body.ExceptionHandlers
+            if ($a -and $a.Count -ge 4 -and $bi[$a[2]].OpCode.Name -eq "ldstr" -and "$($bi[$a[2]].Operand)" -eq "ShowCoordinates") { $binds23++; $def23 = $bi[$a[3]].OpCode.Name } } }
+    if ($binds23 -ne 1 -or $def23 -ne "ldc.i4.0") { $c23 += ("ShowCoordinates is bound {0}x, default '{1}'; expected once, false" -f $binds23, $def23) }
+}
+if ($c23.Count -eq 0) { Write-Output $(if ($Edition -eq "TomTom") { "  ok    the arrow and the messages call no Waypoint text but ScreenName, and their coordinate calls are told ShowCoordinates (off by default; $gated23 gated calls)" } else { "  ok    the arrow and the messages call no Waypoint text but ScreenName, which Wayfinder hands no coordinates" }) }
+else { foreach ($p in $c23) { Write-Output "  FAIL  23: $p" }; $failures++ }
 
 Write-Output ""
 Write-Output "== the server side =="

@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.6.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.7.0 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -159,7 +159,8 @@ cannot be undone). A ping, a shout, another player's marker or an event marker n
 the spot. Pins the map hides don't count: one whose icon type you have turned off in the map's filter, and a shared pin while
 you hide shared pins. The death pins of one in-game day all read the same ("Day 3"), so zoom in to pick the one
 you mean. A new waypoint joins the end of the route: the arrow keeps leading to the one in front, and the message says where the new one waits
-("Waypoint queued (2nd): Day 3").
+("Waypoint queued (2nd): Day 3"). When the click puts a waypoint on the spot, the message is "Waypoint added" (or
+"Waypoint queued (2nd)"); with `ShowCoordinates` on, the spot's coordinates follow it.
 
 Plain clicks keep Valheim's normal behaviour, and an Alt-double-click places a single waypoint.
 Right-click delete — and the controller's delete button on the big map — works on waypoint
@@ -185,7 +186,7 @@ Alt-click on the map does nothing there, set `MapModifierKey` to another key.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.6.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.7.0]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -219,7 +220,10 @@ console mods (Server Devcommands) take `;` as the start of a new command.
 
 Points toward the active waypoint relative to where the camera looks, coloured **green** when you're
 heading straight at it, **yellow** off to the side and **red** facing away. Underneath: the name, the
-distance and an estimated time of arrival from how fast you're actually closing in. It hides with the
+distance and an estimated time of arrival from how fast you're actually closing in. A waypoint without a name - an
+Alt-click on an empty spot, coordinates pasted without a name, a pin with no name - is called by your `PinLabel`
+("Waypoint") there and in the "Next waypoint" message; turn `ShowCoordinates` on to see its coordinates instead.
+The window and the console always show them. It hides with the
 HUD, while you sleep or watch a cutscene, while the pause menu, the inventory or a trader is open,
 while the big map is open, and when you're dead or teleporting.
 
@@ -272,9 +276,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.6.0]
+   Loading [TomTom 1.7.0]
    Applied 2 of 2 patches.
-   TomTom 1.6.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.7.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads. TomTom's own log, `BepInEx\TomTom.log`, is beside it (see Log file).
@@ -318,12 +322,14 @@ Mouse6, F16 to F24 and the numbered-joystick buttons - never fire, with no warni
 ## Log file
 
 Besides `BepInEx/LogOutput.log`, TomTom keeps a log of its own beside it: `BepInEx/TomTom.log`. Each start of the
-game normally begins a new file and keeps the last game's as `TomTom-prev.log` (older ones are replaced); if another
-program holds one of these files open, the new lines are added after the last game's instead, or - when that program
-does not let others write to it - go to `TomTom.log.1`. On Windows, while another copy of the game on this PC is
+game normally begins a new file and keeps the last game's as `TomTom-prev.log` (older ones are replaced). On Windows,
+if another program holds one of these files open, the new lines are added after the last game's in `TomTom.log` instead, or -
+when that program holds `TomTom.log` itself and does not let others write to it - go to the first numbered file that
+can be written, `TomTom.log.1` (up to `.4`). On Windows, while another copy of the game on this PC is
 writing the file, that copy writes `TomTom.log.1` (up to `.4`), adding to what an earlier second copy wrote there. These
 numbered files are kept until you delete them; once all four hold more than 8 MiB, a second copy writes none. You can
-open the log while the game runs, as you can `LogOutput.log`. Two settings in `[7 - Logging]` decide what goes in. A
+open the log while the game runs, as you can `LogOutput.log`. Each entry starts with the local time and `f` with the game's frame number (a stack trace's further lines are indented and start with `|`); `f-` marks the header lines and any line written off the game's main thread. Two settings in `[7 - Logging]` decide
+what goes in. A
 change in game through ConfigurationManager takes effect at once. To edit the `.cfg` file instead, quit the game (or
 stop the server), edit it and start again: an edit made while the game runs is not read, and the plugin rewrites its
 settings file, with the old value, whenever one of its settings changes (for example when you start a Find with a new
@@ -332,7 +338,8 @@ range).
 - **`ErrorLog`** (on by default): TomTom's warnings and errors, and any game error whose stack trace runs through
   TomTom's code, with that trace - the file to send with a bug report. A game without problems leaves only a few lines,
   naming the versions of TomTom, Valheim, Unity and BepInEx.
-- **`VerboseLog`** (off by default): all of that, every other line TomTom logs, and a line for each event - map clicks
+- **`VerboseLog`** (off by default): all of that, every other line TomTom logs, the state of things when it is turned
+  on, and a line for each event - map clicks
   and deletes, waypoints added (with their positions), reached and removed, the route read and saved, markers made,
   lost and found again, the arrow hidden or shown and why, deaths, the map and the window, the messages shown on
   screen, settings changed, the stages of a Find and, on a server or as the host, other players' Find requests (each
@@ -365,6 +372,7 @@ it before you share it.
 | `PinType` / `PinLabel` | `Icon3` / `Waypoint` | marker icon and label |
 | `ShowArrow`, `ArrowSize`, `ArrowScreenX/Y`, `ArrowOpacity` | | arrow placement |
 | `ShowDistance`, `ShowWaypointName`, `ShowTimeToArrival` | `true` | captions |
+| `ShowCoordinates` | `false` | a waypoint without a name shows its coordinates under the arrow, in the "Next waypoint" message and in a map click's "Waypoint added" message, instead of `PinLabel` (the window and the console show them either way) |
 | `HideArrowWhenMapOpen` | `true` | |
 | `ColorFacingTarget/Sideways/FacingAway` | green/yellow/red | hex colours |
 | `SearchRange` | `1000` | metres Find looks around you (the slider sets it) |

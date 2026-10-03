@@ -30,7 +30,10 @@ limited() {
 
 if command -v dotnet >/dev/null 2>&1; then
   echo "== tests on .NET =="
-  limited dotnet run --project "$HERE/tests/Waypointer.Tests.csproj" -v quiet || STATUS=1
+  # A Windows path for dotnet: Git Bash's /e/... form breaks under a folder name with brackets.
+  PROJ="$HERE/tests/Waypointer.Tests.csproj"
+  if command -v cygpath >/dev/null 2>&1; then PROJ="$(cygpath -w "$PROJ")"; fi
+  limited dotnet run --project "$PROJ" -v quiet || STATUS=1
 fi
 
 CSC="/c/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
@@ -88,4 +91,5 @@ elif ! command -v dotnet >/dev/null 2>&1; then
   build_partest
   limited "$OUT/partest.exe" || STATUS=1
 fi
+if [ "$STATUS" -eq 0 ]; then echo "== run-tests.sh: every run passed =="; else echo "== run-tests.sh: FAILED - a run above failed =="; fi
 exit $STATUS

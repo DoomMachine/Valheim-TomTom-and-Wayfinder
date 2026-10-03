@@ -6,7 +6,7 @@ One code base, two Valheim plugins by **DoomMachine**:
 | --- | --- | --- |
 | Waypoints from typed / pasted coordinates | yes | **no** |
 | `waypoint <x> <y>` console command | yes | **no** (refused) |
-| Numeric coordinates shown anywhere | yes | **no** — names and distances only |
+| Numeric coordinates shown | in the window and the console; under the arrow and in messages only with `ShowCoordinates` | **no** — names and distances only |
 | Waypoints placed on the world map | yes | yes |
 | Following a pin already on your map | yes | yes |
 | Marking where you stand (`Add my position`, `waypoint here`) | yes | yes |
@@ -62,8 +62,8 @@ src/                     the shared source for both plugins
   SearchCatalog.cs       what can be searched for, and which location types hold it (from 1.0.16's data)
   SearchRules.cs         unique places (candidates vs the real one), range, chests, names - Unity-free
   RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
-  MapClickRules.cs       a map click's decision (the pin nearest the pointer), which pins the map shows, and its
-                         messages - Unity-free
+  MapClickRules.cs       a map click's decision (the pin nearest the pointer), which pins the map shows, its
+                         messages, and what the arrow and the messages call a waypoint - Unity-free
   LogFile.cs             the plugin's own log file, BepInEx/<Edition>.log: its two hooks, its lock, the caps, opening
                          and closing it
   LogRules.cs            what the log file admits, its file names, how a line is written and what a line may not show -
@@ -121,7 +121,7 @@ folder to remove; nothing is deleted automatically. To switch, remove `BepInEx/p
 ## Checking
 
 ```bash
-./run-tests.sh                                                         # 390 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks, the log file's rules and rotation), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
+./run-tests.sh                                                         # 399 tests (parser, crash-safe save, route reads, key reads, search, server messages and rules, captions, arrival, map clicks, screen names, the log file's rules and rotation), on .NET and on Mono; each run stops after TEST_TIMEOUT seconds (300)
 powershell -ExecutionPolicy Bypass -File preflight.ps1                 # the installed TomTom
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -Edition Wayfinder -Plugin build/Wayfinder/Wayfinder.dll
 powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Valheim"   # a game folder elsewhere
@@ -163,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   them, this fails until the list in `preflight.ps1` is updated; update the lists in `Hotkeys.cs` and both package
   READMEs with it - the check does not read them)
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
-  console add path, the window's text box, the bulk-add, the raw-order config key, any `{0:0}, {1:0}`
+  console add path, the window's text box, the bulk-add, the raw-order and `ShowCoordinates` config keys, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
   missing any of them, so the check can't pass vacuously
 - a location search could turn the server's answers into map pins: the answer prefix must hand answers to
@@ -238,7 +238,8 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   of its paths, and `Awake` open the log before it binds the other settings; `ErrorLog` must default to true and
   TomTom's `VerboseLog` to false; `LogRules`' level numbers must be BepInEx's `LogLevel` values; and `Diag.Trace` must
   carry `[Conditional("TOMTOM")]`. Not checked: code run on the lock's behalf rather than named there (a delegate
-  handed to a library method, reflection by other means)
+  handed to a library method, reflection by other means), a lock released early on one path or taken and released in
+  two helpers (the rest of its region is not read), and a type of the plugin's own declared in a `System` namespace
 - Wayfinder could log more than warnings and errors (check 22): its `LogDetail` must be exactly `Off` and `Errors`,
   `LogRules.IsVerbose` must return false outright, no `VerboseLog` may be bound, and no method outside `Diag` may call
   `Diag` or a `[Conditional("TOMTOM")]` method; TomTom must have `Verbose`, bind `VerboseLog` and call its traces (so
@@ -249,6 +250,21 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   WhoMayFind patches, `FindServer.CallerMayFind`, `Allowed`, `IsAdmin` and `CallingPeer`, and `FindLink.SendFind` and
   `OnToClient`. Not checked: a trace inside a lambda written in one of those methods (the compiler makes it a method
   of its own)
+- a waypoint's coordinates could reach the screen without `ShowCoordinates` (check 23): the methods read are every
+  method of `ArrowHud`, `Waypoint.ScreenName`, and every method that shows a message (calls `WaypointManager.Notify`
+  or the game's `MessageHud`). In both editions they may call no `Waypoint` member that returns text but
+  `Waypoint.ScreenName` (and, in TomTom, `CoordText` as below) - never `DisplayName`, the window's and the log's
+  name; `ArrowHud.DrawCaptions` and `WaypointManager.OnReached` must ask it, and it must return what
+  `MapClickRules.ScreenName` returns. In TomTom every `CoordText` or
+  `CoordinateFormat.Format` there must be the coordinates handed to `MapClickRules.ScreenName` or `AddedMessage`
+  together with `ShowCoordinates`' value read right there, the map click must make one such `AddedMessage` call, and
+  `ShowCoordinates` must be bound once, off by default; Wayfinder must hand those rules no coordinates and false. Not
+  checked: a position formatted in place (a waypoint's position or any vector turned into text without `CoordText`
+  or `CoordinateFormat`), text built in another method or kept in a field and then shown, a message shown through a
+  delegate, the setting's value changed after it is bound, a `Waypoint` field read into a message (a name never holds
+  coordinates), other ways of putting text on screen (the game's player messages, the chat, a label drawn outside
+  `ArrowHud`), which waypoint's coordinates are passed, and what the two rules decide (the unit tests do); the window
+  and the console show coordinates on purpose
 - a routed call is sent that is not on the list: `RPC_DiscoverClosestLocation` from `LocationSearch.Ask` only,
   and the plugin's own `DoomMachine.Waypointer.ToServer` (from `FindLink`) and `.ToClient` (from `FindServer`) -
   each checked by the literal name the call sends
@@ -293,7 +309,9 @@ Run it after every Valheim update.
 - **A trace is one statement**: `Diag.Trace("<literal>")`, or a call to a private `[Conditional("TOMTOM")]` helper with
   plain arguments that builds its text after `if (!Diag.On) return;`, inside its own try. So without `VerboseLog` no
   text is built, building one can never throw into the code around it, and Wayfinder's compiler drops the call and its
-  argument. A helper that formats a position or a count about a Find has its body under `#if !WAYFINDER` too; copy a
+  argument. A helper that remembers what it last wrote may forget it in that branch, so the next turn-on states it
+  afresh; no text is built there. A helper that formats a position or a count about a Find has its body under
+  `#if !WAYFINDER` too; copy a
   `Minimap.PinData` field to a local before formatting it (the SDK compiler takes its address otherwise, which
   preflight reads as a write to the pin). Never put a trace where preflight reads an exact shape (check 22 lists the
   places).
@@ -450,6 +468,26 @@ Run it after every Valheim update.
   because a game error's message can quote a position.
 
 ## History
+
+**1.7.0** — TomTom keeps coordinates out of the arrow and the messages unless you ask for them.
+
+- changed (TomTom): a waypoint without a name - a map click on open ground, coordinates typed without a name, a pin
+  with no name - is called by the marker label (`PinLabel`, "Waypoint") under the arrow and in the "Next waypoint"
+  message, and a map click that puts a waypoint on the spot says just "Waypoint added" or "Waypoint queued (2nd)"
+  (was: its coordinates, "Waypoint
+  added at -473, 532"); the window, the console and the log keep the coordinates
+- added (TomTom): `[4 - Arrow] ShowCoordinates` (off by default) brings the coordinates back there
+- changed (TomTom's `VerboseLog`): turning it on writes the player's and the map's state in one line ("state now:
+  ...") instead of lines that read as new events (the arrow's line follows as before), and turning it off and on
+  again states them afresh; "Location Reached" is logged as a
+  message on screen; `VerboseLog` itself is named once; setting values are written the same on every PC; after a
+  death "player alive" is written once the new player is there, not when the dead one is removed
+- changed: the log file's header says what `f-` means (a header line or one written off the game's main thread), and
+  the package READMEs say which file a held log goes to
+- 9 new tests (390 → 399); preflight check 6 counts `ShowCoordinates` among TomTom's coordinate pieces (Wayfinder
+  must have none), and the new check 23 (coordinates on screen) - 67 → 68 checks per edition; check 21's stated
+  limits now name a lock released early and a type in a `System` namespace; `run-tests.sh` runs under a folder name
+  with brackets and ends with a line that says whether every run passed
 
 **1.6.0** — a log file of the plugin's own: warnings and errors by default, and TomTom's `VerboseLog` to follow a
 problem as it happens.

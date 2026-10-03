@@ -12,7 +12,9 @@ namespace Waypointer
     ///
     /// A call is one statement: Diag.Trace("literal"), or a call to a private [Conditional("TOMTOM")] helper with plain
     /// arguments that builds its text after "if (!Diag.On) return;" inside its own try - so without VerboseLog no text
-    /// is built, and building one can never throw into the code around it. A helper that formats a position or a count
+    /// is built, and building one can never throw into the code around it. A helper that remembers what it last wrote
+    /// may forget it in that branch, so the next turn-on states it afresh; no text is built there. A helper that formats
+    /// a position or a count
     /// about a Find has its body under #if !WAYFINDER as well.
     /// </summary>
     internal static class Diag
