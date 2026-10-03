@@ -281,27 +281,44 @@ start a Find with a new range.)
    TomTom 1.7.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
-   The last one comes when the world loads. TomTom's own log, `BepInEx\TomTom.log`, is beside it (see Log file).
+   The last one comes when the world loads; `WhoMayFind` shows your setting. The server's own log file
+   (`-logFile`) does not have these lines. TomTom's own log, `BepInEx\TomTom.log`, is beside `LogOutput.log`
+   (see Log file). No new `LogOutput.log` after a start means BepInEx did not start: check first that `winhttp.dll`
+   and `doorstop_config.ini` sit right beside `valheim_server.exe`, not in a folder below it.
 7. To change who may use Find: stop the server, open `BepInEx\config\DoomMachine.TomTom.cfg` (the first start writes
    it; on a server it holds only `[6 - Server]` and `[7 - Logging]`), set `WhoMayFind`, and start the server again.
    - `AdminsOnly` uses the game's own admin list, `adminlist.txt`, in the server's save folder: the `-savedir`
      folder if the server is started with one, otherwise `%USERPROFILE%\AppData\LocalLow\IronGate\Valheim`. One
-     ID per line - the same IDs as for the game's own admin commands (kick, ban): for a Steam player, the
-     SteamID64 (the 17-digit number). The game re-reads the file at most every 10 seconds, so a change needs no
-     restart.
+     ID per line, the same IDs as for the game's own admin commands (kick, ban), in the form Valheim's server manual
+     gives, `<Platform>_<ID>`: for a Steam player `Steam_` and the SteamID64 (the 17-digit number; the number alone
+     works too), and for a crossplay player on another platform that platform's prefix. A player's ID copied exactly
+     as the game's F2 panel shows it works too (it writes a Steam player as `V_` and the SteamID64, and an Xbox,
+     PlayStation or Nintendo player's number in a form of its own), and so does one from the server's log: the number
+     after `Got connection SteamID`, or with `-crossplay` the ID after `received local Platform ID` - not a
+     `playfab/` one. Lines starting with `//` are comments, and an ID must match exactly (capitals and all, with no
+     space after it). The game re-reads the file at most every 10 seconds, so a change needs no restart.
 
-**A dedicated server on Linux:** steps 1 to 4 the same, into the folder with `valheim_server.x86_64`; then make
-the pack's `start_server_bepinex.sh` executable (`chmod u+x start_server_bepinex.sh`), edit it with your server's
-name, world and password as you would Valheim's own start script, and start the server with it. The log and the
-config file are in the same places under `BepInEx/`. Without `-savedir`, `adminlist.txt` is in Unity's data folder
-for Valheim (usually `~/.config/unity3d/IronGate/Valheim`).
+**A dedicated server on Linux** (not tried yet): steps 1 to 4 the same, into the server's folder - the one with
+Valheim's own `start_server.sh`; then make the pack's `start_server_bepinex.sh` executable
+(`chmod u+x start_server_bepinex.sh`), edit it with your server's name, world and password as you would Valheim's own
+start script, and start the server with it. The log and the config file are in the same places under `BepInEx/`.
+Without `-savedir`, `adminlist.txt` is in Unity's data folder for Valheim
+(usually `~/.config/unity3d/IronGate/Valheim`).
 
-**A rented server:** many Valheim hosting services can install BepInEx for you (see your host's help). Then
-upload this zip's contents to `BepInEx/plugins/DoomMachine-TomTom/`, and change `WhoMayFind` in
+**A rented server** (not tried yet): many Valheim hosting services can install BepInEx for you (see your host's
+help). Then upload this zip's contents to `BepInEx/plugins/DoomMachine-TomTom/`, and change `WhoMayFind` in
 `BepInEx/config/DoomMachine.TomTom.cfg` through the host's file manager, then restart the server.
 
-Tested so far: a Windows dedicated server with BepInEx loads the plugin and gets ready as above. A player joining
-such a server has not been tested in play yet.
+Players and the server need not run the same version: from 1.3.0 on, they understand each other. A Find for
+something the server's plugin does not know yet (a Bee Nest needs 1.4.0 or later there, the Wooden Greatsword 1.5.0)
+asks the server the way a Vegvisir does instead, without the server's chest and nest checks - so keep the server's
+plugin up to date. (Read from the code; not tested yet.)
+
+Tested so far: loading only. TomTom 1.3.0 test builds, made just before that release, loaded on a Windows dedicated
+server with BepInEx 5.4.23.3 (BepInEx's console window turned off, the server started without `-crossplay`), logged
+the lines of step 6 (as 1.3.0) and wrote a settings file with only `[6 - Server]` (`[7 - Logging]` and `TomTom.log`
+came with 1.6.0). No later version, no released zip, no Wayfinder build, no Linux, crossplay or rented server has been
+tried yet, and no player has joined a server that runs the plugin.
 
 ## Keys
 

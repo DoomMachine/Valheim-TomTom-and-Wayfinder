@@ -35,13 +35,36 @@ maintaining them. What is untested, unverified, planned or only an idea is liste
 Both editions need [BepInEx for Valheim](https://thunderstore.io/c/valheim/p/denikson/BepInExPack_Valheim/).
 Install **one** of them — they exclude each other. Packaged builds, when there are any, are attached to
 this repository's [releases](https://github.com/DoomMachine/Valheim-TomTom-and-Wayfinder/releases); otherwise
-build them yourself (below), which leaves a ready-to-install zip in `dist/`. Unzip it into
-`BepInEx/plugins/`, or hand the zip to a mod manager.
+build them yourself (below), which leaves a ready-to-install zip in `dist/`. Unzip it into a folder of its own under
+`BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
 
-The same plugin also runs on a server: a dedicated server (`valheim_server`), or the game of whoever hosts with
-Start Server. There it answers other players' Find from the server's own knowledge and applies the server's
-`WhoMayFind` rule. Step-by-step setup for a dedicated server (Windows, Linux, rented) is in the **Servers** section
-of each package README.
+### On a server
+
+A server needs nothing for its players to use either edition: without the plugin there, a joining player's Find asks
+the server the way a Vegvisir does. Installing the plugin on the server as well is optional - a dedicated server
+(`valheim_server`), or the game of whoever hosts with Start Server. The server then answers its players' Find from its
+own knowledge and applies its `WhoMayFind` rule (`Everyone`, the default, `AdminsOnly` or `Nobody`). Players need
+TomTom or Wayfinder 1.3.0 or later to get the server's own answers; `WhoMayFind` applies to older versions' Find too
+(a refused one gets no answer), and players without the plugin join and play as before.
+
+A Start Server host needs nothing more. On a dedicated server:
+
+1. Stop the server.
+2. Copy the contents of the BepInEx pack's `BepInExPack_Valheim` folder (see above; not the folder itself) into the
+   server's folder: on Windows the one with `valheim_server.exe`, on Linux the one with Valheim's `start_server.sh`.
+3. Unzip one edition into a folder of its own under that folder's `BepInEx/plugins/`.
+4. Start the server (on Linux with the BepInEx pack's `start_server_bepinex.sh`). The server's
+   `BepInEx/LogOutput.log` - not its own log file - then says `loaded on a dedicated server`, and
+   `Ready to answer players' Find` as the world loads.
+5. Optional: to change `WhoMayFind`, stop the server, edit `BepInEx/config/DoomMachine.TomTom.cfg` (or
+   `DoomMachine.Wayfinder.cfg`), and start it again. `AdminsOnly` uses the game's own `adminlist.txt`.
+
+The details - the files to copy, rented servers, the admin list, what to look for in the log - are in the **Servers**
+section of each package README ([TomTom](package/TomTom/README.md#servers),
+[Wayfinder](package/Wayfinder/README.md#servers)). So far the server side has been tried only as far as loading,
+with TomTom 1.3.0 test builds on a Windows dedicated server (BepInEx's console off, no `-crossplay`): later
+versions, Wayfinder builds, a released zip, Linux and rented servers, crossplay and a player joining a server that
+runs the plugin are not tested yet (see [`docs/open-items.md`](docs/open-items.md)).
 
 ---
 
@@ -468,6 +491,10 @@ Run it after every Valheim update.
   because a game error's message can quote a position.
 
 ## History
+
+**Unreleased** (on `main`, not in the 1.7.0 zips) — docs: the front page says what a server needs and gives the
+dedicated-server steps in short; both package READMEs' Servers sections give the version rule, the admin-ID form and
+what has been tested on a server.
 
 **1.7.0** — TomTom keeps coordinates out of the arrow and the messages unless you ask for them.
 

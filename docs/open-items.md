@@ -60,11 +60,14 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
   after a world switch; a single marker after a respawn; a click on the window never reaching the large map behind it.
 - **Multiplayer:** a player joining a server that runs the plugin - a Find answered by the server's plugin,
   `WhoMayFind = AdminsOnly` refusing a player and then accepting them once they are an admin, a server without the
-  plugin, a Start Server host with a player joining, and a crossplay join. The server side has been seen only loading
-  and getting ready on a Windows dedicated server, with 1.3.0 builds from before its release and BepInEx's console
-  off; no later version has been loaded on a server, and a load test with a released zip and the default console
-  setting is still to do. Not measured: how long a Find takes on a real server, and whether a slow one can exceed the
-  120 seconds a player waits for its result.
+  plugin, a Start Server host with a player joining, a crossplay join, and a player and a server on different versions
+  (a Find the server's plugin does not know - a Bee Nest on a 1.3.x server - asked the way a Vegvisir does). The server
+  side has been seen only loading and getting ready on a Windows dedicated server, with TomTom 1.3.0 builds from before
+  its release, BepInEx's console off and no `-crossplay`; no later version and no Wayfinder build has been loaded on a
+  server, no rented server has been tried, and a load test with a released zip and the default console setting is
+  still to do, as is following the package READMEs' server steps from a fresh download, with Valheim's own
+  `start_headless_server.bat` (which passes `-crossplay`). Not measured: how long a Find takes on a real server, what
+  it costs the server's frame rate, and whether a slow one can exceed the 120 seconds a player waits for its result.
 - **Linux and Steam Deck** players and Linux servers. The package holds no native code.
 - **Wayfinder** is built and checked with every release but has not been played.
 
@@ -85,8 +88,8 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
   where that terrain lies under water, arrival is horizontal (worked out from the code, not seen).
 - **Sealed Towers and `SkipCheckedChests`.** Which chests count as a Sealed Tower's assumes that each chest lies inside
   its room; where the chests sit in those rooms has not been read from the game's data.
-- **Servers with other mods:** mods that rename or remove locations, anti-cheat plugins, and limits on message size
-  have not been tried.
+- **Servers with other mods:** mods that rename or remove locations, anti-cheat plugins, limits on message size, and
+  mods that change the game's admin-list check (on which `WhoMayFind = AdminsOnly` relies) have not been tried.
 - **The log file and other programs:** which programs can open it while the game runs (it is shared for reading the
   way BepInEx shares `LogOutput.log`); and two copies of the game started from one folder have not been tried with it
   (on Windows the second copy adds to `.log.1`; on Linux, where an open file can still be renamed, it would move the
@@ -95,7 +98,8 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
 ## Next release (small, planned)
 
 - **Preflight:** in the map click's test of a hidden pin, which way it branches, another test joined to it, and which
-  way the two helpers that read the map's icon filter and shared-pin fade test the map are not checked; nor are the pin
+  way the two helpers that read the map's icon filter and shared-pin fade test the map, and the type the fade helper
+  expects its value to have, are not checked; nor are the pin
   lookups' owned and followed flags and the right-click's second lookup, or the map click prefix's early return over the
   window. For the log file, which of its own files is opened when, and with which file mode, is not checked: the unit
   tests run the rotation's choice for the plain file only; the numbered files' mode (appended to) and a reopen's were
@@ -126,6 +130,17 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
 - **Performance:** the plugin's `OnGUI` costs about 360 bytes and two calls per frame while the window is closed (worked
   out from Unity's code, not measured); turning Unity's `useGUILayout` off while it is closed would cut that, after a
   test in play.
+- **The package READMEs inside the 1.7.0 zips** keep their Servers section as released: it says a Windows dedicated
+  server loads the plugin and gets ready as its step 6 shows, which only TomTom 1.3.0 test builds have done; Wayfinder
+  has never been loaded on a server. The READMEs in this repository say what was tested; the next release's zips will
+  carry them.
+- **Wording:** in TomTom's settings table, `ShowCoordinates` says the map click's "Waypoint added" message shows the
+  coordinates "instead of `PinLabel`"; that message never names `PinLabel` - with the setting on, the coordinates
+  follow it. To decide: an unnamed pin you follow is announced as "Waypoint set: marker" while the arrow calls it by
+  `PinLabel`, and TomTom's window shows an unnamed waypoint's coordinates twice (in the name column and the coordinate
+  column).
+- **Preflight** reads the plugin's path and the game folder as wildcard patterns: with a pair of square brackets in
+  either it reports the file missing, and with a lone `[` it stops with a wildcard error - either way it fails.
 - The Bee Nest names and the Sealed Tower rooms under "Not verified".
 
 ## Put off for now
