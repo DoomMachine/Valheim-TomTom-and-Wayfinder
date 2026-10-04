@@ -62,9 +62,10 @@ A Start Server host needs nothing more. On a dedicated server:
 The details - the files to copy, rented servers, the admin list, what to look for in the log - are in the **Servers**
 section of each package README ([TomTom](package/TomTom/README.md#servers),
 [Wayfinder](package/Wayfinder/README.md#servers)). So far the server side has been tried only as far as loading,
-with TomTom 1.3.0 test builds on a Windows dedicated server (BepInEx's console off, no `-crossplay`): later
-versions, Wayfinder builds, a released zip, Linux and rented servers, crossplay and a player joining a server that
-runs the plugin are not tested yet (see [`docs/open-items.md`](docs/open-items.md)).
+on a Windows dedicated server (BepInEx's console off, no `-crossplay`): TomTom 1.3.0 test builds, and the 1.7.0
+release zips of TomTom and Wayfinder. Linux and rented servers, crossplay, BepInEx's console window left on (as the
+pack ships it) and a player joining a server that runs the plugin are not tested yet (see
+[`docs/open-items.md`](docs/open-items.md)).
 
 ---
 
@@ -494,7 +495,8 @@ Run it after every Valheim update.
 
 **Unreleased** (on `main`, not in the 1.7.0 zips) — docs: the front page says what a server needs and gives the
 dedicated-server steps in short; both package READMEs' Servers sections give the version rule, the admin-ID form and
-what has been tested on a server.
+what has been tested on a server - since then also the 1.7.0 release zips of both editions, loaded on a Windows
+dedicated server; `docs/open-items.md` records 1.7.0's first play.
 
 **1.7.0** — TomTom keeps coordinates out of the arrow and the messages unless you ask for them.
 

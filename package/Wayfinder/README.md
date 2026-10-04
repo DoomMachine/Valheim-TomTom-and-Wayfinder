@@ -256,10 +256,11 @@ something the server's plugin does not know yet (a Bee Nest needs 1.4.0 or later
 asks the server the way a Vegvisir does instead - so keep the server's plugin up to date. (Read from the code; not
 tested yet.)
 
-Tested so far: Wayfinder itself has not been loaded on a server yet. TomTom 1.3.0 test builds, made just before that
-release, loaded on a Windows dedicated server with BepInEx 5.4.23.3 (BepInEx's console window turned off, the server
-started without `-crossplay`) and logged the lines of step 6 (as TomTom 1.3.0). No later version, no released zip, no
-Linux, crossplay or rented server has been tried yet, and no player has joined a server that runs the plugin.
+Tested so far: loading only. The Wayfinder 1.7.0 release zip loaded on a Windows dedicated server with BepInEx
+5.4.23.3 (BepInEx's console window turned off, the server started without `-crossplay`): it logged the lines of step 6,
+wrote a settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own `Wayfinder.log`. Not tried
+yet: a Linux, crossplay or rented server, BepInEx's console window left on (as the pack ships it), and a player joining
+a server that runs the plugin.
 
 ## What Wayfinder does not police
 

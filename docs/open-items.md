@@ -5,21 +5,23 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-10-03, with v1.7.0.
+Last updated: 2026-10-04.
 
 ## Not yet tried in play
 
-1.7.0 has not been played yet. 1.6.0 was played in single player on 2026-10-03, over twelve game starts, with no warning
-or error from the plugin: map clicks placed waypoints on the spot and queued a second one ("Waypoint queued (2nd)"),
-waypoints were reached, a Bee Nest Find and a Wooden Axe Find ran, a route of 44 places was kept across a quit from
-inside the world and a restart, and the log file was seen at work (below). 1.5.2 was played in two single-player
-sessions on 2026-10-02, with no warning or error
-from the plugin: Alt-clicks followed pins (a death pin among them), placed waypoints on the spot and removed markers, a
-second followed pin was queued behind the first, map deletes removed waypoint markers, two Finds for axe heads ran, and
-waypoints were reached - the 1.5.1 Alt-click rule and its log lines working. 1.5.1 was never played on its own; all its
-changes are in 1.5.2. 1.5.0 was played on 2026-09-30 and 2026-10-01, in single player: its logs show waypoints reached,
-no Find run and no error from the plugin. 1.4.1 has not been played on its own; all its changes are in 1.5.0. 1.4.0 was
-used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, all on Windows.
+1.7.0 was played in single player on 2026-10-04, with no warning or error from the plugin: the saved route was read back
+when the world loaded, but none of 1.7.0's on-screen changes was tried (no map click, finished Find or arrival, and
+every waypoint in the route had a name). 1.6.0 was played in single player on 2026-10-03, over twelve game starts, with
+no warning or error from the plugin: map clicks placed waypoints on the spot and queued a second one ("Waypoint queued
+(2nd)"), waypoints were reached, a Bee Nest Find and a Wooden Axe Find ran, a route of 44 places was kept across a quit
+from inside the world and a restart, and the log file was seen at work (below). 1.5.2 was played in two single-player
+sessions on 2026-10-02, with no warning or error from the plugin: Alt-clicks followed pins (a death pin among them),
+placed waypoints on the spot and removed markers, a second followed pin was queued behind the first, map deletes removed
+waypoint markers, two Finds for axe heads ran, and waypoints were reached - the 1.5.1 Alt-click rule and its log lines
+working. 1.5.1 was never played on its own; all its changes are in 1.5.2. 1.5.0 was played on 2026-09-30 and 2026-10-01,
+in single player: its logs show waypoints reached, no Find run and no error from the plugin. 1.4.1 has not been played
+on its own; all its changes are in 1.5.0. 1.4.0 was used in four short sessions, 1.3.1 in at least two and 1.3.0 in at
+least two, all on Windows.
 
 - **1.7.0:** an Alt-click on open ground saying just "Waypoint added", and the arrow calling such a waypoint
   "Waypoint", with `ShowCoordinates` off; the coordinates back with it on, and turning it on and off in a game; with
@@ -30,8 +32,9 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
   `-prev`; `ErrorLog` turned off and on again in a game (the file closed, then its header written again, "turned on
   again"); `VerboseLog` turned on and off in a game, with its lines for map clicks, arrivals, two Finds and the route's
   saves; a line repeated 44 times in a row written once, with a count. Not yet: `VerboseLog` during a death; a game error
-  caught with its stack trace; a second copy of the game writing `.log.1`; Wayfinder's file; the file on a dedicated
-  server, where nothing has been loaded since 1.3.0 (below).
+  caught with its stack trace; a second copy of the game writing `.log.1`; Wayfinder's file in a game; the file's
+  closing lines on a dedicated server (the 1.7.0 server load test, below, saw TomTom's and Wayfinder's files start
+  there; the test stops the server without a shutdown).
 
 - **1.5.2:** an Alt-click near a pin whose icon type the map's filter hides, and near a shared pin while shared pins
   are hidden (the pin the map shows counts).
@@ -58,18 +61,25 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
   right-click cases: on a marker, next to a followed pin, and with a followed pin nearer the pointer than a marker;
   Alt+double-click; the arrow hidden while sleeping and over the inventory, a trader and the pause menu; the route
   after a world switch; a single marker after a respawn; a click on the window never reaching the large map behind it.
-- **Multiplayer:** a player joining a server that runs the plugin - a Find answered by the server's plugin,
-  `WhoMayFind = AdminsOnly` refusing a player and then accepting them once they are an admin, a server without the
-  plugin, a Start Server host with a player joining, a crossplay join, and a player and a server on different versions
-  (a Find the server's plugin does not know - a Bee Nest on a 1.3.x server - asked the way a Vegvisir does). The server
-  side has been seen only loading and getting ready on a Windows dedicated server, with TomTom 1.3.0 builds from before
-  its release, BepInEx's console off and no `-crossplay`; no later version and no Wayfinder build has been loaded on a
-  server, no rented server has been tried, and a load test with a released zip and the default console setting is
-  still to do, as is following the package READMEs' server steps from a fresh download, with Valheim's own
-  `start_headless_server.bat` (which passes `-crossplay`). Not measured: how long a Find takes on a real server, what
-  it costs the server's frame rate, and whether a slow one can exceed the 120 seconds a player waits for its result.
+- **Multiplayer:** a player joining a server that runs the plugin - a Find answered by the server's plugin, `WhoMayFind
+  = AdminsOnly` refusing a player and then accepting them once they are an admin, a server without the plugin, a Start
+  Server host with a player joining, a crossplay join, and a player and a server on different versions (a Find the
+  server's plugin does not know - a Bee Nest on a 1.3.x server - asked the way a Vegvisir does). The server side has
+  been seen only loading and logging `Ready to answer players' Find` on a Windows dedicated server, each time with
+  BepInEx's console off and no `-crossplay`: TomTom 1.3.0 builds from before its release, and on 2026-10-04 the 1.7.0
+  release zips of TomTom and of Wayfinder (each stopped while the server was still generating its new world, before it
+  opened to players). No rented server has been tried, and a load test with BepInEx's console window left on, as the
+  pack ships it, is still to do, as is following the package READMEs' server steps from a fresh download, with Valheim's
+  own `start_headless_server.bat` (which passes `-crossplay`). Not measured: how long a Find takes on a real server,
+  what it costs the server's frame rate, and whether a slow one can exceed the 120 seconds a player waits for its
+  result.
 - **Linux and Steam Deck** players and Linux servers. The package holds no native code.
-- **Wayfinder** is built and checked with every release but has not been played.
+- **BepInEx 5.4.23.5** (BepInExPack Valheim 5.4.2350 and later): the games and server tests so far ran BepInEx 5.4.23.3
+  (pack 5.4.2333, the version both manifests name). The newer pack's changelog says its `Loading [...]` line now ends
+  with the plugin's GUID, so step 6's first line would read `Loading [TomTom 1.7.0] (DoomMachine.TomTom)` - read from
+  the changelog, not seen.
+- **Wayfinder** is built and checked with every release but has not been played; its 1.7.0 release zip has been
+  loaded on a dedicated server (above).
 
 ## Not verified
 
@@ -130,17 +140,24 @@ used in four short sessions, 1.3.1 in at least two and 1.3.0 in at least two, al
 - **Performance:** the plugin's `OnGUI` costs about 360 bytes and two calls per frame while the window is closed (worked
   out from Unity's code, not measured); turning Unity's `useGUILayout` off while it is closed would cut that, after a
   test in play.
-- **The package READMEs inside the 1.7.0 zips** keep their Servers section as released: it says a Windows dedicated
-  server loads the plugin and gets ready as its step 6 shows, which only TomTom 1.3.0 test builds have done; Wayfinder
-  has never been loaded on a server. The READMEs in this repository say what was tested; the next release's zips will
-  carry them.
+- **The package READMEs inside the 1.7.0 zips** keep their Servers section as released: its "Tested so far" was
+  written before those zips were load-tested on a dedicated server (2026-10-04). The READMEs in this repository say
+  what was tested; the next release's zips will carry them.
 - **Wording:** in TomTom's settings table, `ShowCoordinates` says the map click's "Waypoint added" message shows the
   coordinates "instead of `PinLabel`"; that message never names `PinLabel` - with the setting on, the coordinates
   follow it. To decide: an unnamed pin you follow is announced as "Waypoint set: marker" while the arrow calls it by
   `PinLabel`, and TomTom's window shows an unnamed waypoint's coordinates twice (in the name column and the coordinate
   column).
-- **Preflight** reads the plugin's path and the game folder as wildcard patterns: with a pair of square brackets in
-  either it reports the file missing, and with a lone `[` it stops with a wildcard error - either way it fails.
+- **Preflight** reads the plugin's path, the game folder and the dedicated server's folder as wildcard patterns. In
+  the plugin's path or the game folder, square brackets around something in a folder's name (`[1]`) make it report the
+  file missing, unless another folder the pattern matches exists; a lone `]` in a folder above the plugin's own (or
+  anywhere in the game folder's path) does the same, and a lone `[` or an empty pair `[]` stops it with a wildcard
+  error. Either way it fails. In the server's folder the same brackets make it skip the server's assemblies, as if no
+  server were installed, and pass with one check fewer - or stop with the same error.
+- **The world's ID in `LogOutput.log`:** both editions write a world's ID number there in the info line about reading
+  its saved route (`Restored <n> waypoint(s) for world <ID>`, and the line for a read that succeeds only on a later
+  try), as well as in the warnings about that route; TomTom's package README says what its own log holds, not
+  `LogOutput.log`. To decide: leave the ID out of those info lines, or say so in the package READMEs.
 - The Bee Nest names and the Sealed Tower rooms under "Not verified".
 
 ## Put off for now

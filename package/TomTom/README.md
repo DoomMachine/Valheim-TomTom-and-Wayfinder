@@ -314,11 +314,12 @@ something the server's plugin does not know yet (a Bee Nest needs 1.4.0 or later
 asks the server the way a Vegvisir does instead, without the server's chest and nest checks - so keep the server's
 plugin up to date. (Read from the code; not tested yet.)
 
-Tested so far: loading only. TomTom 1.3.0 test builds, made just before that release, loaded on a Windows dedicated
-server with BepInEx 5.4.23.3 (BepInEx's console window turned off, the server started without `-crossplay`), logged
-the lines of step 6 (as 1.3.0) and wrote a settings file with only `[6 - Server]` (`[7 - Logging]` and `TomTom.log`
-came with 1.6.0). No later version, no released zip, no Wayfinder build, no Linux, crossplay or rented server has been
-tried yet, and no player has joined a server that runs the plugin.
+Tested so far: loading only. The 1.7.0 release zip loaded on a Windows dedicated server with BepInEx 5.4.23.3
+(BepInEx's console window turned off, the server started without `-crossplay`): it logged the lines of step 6, wrote a
+settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own `TomTom.log`. TomTom 1.3.0 test builds
+had loaded under the same conditions (with a settings file of only `[6 - Server]`: `[7 - Logging]` and `TomTom.log`
+came with 1.6.0). Not tried yet: a Linux, crossplay or rented server, BepInEx's console window left on (as the pack
+ships it), and a player joining a server that runs the plugin.
 
 ## Keys
 
