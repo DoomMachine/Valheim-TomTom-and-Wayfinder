@@ -102,10 +102,10 @@ with the slider (100 m to 10 km), and press **Find (replace queue)** or **Find (
 | Haldor, Hildir, Bog Witch | the merchant |
 
 Each place is one that **can** hold a chest with the item, or a Bee Nest; whether a given chest or nest is there
-is chance. The lists come from Valheim 1.0.16's own data, including the chests and nests in the rooms a village
-builds. They are built into the plugin, so Find needs nothing installed besides BepInEx; where the places are comes
-from the world you are playing in, or from its server. A Valheim update that adds or moves such chests or nests
-needs a plugin update.
+is chance. The lists come from Valheim 1.0.16's own data, checked again against 1.0.17's with no change, including
+the chests and nests in the rooms a village builds. They are built into the plugin, so Find needs nothing installed
+besides BepInEx; where the places are comes from the world you are playing in, or from its server. A Valheim update
+that adds or moves such chests or nests needs a plugin update.
 
 - **Places whose chests are known not to hold the item are left out**: the game fills a chest when its area is
   first generated, and a place whose chests have all been filled and none of which holds the item any more
@@ -314,12 +314,12 @@ something the server's plugin does not know yet (a Bee Nest needs 1.4.0 or later
 asks the server the way a Vegvisir does instead, without the server's chest and nest checks - so keep the server's
 plugin up to date. (Read from the code; not tested yet.)
 
-Tested so far: loading only. The 1.7.0 release zip loaded on a Windows dedicated server with BepInEx 5.4.23.3
-(BepInEx's console window turned off, the server started without `-crossplay`): it logged the lines of step 6, wrote a
-settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own `TomTom.log`. TomTom 1.3.0 test builds
-had loaded under the same conditions (with a settings file of only `[6 - Server]`: `[7 - Logging]` and `TomTom.log`
-came with 1.6.0). Not tried yet: a Linux, crossplay or rented server, BepInEx's console window left on (as the pack
-ships it), and a player joining a server that runs the plugin.
+Tested so far: loading only. The 1.7.0 release zip loaded on a Windows dedicated server running Valheim 1.0.16, with
+BepInEx 5.4.23.3 (BepInEx's console window turned off, the server started without `-crossplay`): it logged the lines of
+step 6, wrote a settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own `TomTom.log`. TomTom
+1.3.0 test builds had loaded under the same conditions (with a settings file of only `[6 - Server]`: `[7 - Logging]`
+and `TomTom.log` came with 1.6.0). Not tried yet: a Linux, crossplay or rented server, BepInEx's console window left
+on (as the pack ships it), and a player joining a server that runs the plugin.
 
 ## Keys
 
@@ -329,7 +329,7 @@ didn't, rebind it: vanilla Valheim also uses F2 (connect panel), F5 (console) an
 layout), plus Ctrl+F1 (mouse capture) and Ctrl+F3 (hide HUD), and other mods can hold keys of
 their own — choose one that nothing you run already uses.
 
-Valheim (1.0.16) cannot read some keys the configuration offers: Clear, Help, SysReq, Break, F13 to
+Valheim (1.0.16 and 1.0.17) cannot read some keys the configuration offers: Clear, Help, SysReq, Break, F13 to
 F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `DoubleQuote`, `Hash`,
 `Dollar`, `Percent`, `Ampersand`, `LeftParen`, `RightParen`, `Asterisk`, `Plus`, `Colon`, `Less`,
 `Greater`, `Question`, `At`, `Caret`, `Underscore`, `LeftCurlyBracket`, `Pipe`, `RightCurlyBracket` and

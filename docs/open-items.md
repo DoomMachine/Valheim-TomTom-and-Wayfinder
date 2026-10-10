@@ -5,10 +5,14 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-10-04.
+Last updated: 2026-10-11.
 
 ## Not yet tried in play
 
+1.7.0 was played on Valheim 1.0.17 in single player, over two game starts between 2026-10-06 and 2026-10-10, with no
+warning or error from the plugin: 90 Alt-clicks on the map (72 followed a pin, 18 put a waypoint on the spot), 82
+waypoints reached, 3 markers deleted from the map, and a Mysterious Axe Head Find that checked the places' chests,
+one of whose places was reached later. What the arrow and the messages said is not in the logs (`VerboseLog` was off).
 1.7.0 was played in single player on 2026-10-04, with no warning or error from the plugin: the saved route was read back
 when the world loaded, but none of 1.7.0's on-screen changes was tried (no map click, finished Find or arrival, and
 every waypoint in the route had a name). 1.6.0 was played in single player on 2026-10-03, over twelve game starts, with
@@ -68,11 +72,12 @@ least two, all on Windows.
   been seen only loading and logging `Ready to answer players' Find` on a Windows dedicated server, each time with
   BepInEx's console off and no `-crossplay`: TomTom 1.3.0 builds from before its release, and on 2026-10-04 the 1.7.0
   release zips of TomTom and of Wayfinder (each stopped while the server was still generating its new world, before it
-  opened to players). No rented server has been tried, and a load test with BepInEx's console window left on, as the
-  pack ships it, is still to do, as is following the package READMEs' server steps from a fresh download, with Valheim's
-  own `start_headless_server.bat` (which passes `-crossplay`). Not measured: how long a Find takes on a real server,
-  what it costs the server's frame rate, and whether a slow one can exceed the 120 seconds a player waits for its
-  result.
+  opened to players), all on Valheim 1.0.16 or older; no server has run either plugin on Valheim 1.0.17 yet
+  (preflight passes against the 1.0.17 server's assemblies). No rented server has been tried, and a load test with
+  BepInEx's console window left on, as the pack ships it, is still to do, as is following the package READMEs' server
+  steps from a fresh download, with Valheim's own `start_headless_server.bat` (which passes `-crossplay`). Not measured:
+  how long a Find takes on a real server, what it costs the server's frame rate, and whether a slow one can exceed the
+  120 seconds a player waits for its result.
 - **Linux and Steam Deck** players and Linux servers. The package holds no native code.
 - **BepInEx 5.4.23.5** (BepInExPack Valheim 5.4.2350 and later): the games and server tests so far ran BepInEx 5.4.23.3
   (pack 5.4.2333, the version both manifests name). The newer pack's changelog says its `Loading [...]` line now ends
@@ -189,8 +194,11 @@ Wayfinder:
 
 ## Watching the game
 
-- **Find's lists** of places, chests and nests come from Valheim 1.0.16's data; preflight prints a note on any other
-  game build. After a game update, check them, and run Find again for "(possible)" merchant spots saved before it.
+- **Find's lists** of places, chests and nests come from Valheim 1.0.16's data and were derived again, unchanged, from
+  1.0.17's (2026-10-10); preflight prints a note on any game build other than 1.0.17. After a game update, check them,
+  and run Find again for "(possible)" merchant spots saved before it. The note goes by the game's code
+  (`assembly_valheim.dll`), not its data: an update that changed only the game's data would print none. To decide: key
+  it to the asset bundles the lists come from as well.
 - **Private game members** reached by reflection (such as the map's pin list, and the game's handler for a
   Vegvisir-style answer, which Find patches): if an update changes one, the feature that uses it works less well or
   not at all (Wayfinder's map click, for one: the README's implementation notes say what it does then).
@@ -263,6 +271,13 @@ Wayfinder:
 
 Everything up to v1.5.0 is in the README's History. From here on, a finished item moves here with its version.
 
+- **Valheim 1.0.17 (checked 2026-10-10 and 2026-10-11; still 1.7.0, no new version):** the game update changes
+  nothing either plugin does. Its few changed game methods are none that either plugin patches or reads by name, and
+  the one Find reaches (loading a chest's saved items) gives Find the same answer - only, for an item saved with a
+  variant (a cape's or a shield's look) that item does not have, the game now writes its own "Variant index ...
+  Resetting to variant 0!" error to `LogOutput.log`, as it does whenever that chest is loaded near a player, opened or
+  not; preflight passes on both editions, and the release DLLs rebuild byte for byte from the tag against 1.0.17;
+  Find's lists were derived again from 1.0.17's data with no change; preflight's catalogue note now names 1.0.17.
 - **1.7.0:** TomTom's arrow and top-left messages no longer show a waypoint's coordinates unless `ShowCoordinates`
   is on (a waypoint without a name is called by `PinLabel`); `VerboseLog` writes the player's and the map's state in
   one line when it is turned on, logs
