@@ -836,9 +836,9 @@ else { foreach ($w in $rrWhy) { Write-Output "  FAIL  $w" }; $failures++ }
 
 Write-Output ""
 Write-Output "== a key Valheim cannot read cannot stop the waypoint tick =="
-# ZInput (Valheim 1.0.16 and 1.0.17) throws ArgumentOutOfRangeException on every read of 30 KeyCodes that BepInEx still
-# offers as settings (Plus, F13-F15, WheelUp, ...): the KeyCode is missing from ZInput's KeyCode-to-Key table,
-# the lookup yields Key.None and Keyboard.current[Key.None] throws. In 1.1.1 such a key skipped
+# ZInput (Valheim 1.0.16, 1.0.17 and 1.0.21) throws ArgumentOutOfRangeException on every read of 30 KeyCodes that
+# BepInEx still offers as settings (Plus, F13-F15, WheelUp, ...): the KeyCode is missing from ZInput's KeyCode-to-Key
+# table, the lookup yields Key.None and Keyboard.current[Key.None] throws. In 1.1.1 such a key skipped
 # WaypointManager.Tick on every frame in which no chat, console or text field had the keyboard. So:
 #   1. every ZInput.GetKey/GetKeyDown/GetKeyUp whose key is not a literal is in Hotkeys, which makes both kinds
 #      of read (GetKey and GetKeyDown), and a literal key anywhere else must be one the game can read. That set
@@ -923,16 +923,16 @@ $documentedUnreadable = @("Clear", "Exclaim", "DoubleQuote", "Hash", "Dollar", "
     "LeftCurlyBracket", "Pipe", "RightCurlyBracket", "Tilde", "F13", "F14", "F15", "Help", "SysReq", "Break",
     "WheelUp", "WheelDown")
 if ($null -eq $keyDerivation) {
-    # A failure, not a note, so the lists cannot drift after a game update: $documentedUnreadable, the Keys paragraph of
-    # both package READMEs and Hotkeys.cs's summary are updated together. (Not counted when the set cannot be worked out:
-    # the next check fails for that.)
+    # A failure, not a note, so this script's list cannot drift after a game update: $documentedUnreadable, the Keys
+    # paragraph of both package READMEs and Hotkeys.cs's summary are updated together, the last two by hand (this check
+    # reads neither). (Not counted when the set cannot be worked out: the next check fails for that.)
     $checks++
     $unreadableNames = @($unreadableKeys.Values | Sort-Object)
     if (Compare-Object @($documentedUnreadable | Sort-Object) $unreadableNames) {
-        Write-Output ("  FAIL  the KeyCodes the game cannot read are no longer the 30 listed for Valheim 1.0.16 and 1.0.17 (now {0}: {1}) - update `$documentedUnreadable here, the Keys paragraph of both package READMEs and Hotkeys.cs" -f $unreadableNames.Count, ($unreadableNames -join ", "))
+        Write-Output ("  FAIL  the KeyCodes the game cannot read are no longer the 30 listed for Valheim 1.0.16, 1.0.17 and 1.0.21 (now {0}: {1}) - update `$documentedUnreadable here, the Keys paragraph of both package READMEs and Hotkeys.cs" -f $unreadableNames.Count, ($unreadableNames -join ", "))
         $failures++
     } else {
-        Write-Output "  ok    the game cannot read the same 30 KeyCodes as Valheim 1.0.16 and 1.0.17 (the list this script holds; Hotkeys.cs and both package READMEs follow it)"
+        Write-Output "  ok    the game cannot read the same 30 KeyCodes as Valheim 1.0.16, 1.0.17 and 1.0.21 (the list this script holds; Hotkeys.cs and both package READMEs are kept to it by hand, not checked here)"
     }
 }
 
@@ -1302,16 +1302,17 @@ function Resolve-Value($insList, [int]$at, $handlers) {
 # SearchRules.FinishHits, once - without the query a nest found would no longer replace its place - and TomTom hands it
 # no filter (ldnull), so TomTom keeps every place in range. Wayfinder's filter argument is not checked here yet.
 # Find's catalogue (SearchCatalog) was derived from Valheim 1.0.16's own data and derived again, unchanged, from
-# 1.0.17's asset bundles (game and dedicated server); no check can see whether a newer build moved its chests or
-# nests, so a different game build gets a note (not counted as a check). The key is the client's assembly_valheim.dll,
-# the game's code: an update that left that file as it was would print no note, even if it changed the lists' data.
-$catalogueBuild = "25a0a107dce4d834c44c2b72d0eafd5cb7793933bda81816accfa1ea9543dace"
+# 1.0.17's and from 1.0.21's asset bundles (game and dedicated server); no check can see whether a newer build moved its
+# chests or nests, so a different game build gets a note (not counted as a check). The key is the client's
+# assembly_valheim.dll, the game's code: an update that left that file as it was would print no note, even if it changed
+# the lists' data.
+$catalogueBuild = "9f959c0396ec4240d47fcbe5d0d062c428cc627244506db5ea567f9d77b2b769"
 try {
     $avPath = Join-Path $ValheimDir "valheim_Data\Managed\assembly_valheim.dll"
     $sha = [System.Security.Cryptography.SHA256]::Create()
     $fs = [IO.File]::OpenRead($avPath)
     try { $avHash = ([BitConverter]::ToString($sha.ComputeHash($fs)) -replace "-", "").ToLowerInvariant() } finally { $fs.Dispose() }
-    if ($avHash -ne $catalogueBuild) { Write-Output "  NOTE  this game is not Valheim 1.0.17 (assembly_valheim.dll differs): Find's catalogue was last checked against 1.0.17 - derive it again for this build" }
+    if ($avHash -ne $catalogueBuild) { Write-Output "  NOTE  this game is not Valheim 1.0.21 (assembly_valheim.dll differs): Find's catalogue was last checked against 1.0.21 - derive it again for this build" }
 } catch { Write-Output ("  NOTE  could not read assembly_valheim.dll to compare the game build: {0}" -f $_.Exception.Message) }
 
 $checks++

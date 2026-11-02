@@ -5,10 +5,15 @@ worked out again. Keep it current: add an item when it comes up, and when one is
 version or commit that did it. How the plugins work, and why, is in the README's "Implementation notes"; what each
 release changed is in its "History".
 
-Last updated: 2026-10-11.
+Last updated: 2026-11-03.
 
 ## Not yet tried in play
 
+1.7.0 was played on Valheim 1.0.20 in single player, over four game starts between 2026-10-15 and 2026-10-28; the two
+whose logs were kept show no warning or error from the plugin: 57 Alt-clicks on the map (52 followed a pin, 2 stopped
+following one, 2 put a waypoint on the spot, 1 removed a marker's waypoint), 56 waypoints reached, and three Finds for
+axe heads that checked the places' chests. Screenshots show the arrow calling a waypoint without a name "Waypoint".
+Valheim 1.0.21, the version installed since, has not been played yet.
 1.7.0 was played on Valheim 1.0.17 in single player, over two game starts between 2026-10-06 and 2026-10-10, with no
 warning or error from the plugin: 90 Alt-clicks on the map (72 followed a pin, 18 put a waypoint on the spot), 82
 waypoints reached, 3 markers deleted from the map, and a Mysterious Axe Head Find that checked the places' chests,
@@ -27,10 +32,11 @@ in single player: its logs show waypoints reached, no Find run and no error from
 on its own; all its changes are in 1.5.0. 1.4.0 was used in four short sessions, 1.3.1 in at least two and 1.3.0 in at
 least two, all on Windows.
 
-- **1.7.0:** an Alt-click on open ground saying just "Waypoint added", and the arrow calling such a waypoint
-  "Waypoint", with `ShowCoordinates` off; the coordinates back with it on, and turning it on and off in a game; with
-  `VerboseLog`, the "state now" line when it is turned on, "on screen: Location Reached" at an arrival, `VerboseLog`
-  named once, and "player alive" written after a respawn rather than when the dead player is removed.
+- **1.7.0:** an Alt-click on open ground saying just "Waypoint added" (its queued form, "Waypoint queued (2nd)", and
+  the arrow calling such a waypoint "Waypoint", with `ShowCoordinates` off, were seen on 2026-10-15); the "Next
+  waypoint" message naming one; the coordinates back with `ShowCoordinates` on, and turning it on and off in a game;
+  with `VerboseLog`, the "state now" line when it is turned on, "on screen: Location Reached" at an arrival,
+  `VerboseLog` named once, and "player alive" written after a respawn rather than when the dead player is removed.
 - **1.6.0, the log file:** seen on 2026-10-03 - its first lines at a game's start; "the game is quitting" then "log
   closed" at a quit from the main menu and from inside a world; the next start keeping the last game's file as
   `-prev`; `ErrorLog` turned off and on again in a game (the file closed, then its header written again, "turned on
@@ -43,9 +49,7 @@ least two, all on Windows.
 - **1.5.2:** an Alt-click near a pin whose icon type the map's filter hides, and near a shared pin while shared pins
   are hidden (the pin the map shows counts).
 - **1.5.1:** an Alt-click with several pins within reach (the nearest one counts), and one on a ping or another
-  player's marker (a waypoint on the spot); the on-screen "Waypoint queued (2nd): <name>" for a followed pin (a
-  second pin was followed on 2026-10-02; the on-the-spot form was seen on 2026-10-03, and since 1.6.0 `VerboseLog`
-  writes each message as "on screen: ..."); dying close to the waypoint being followed (it stays in the route).
+  player's marker (a waypoint on the spot); dying close to the waypoint being followed (it stays in the route).
 - **1.5.0:** a Wooden Greatsword Find at an Infested Mine, a Ruined Dvergr Tower and a Rock Spire; a mine whose chests
   have all been emptied being left out, as the host; pasting Valheim's `pos` line and Server Devcommands' `pos` line;
   with `Use3DDistance` on, a clifftop map click (on the terrain and on a Mistlands rock), and a Find place still
@@ -72,8 +76,8 @@ least two, all on Windows.
   been seen only loading and logging `Ready to answer players' Find` on a Windows dedicated server, each time with
   BepInEx's console off and no `-crossplay`: TomTom 1.3.0 builds from before its release, and on 2026-10-04 the 1.7.0
   release zips of TomTom and of Wayfinder (each stopped while the server was still generating its new world, before it
-  opened to players), all on Valheim 1.0.16 or older; no server has run either plugin on Valheim 1.0.17 yet
-  (preflight passes against the 1.0.17 server's assemblies). No rented server has been tried, and a load test with
+  opened to players), all on Valheim 1.0.16 or older; no server has run either plugin on Valheim 1.0.17 or 1.0.21 yet
+  (preflight passes against both versions' server assemblies). No rented server has been tried, and a load test with
   BepInEx's console window left on, as the pack ships it, is still to do, as is following the package READMEs' server
   steps from a fresh download, with Valheim's own `start_headless_server.bat` (which passes `-crossplay`). Not measured:
   how long a Find takes on a real server, what it costs the server's frame rate, and whether a slow one can exceed the
@@ -151,8 +155,8 @@ least two, all on Windows.
 - **Wording:** in TomTom's settings table, `ShowCoordinates` says the map click's "Waypoint added" message shows the
   coordinates "instead of `PinLabel`"; that message never names `PinLabel` - with the setting on, the coordinates
   follow it. To decide: an unnamed pin you follow is announced as "Waypoint set: marker" while the arrow calls it by
-  `PinLabel`, and TomTom's window shows an unnamed waypoint's coordinates twice (in the name column and the coordinate
-  column).
+  `PinLabel` (seen on screen on 2026-10-15 in its queued form, "Waypoint queued (2nd): marker"), and TomTom's window
+  shows an unnamed waypoint's coordinates twice (in the name column and the coordinate column).
 - **Preflight** reads the plugin's path, the game folder and the dedicated server's folder as wildcard patterns. In
   the plugin's path or the game folder, square brackets around something in a folder's name (`[1]`) make it report the
   file missing, unless another folder the pattern matches exists; a lone `]` in a folder above the plugin's own (or
@@ -195,10 +199,16 @@ Wayfinder:
 ## Watching the game
 
 - **Find's lists** of places, chests and nests come from Valheim 1.0.16's data and were derived again, unchanged, from
-  1.0.17's (2026-10-10); preflight prints a note on any game build other than 1.0.17. After a game update, check them,
-  and run Find again for "(possible)" merchant spots saved before it. The note goes by the game's code
-  (`assembly_valheim.dll`), not its data: an update that changed only the game's data would print none. To decide: key
-  it to the asset bundles the lists come from as well.
+  1.0.17's (2026-10-10) and from 1.0.21's (2026-11-02); preflight prints a note on any game build other than 1.0.21.
+  After a game update, check them, and run Find again for "(possible)" merchant spots saved before it. The note goes
+  by the game's code (`assembly_valheim.dll`), not its data: an update that changed only the game's data would print
+  none. To decide: key it to the asset bundles the lists come from as well.
+- **Objects spawned with the console under older versions of the game:** Valheim 1.0.16 and 1.0.17 marked an object
+  spawned with the console's `spawn` or `location` command one way, and 1.0.21 marks it another way and counts only
+  its own mark when it checks for cheats. Find leaves out objects with either mark, so a Rock or a wild Bee Nest
+  spawned that way under 1.0.16 or 1.0.17 stays out of Find, while the game itself no longer treats it as made by a
+  cheat. Older versions of the game were not looked at, and whether such objects exist in a given world is not known.
+  To decide: keep this, or follow the game (a code change and a new version).
 - **Private game members** reached by reflection (such as the map's pin list, and the game's handler for a
   Vegvisir-style answer, which Find patches): if an update changes one, the feature that uses it works less well or
   not at all (Wayfinder's map click, for one: the README's implementation notes say what it does then).
@@ -271,13 +281,27 @@ Wayfinder:
 
 Everything up to v1.5.0 is in the README's History. From here on, a finished item moves here with its version.
 
+- **Valheim 1.0.21 (checked 2026-11-02 and 2026-11-03; still 1.7.0, no new version):** the game update changes
+  nothing either plugin does. Of the game methods either plugin patches, two changed - the large map's double click,
+  which now also leaves the boss pin type alone, and the console's command table, where one command's help text and the
+  `spawn` command's cheat mark changed - and both patches work as before; no game member either plugin reads by name
+  changed. Three changed game methods are reached: two load a chest's saved items for Find's chest check, which gives
+  the same answer (the game still writes the variant error described under 1.0.17, below), and one sets the game's
+  version number. On a server, the two patches and what the plugin uses to tell players apart and answer them are
+  unchanged, and a Find run there reaches the same two chest methods, with the same answer. Preflight passes on both
+  editions, also against the dedicated server's own assemblies; the release DLLs rebuild byte for byte from the tag
+  against 1.0.21; Find's lists were derived again from 1.0.21's data, the game's and the dedicated server's, with no
+  change; preflight's catalogue note now names 1.0.21.
+- **1.5.1, seen in play:** the on-screen "Waypoint queued (3rd): <name>" for a followed pin, on 2026-10-16, and
+  "Waypoint queued (2nd): marker" for one without a name, on 2026-10-15.
 - **Valheim 1.0.17 (checked 2026-10-10 and 2026-10-11; still 1.7.0, no new version):** the game update changes
   nothing either plugin does. Its few changed game methods are none that either plugin patches or reads by name, and
   the one Find reaches (loading a chest's saved items) gives Find the same answer - only, for an item saved with a
   variant (a cape's or a shield's look) that item does not have, the game now writes its own "Variant index ...
   Resetting to variant 0!" error to `LogOutput.log`, as it does whenever that chest is loaded near a player, opened or
-  not; preflight passes on both editions, and the release DLLs rebuild byte for byte from the tag against 1.0.17;
-  Find's lists were derived again from 1.0.17's data with no change; preflight's catalogue note now names 1.0.17.
+  not (a dedicated server, which does not load the world's chests that way, writes it only during a Find run there);
+  preflight passes on both editions, and the release DLLs rebuild byte for byte from the tag against 1.0.17; Find's
+  lists were derived again from 1.0.17's data with no change; preflight's catalogue note now names 1.0.17.
 - **1.7.0:** TomTom's arrow and top-left messages no longer show a waypoint's coordinates unless `ShowCoordinates`
   is on (a waypoint without a name is called by `PinLabel`); `VerboseLog` writes the player's and the map's state in
   one line when it is turned on, logs

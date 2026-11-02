@@ -98,10 +98,10 @@ or **Find (add to queue)**. The route starts at the nearest one and is then plan
 | Haldor, Hildir, Bog Witch | the merchant |
 
 Each place is one that **can** hold a chest with the item, or a Bee Nest; whether a given chest or nest is there
-is chance. The lists come from Valheim 1.0.16's own data, checked again against 1.0.17's with no change, including
-the chests and nests in the rooms a village builds. They are built into the plugin, so Find needs nothing installed
-besides BepInEx; where the places are comes from the world you are playing in, or from its server. A Valheim update
-that adds or moves such chests or nests needs a plugin update.
+is chance. The lists come from Valheim 1.0.16's own data, checked again against 1.0.17's and 1.0.21's with no change,
+including the chests and nests in the rooms a village builds. They are built into the plugin, so Find needs nothing
+installed besides BepInEx; where the places are comes from the world you are playing in, or from its server. A
+Valheim update that adds or moves such chests or nests needs a plugin update.
 
 - **Nothing is said.** There is no message and no count. If nothing that matches is explored within range,
   nothing happens.
@@ -281,8 +281,8 @@ didn't, rebind it: vanilla Valheim also uses F2 (connect panel), F5 (console) an
 layout), plus Ctrl+F1 (mouse capture) and Ctrl+F3 (hide HUD), and other mods can hold keys of
 their own — choose one that nothing you run already uses.
 
-Valheim (1.0.16 and 1.0.17) cannot read some keys the configuration offers: Clear, Help, SysReq, Break, F13 to
-F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `DoubleQuote`, `Hash`,
+Valheim (1.0.16, 1.0.17 and 1.0.21) cannot read some keys the configuration offers: Clear, Help, SysReq, Break, F13
+to F15, the mouse wheel (`WheelUp`, `WheelDown`) and the symbol keys `Exclaim`, `DoubleQuote`, `Hash`,
 `Dollar`, `Percent`, `Ampersand`, `LeftParen`, `RightParen`, `Asterisk`, `Plus`, `Colon`, `Less`,
 `Greater`, `Question`, `At`, `Caret`, `Underscore`, `LeftCurlyBracket`, `Pipe`, `RightCurlyBracket` and
 `Tilde`. Choose one of those and Wayfinder writes a warning to `BepInEx/LogOutput.log` and ignores that

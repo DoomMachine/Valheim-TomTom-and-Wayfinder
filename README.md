@@ -83,7 +83,7 @@ src/                     the shared source for both plugins
   FindServer.cs          the server side: answers players' Find, applies WhoMayFind, one search at a time
   FindLink.cs            the player side of the server messages: hello, the server's answer, Find requests
   FindProtocol.cs        those messages as bytes, and the WhoMayFind rule - Unity-free, tested
-  SearchCatalog.cs       what can be searched for, and which location types hold it (1.0.16's data, same on 1.0.17)
+  SearchCatalog.cs       what can be searched for, and which location types hold it (1.0.16's data, same on 1.0.17, 1.0.21)
   SearchRules.cs         unique places (candidates vs the real one), range, chests, names - Unity-free
   RoutePlanner.cs        the route: nearest first, then 2-opt - Unity-free
   MapClickRules.cs       a map click's decision (the pin nearest the pointer), which pins the map shows, its
@@ -183,9 +183,9 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   BepInEx offers, so every configurable key must be read through `Hotkeys`, whose reads are caught (and not
   rethrown), a hard-coded key must be one the game can read (the 30 are worked out from the game itself),
   and `Plugin.Update` must call `WaypointManager.Tick` in a try block of its own that reads no key; and the
-  keys the game cannot read must still be the 30 listed for Valheim 1.0.16 and 1.0.17 (after a game update that changes
-  them, this fails until the list in `preflight.ps1` is updated; update the lists in `Hotkeys.cs` and both package
-  READMEs with it - the check does not read them)
+  keys the game cannot read must still be the 30 listed for Valheim 1.0.16, 1.0.17 and 1.0.21 (after a game update
+  that changes them, this fails until the list in `preflight.ps1` is updated; update the lists in `Hotkeys.cs` and both
+  package READMEs with it - the check does not read them)
 - **Wayfinder contains any piece of coordinate entry or display** (the parser and formatter types, the
   console add path, the window's text box, the bulk-add, the raw-order and `ShowCoordinates` config keys, any `{0:0}, {1:0}`
   coordinate format string, any method that turns a world x/z into text) — and, conversely, if TomTom is
@@ -310,7 +310,7 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
 - a referenced assembly can't be resolved from the game folder (a game folder that is not found at all is named,
   with `-ValheimDir` to point it elsewhere)
 
-On a game build other than Valheim 1.0.17 it also prints a note: Find's catalogue was last checked against 1.0.17,
+On a game build other than Valheim 1.0.21 it also prints a note: Find's catalogue was last checked against 1.0.21,
 and no check can see whether a newer build moved the chests or nests it lists.
 
 Run it after every Valheim update.
@@ -460,8 +460,9 @@ Run it after every Valheim update.
   decompiled game code on 2026-09-28; the Bee Nest's places were derived the same way on 2026-09-29, and also
   checked against every object in the game's asset bundles. On 2026-10-10, after the Valheim 1.0.17 update, every
   list was derived again from that build's own asset bundles, the game's and the dedicated server's, and none had
-  changed. So a Valheim update that adds or moves such chests or nests leaves the catalogue behind until its lists
-  are derived again from the new build: preflight catches game methods that were renamed, removed or changed their
+  changed; on 2026-11-02 the same was done for Valheim 1.0.21, with the same result. So a Valheim update that adds or
+  moves such chests or nests leaves the catalogue behind until its lists are derived again from the new build:
+  preflight catches game methods that were renamed, removed or changed their
   signature, not changed chest lists.
 - **On a server** the same DLL runs its server side. On a dedicated server (`Paths.ProcessName` is
   `valheim_server`; the game's own `ZNet.IsDedicated()` needs a `ZNet` that does not exist yet in `Awake`) it binds
@@ -501,7 +502,9 @@ what has been tested on a server - since then also the 1.7.0 release zips of bot
 dedicated server running Valheim 1.0.16; `docs/open-items.md` records 1.7.0's first play and its play on Valheim
 1.0.17. For Valheim 1.0.17, which changes nothing either plugin does: both package READMEs say Find's lists were checked
 again against 1.0.17 with no change and name 1.0.17 beside 1.0.16 for the keys the game cannot read, and preflight's
-catalogue note is keyed to 1.0.17.
+catalogue note is keyed to 1.0.17. For Valheim 1.0.21, which likewise changes nothing either plugin does: the same
+texts name 1.0.21 as well, preflight's catalogue note is keyed to 1.0.21, and `docs/open-items.md` records the play on
+Valheim 1.0.20 and a choice about objects spawned with the console under older versions of the game.
 
 **1.7.0** — TomTom keeps coordinates out of the arrow and the messages unless you ask for them.
 
