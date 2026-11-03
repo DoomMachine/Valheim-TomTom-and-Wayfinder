@@ -4,7 +4,7 @@ Immersive waypoints for Valheim. Mark a spot on your world map — or pick one o
 and an on-screen arrow guides you there, turning green as you line up with it. Arrive and the marker
 and arrow clear themselves, **Location Reached** is announced, and the next waypoint takes over.
 
-By **DoomMachine** · version 1.7.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.7.1 · a BepInEx 5 plugin.
 
 **There are deliberately no coordinates — none to type in, and none shown.** You can only navigate to
 places you have marked on your own map, are standing on, or that lie on land your map shows as explored (a click on
@@ -109,10 +109,12 @@ Valheim update that adds or moves such chests or nests needs a plugin update.
   becomes the real one. Wayfinder queues them only once they are fixed, or when only one spot is left - and when
   you join a game, only if the server answered every request in time or a merchant's map icon settles it.
   After a Valheim update, run Find again for the merchants: a saved spot may no longer be the place.
-- **Loose Rocks** (the ones you pick up by hand) **exist only where the land has been generated**, and
-  picked ones are left out. The Mysterious Rock a player builds and the stones it lays are never listed, nor is a
-  rock or nest placed through the build system or spawned with the console's `spawn` command (when a server's plugin
-  answers, only if that server runs 1.4.1 or later).
+- **Loose Rocks** (the ones you pick up by hand) **exist only where the land has been generated**, and picked ones are
+  left out. The Mysterious Rock a player builds and the stones it lays are never listed, nor is a rock or nest placed
+  through the build system, or one spawned with the console's `spawn` command under Valheim 1.0.21, which the game marks
+  as made by a cheat. One spawned that way under Valheim 1.0.16 or 1.0.17 carries an older mark, which the game no
+  longer counts, and is listed. When a server's plugin answers, it leaves out what was placed or spawned this way only
+  if it runs 1.4.1 or later, and one from 1.4.1 to 1.7.0 also leaves out the older mark.
 - **The Wooden Greatsword** is found in the Mistlands: in the treasure room of an Infested Mine - the waypoint is the
   mine's entrance, and a mine is not sure to have a treasure room - and in the chests of ruined Dvergr towers and of
   the rock spires (that chest sits on top of the spire, about 60 m up, and about 3 spires in 4 have one).
@@ -133,7 +135,7 @@ Valheim update that adds or moves such chests or nests needs a plugin update.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-Wayfinder/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.7.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [Wayfinder 1.7.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -218,9 +220,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [Wayfinder 1.7.0]
+   Loading [Wayfinder 1.7.1]
    Applied 2 of 2 patches.
-   Wayfinder 1.7.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   Wayfinder 1.7.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads; `WhoMayFind` shows your setting. The server's own log file
@@ -257,10 +259,11 @@ asks the server the way a Vegvisir does instead - so keep the server's plugin up
 tested yet.)
 
 Tested so far: loading only. The Wayfinder 1.7.0 release zip loaded on a Windows dedicated server running Valheim
-1.0.16, with BepInEx 5.4.23.3 (BepInEx's console window turned off, the server started without `-crossplay`): it
-logged the lines of step 6, wrote a settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own
-`Wayfinder.log`. Not tried yet: a Linux, crossplay or rented server, BepInEx's console window left on (as the pack
-ships it), and a player joining a server that runs the plugin.
+1.0.16, and again (2026-11-03) on one running Valheim 1.0.21, each time with BepInEx 5.4.23.3 (BepInEx's console window
+turned off, the server started without `-crossplay`): it logged the lines of step 6 (with 1.7.0 as the version), wrote a
+settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own `Wayfinder.log`. Not tried yet: a Linux,
+crossplay or rented server, BepInEx's console window left on (as the pack ships it), and a player joining a server that
+runs the plugin.
 
 ## What Wayfinder does not police
 

@@ -20,8 +20,8 @@
 #      saved pins, and no request is sent unless that catch is in place
 #  13. Wayfinder's search reads MinimapAccess.IsExplored and TomTom's does not; LocationSearch.Finish hands the search's
 #      places and query to SearchRules.FinishHits once, TomTom's with no filter (13b); and the server's known-empty drop
-#      in SearchJob's scan is wired to the request (13c), and the scan skips an object with a creator or the cheat
-#      flag (13d)
+#      in SearchJob's scan is wired to the request (13c), and the scan skips an object with a creator or the game's
+#      cheat mark, the one the game's own CheatUtils.IsCheated(ZDO) counts (13d)
 #  16. Wayfinder places a waypoint from a map click only on explored land; TomTom's map click does not read it
 #  17. every code path that makes a waypoint is a known one
 #  18. a map click decides by the right pin (MapClickRules.Decide, given the distance to each of the four nearest pins
@@ -64,7 +64,7 @@ if ($ServerDir -eq "") { $ServerDir = Join-Path (Split-Path $ValheimDir -Parent)
 
 $expectedGuid = "DoomMachine.$Edition"
 $siblingGuid = if ($Edition -eq "TomTom") { "DoomMachine.Wayfinder" } else { "DoomMachine.TomTom" }
-$expectedVersion = "1.7.0"
+$expectedVersion = "1.7.1"
 
 if (-not (Test-Path (Join-Path $core "Mono.Cecil.dll")) -or -not (Test-Path (Join-Path $managed "assembly_valheim.dll"))) {
     Write-Output ("FAIL  Valheim with BepInEx not found at '{0}' (it needs valheim_Data\Managed\assembly_valheim.dll and BepInEx\core\Mono.Cecil.dll)." -f $ValheimDir)
@@ -1388,10 +1388,55 @@ else {
 if ($c13.Count -eq 0) { Write-Output "  ok    the server's known-empty drop is wired: KnownEmptyApplies(OnServer, CheckChests, Query) gates it, and it uses the zone set NoteObject fills" }
 else { foreach ($p in $c13) { Write-Output "  FAIL  13c: $p" }; $failures++ }
 
-# 13d (1.4.1): Find leaves out an object a player placed or spawned with `spawn`. SearchJob's Scan iterator calls SearchRules.WorldMade
-# once, with ZDO.GetLong(ZDOVars.s_creator, 0) and ZDO.GetBool(ZDOVars.s_cheated, false), and its false result skips the
-# object (a brfalse to where NoteObject's false result goes), before NoteObject (so a spawned nest neither lists nor
-# counts for its place).
+# 13d (1.4.1; the game's own cheat mark since 1.7.1): Find leaves out an object a player placed or the game marks as
+# spawned by a cheat. SearchJob's Scan iterator calls SearchRules.WorldMade once, with ZDO.GetLong(ZDOVars.s_creator, 0)
+# and ZDO.GetInt(ZDOVars.s_cheated, 0) - a literal 0 default: a default of 2 would leave out every object - and its false
+# result skips the object (a brfalse to where NoteObject's false result goes), before NoteObject (so a spawned nest
+# neither lists nor counts for its place). SearchRules.GameCheatMark is the constant 2, and WorldMade loads its mark
+# argument once and tests it against that value with != (the literal, ceq, ldc.i4.0, ceq), so a test for any non-zero
+# mark, for ">= 2" or for another value fails. The rule is copied from the game: CheatUtils.IsCheated(ZDO) in the game's
+# assembly_valheim.dll - and in the dedicated server's, when one is installed (skipped otherwise, still one check) - must
+# read ZDO.GetInt(ZDOVars.s_cheated, 0) and test it == 2; if the game's rule changes, this fails until
+# SearchRules.GameCheatMark (and $cheatMark13 here) follow it. The plugin reads the mark nowhere else: one ldsfld (or
+# ldsflda) of ZDOVars.s_cheated in all its methods, nested and compiler-made types included, and no "cheated" or
+# "s_cheated" string - so a second test of the mark (the old "any non-zero mark", in Scan, a helper, through an alias
+# field or a delegate) fails. Not seen: which game code still writes the mark (a console command that stops marking, or
+# one that writes it without CheatUtils), which overload of CheatUtils.IsCheated the game's own checks call (an older
+# two-parameter one with a default of true counts any mark but 0), a key built at run time or written as its number,
+# and the creator half of WorldMade's own body (the unit tests pin both halves of the rule).
+$cheatMark13 = 2
+function Test-MarkArg13($i) {
+    # True when $i loads (or stores) WorldMade's second parameter, the mark.
+    if ($i.OpCode.Name -eq "ldarg.1") { return $true }
+    return (($i.OpCode.Name -like "ldarg*" -or $i.OpCode.Name -like "starg*") -and $i.Operand -is [Mono.Cecil.ParameterDefinition] -and $i.Operand.Index -eq 1)
+}
+function Test-CheatRule13([string]$path, [int]$mark) {
+    # "" when CheatUtils.IsCheated(ZDO) in the assembly at $path is ZDO.GetInt(ZDOVars.s_cheated, 0) == $mark, else what
+    # differs.
+    $gm = $null
+    try {
+        $gm = [Mono.Cecil.ModuleDefinition]::ReadModule($path)
+        $cu = $gm.GetType("CheatUtils")
+        if (-not $cu) { return "it has no CheatUtils type" }
+        $ic = @($cu.Methods | Where-Object { $_.Name -eq "IsCheated" -and $_.Parameters.Count -eq 1 -and $_.HasBody })
+        if ($ic.Count -ne 1 -or "$($ic[0].Parameters[0].ParameterType.FullName)" -ne "ZDO") { return "it has no CheatUtils.IsCheated(ZDO)" }
+        $gi = @($ic[0].Body.Instructions); $gh = $ic[0].Body.ExceptionHandlers
+        $calls = @(); for ($k = 0; $k -lt $gi.Count; $k++) { if ($gi[$k].OpCode.Name -like "call*") { $calls += $k } }
+        $body = ($gi | ForEach-Object { Get-InstructionText $_ }) -join "; "
+        if ($calls.Count -ne 1) { return ("CheatUtils.IsCheated(ZDO) makes {0} calls, expected one ZDO.GetInt: {1}" -f $calls.Count, $body) }
+        $at = $calls[0]; $o = $gi[$at].Operand
+        $sig = @($o.Parameters | ForEach-Object { $_.ParameterType.FullName }) -join ","
+        if (-not ($o.DeclaringType.Name -eq "ZDO" -and $o.Name -eq "GetInt" -and $sig -eq "System.Int32,System.Int32")) { return ("CheatUtils.IsCheated(ZDO) reads the mark with {0}, not ZDO.GetInt(int, int)" -f (Get-InstructionText $gi[$at])) }
+        $ga = Get-CallArgs $gi $at $gh
+        if (-not ($ga -and (Get-InstructionText $gi[$ga[1]]) -eq "ldsfld ZDOVars::s_cheated")) { return ("CheatUtils.IsCheated(ZDO) does not read ZDOVars.s_cheated: {0}" -f $body) }
+        if ($gi[$ga[2]].OpCode.Name -ne "ldc.i4.0") { return ("CheatUtils.IsCheated(ZDO) reads the mark with a default other than 0: {0}" -f $body) }
+        $lit = $null; if ($at + 3 -lt $gi.Count) { $lit = Get-LiteralInt ($gi[$at + 1]) }
+        if (-not ($lit -ne $null -and $gi[$at + 2].OpCode.Name -eq "ceq" -and $gi[$at + 3].OpCode.Name -eq "ret")) { return ("CheatUtils.IsCheated(ZDO) no longer returns GetInt(...) == <a number>: {0}" -f $body) }
+        if ($lit -ne $mark) { return ("CheatUtils.IsCheated(ZDO) counts the mark {0}, not {1}" -f $lit, $mark) }
+        return ""
+    } catch { return ("could not read it ({0})" -f $_.Exception.Message) }
+    finally { if ($gm) { try { $gm.Dispose() } catch { } } }
+}
 $checks++
 $d13 = @()
 if (-not $mn) { $d13 += "SearchJob's Scan iterator (MoveNext) not found" }
@@ -1402,15 +1447,16 @@ else {
     if ($wm.Count -ne 1) { $d13 += ("Scan calls SearchRules.WorldMade {0} times, expected once" -f $wm.Count) }
     else {
         $a = Get-CallArgs $si $wm[0] $hd
-        $want = @(@("GetLong", "s_creator"), @("GetBool", "s_cheated"))
+        $want = @(@("GetLong", "s_creator"), @("GetInt", "s_cheated"))
         $argsOk = $true
         for ($q = 0; $q -lt 2; $q++) {
             $ok = $false
             if ($a) {
                 $ci = $a[$q]; $c = $si[$ci]
                 if ($c.OpCode.Name -like "call*" -and $c.Operand -is [Mono.Cecil.MethodReference] -and $c.Operand.DeclaringType.Name -eq "ZDO" -and $c.Operand.Name -eq $want[$q][0]) {
+                    $sig = @($c.Operand.Parameters | ForEach-Object { $_.ParameterType.FullName }) -join ","
                     $ca = Get-CallArgs $si $ci $hd
-                    if ($ca -and (Get-InstructionText $si[$ca[1]]) -eq ("ldsfld ZDOVars::" + $want[$q][1])) { $ok = $true }
+                    if ($ca -and (Get-InstructionText $si[$ca[1]]) -eq ("ldsfld ZDOVars::" + $want[$q][1]) -and ($q -eq 0 -or $sig -eq "System.Int32,System.Int32")) { $ok = $true }
                 }
             }
             if (-not $ok) { $d13 += ("WorldMade argument {0} is not ZDO.{1}(ZDOVars.{2}, ...)" -f $q, $want[$q][0], $want[$q][1]); $argsOk = $false }
@@ -1424,14 +1470,57 @@ else {
                 $zeroLong = ($d0.OpCode.Name -eq "conv.i8" -and $si[$gl[2] - 1].OpCode.Name -eq "ldc.i4.0") -or ($d0.OpCode.Name -eq "ldc.i8" -and [long]$d0.Operand -eq 0)
                 $defOk = $zeroLong -and $d1.OpCode.Name -eq "ldc.i4.0"
             }
-            if (-not $defOk) { $d13 += "WorldMade's ZDO reads do not default to 0 and false" }
+            if (-not $defOk) { $d13 += "WorldMade's ZDO reads do not default to 0 and 0 (a default mark of 2 would leave out every object)" }
         }
         $wbr = $si[$wm[0] + 1]
         if (-not ($wbr.OpCode.Name -like "brfalse*" -and $nob.Count -eq 1 -and $si[$nob[0] + 1].OpCode.Name -like "brfalse*" -and [object]::ReferenceEquals($wbr.Operand, $si[$nob[0] + 1].Operand))) { $d13 += "WorldMade's false result does not skip the object (a brfalse to where NoteObject's false result goes)" }
         if ($nob.Count -eq 1 -and $nob[0] -lt $wm[0]) { $d13 += "WorldMade is called after NoteObject (a console-spawned nest would count for its place)" }
     }
 }
-if ($d13.Count -eq 0) { Write-Output "  ok    Find leaves out an object a player placed or spawned with spawn: SearchRules.WorldMade(creator, cheated) is checked before an object counts" }
+$srType13 = $plug.GetType("Waypointer.SearchRules")
+$gcm = $null; if ($srType13) { $gcm = $srType13.Fields | Where-Object { $_.Name -eq "GameCheatMark" } | Select-Object -First 1 }
+if (-not ($gcm -and $gcm.IsStatic -and $gcm.HasConstant -and "$($gcm.FieldType.FullName)" -eq "System.Int32" -and [int]$gcm.Constant -eq $cheatMark13)) {
+    $d13 += ("SearchRules.GameCheatMark is not the constant {0} (the game's cheat mark)" -f $cheatMark13)
+}
+$wmDef = @(); if ($srType13) { $wmDef = @($srType13.Methods | Where-Object { $_.Name -eq "WorldMade" }) }
+if ($wmDef.Count -ne 1 -or -not $wmDef[0].IsStatic -or -not $wmDef[0].HasBody -or $wmDef[0].Parameters.Count -ne 2 -or "$($wmDef[0].Parameters[1].ParameterType.FullName)" -ne "System.Int32") {
+    $d13 += "SearchRules.WorldMade(long, int) not found, or not once"
+} else {
+    $wi = @($wmDef[0].Body.Instructions)
+    $ml = @(); for ($k = 0; $k -lt $wi.Count; $k++) { if (Test-MarkArg13 $wi[$k]) { $ml += $k } }
+    $markOk = $false
+    if ($ml.Count -eq 1 -and $wi[$ml[0]].OpCode.Name -like "ldarg*") {
+        $k = $ml[0]
+        # the mark and the literal, in either order, then ceq, ldc.i4.0, ceq: mark != literal
+        $litAt = -1
+        if ($k + 4 -lt $wi.Count -and (Get-LiteralInt ($wi[$k + 1])) -ne $null) { $litAt = $k + 1; $cmpAt = $k + 2 }
+        elseif ($k -ge 1 -and $k + 3 -lt $wi.Count -and (Get-LiteralInt ($wi[$k - 1])) -ne $null) { $litAt = $k - 1; $cmpAt = $k + 1 }
+        if ($litAt -ge 0 -and (Get-LiteralInt ($wi[$litAt])) -eq $cheatMark13 -and $wi[$cmpAt].OpCode.Name -eq "ceq" -and $wi[$cmpAt + 1].OpCode.Name -eq "ldc.i4.0" -and $wi[$cmpAt + 2].OpCode.Name -eq "ceq") { $markOk = $true }
+    }
+    if (-not $markOk) { $d13 += ("SearchRules.WorldMade does not test its mark once with != {0} (GameCheatMark): {1}" -f $cheatMark13, (($wi | ForEach-Object { Get-InstructionText $_ }) -join "; ")) }
+}
+$cheatReads13 = @()
+foreach ($t13 in $plug.GetTypes()) {
+    foreach ($m13 in $t13.Methods) {
+        if (-not $m13.HasBody) { continue }
+        foreach ($i13 in $m13.Body.Instructions) {
+            $o13 = $i13.Operand
+            if (($i13.OpCode.Name -eq "ldsfld" -or $i13.OpCode.Name -eq "ldsflda") -and $o13 -is [Mono.Cecil.FieldReference] -and $o13.DeclaringType.FullName -eq "ZDOVars" -and $o13.Name -eq "s_cheated") { $cheatReads13 += ("{0}.{1}" -f $t13.Name, $m13.Name) }
+            elseif ($i13.OpCode.Name -eq "ldstr" -and @("cheated", "s_cheated") -ccontains "$o13") { $cheatReads13 += ("{0}.{1} (by name)" -f $t13.Name, $m13.Name) }
+        }
+    }
+}
+if ($cheatReads13.Count -ne 1) { $d13 += ("the plugin reads ZDOVars.s_cheated {0} times, expected once (the mark handed to WorldMade): {1}" -f $cheatReads13.Count, ($cheatReads13 -join ", ")) }
+$cheatWhere13 = "the game's assembly_valheim.dll"
+$why = Test-CheatRule13 (Join-Path $managed "assembly_valheim.dll") $cheatMark13
+if ($why -ne "") { $d13 += ("the game's cheat rule changed or moved - check it and make SearchRules.GameCheatMark and `$cheatMark13 in preflight.ps1 follow it: in the game's assembly_valheim.dll, {0}" -f $why) }
+$serverManaged13 = Join-Path $ServerDir "valheim_server_Data\Managed"
+if (Test-Path (Join-Path $serverManaged13 "assembly_valheim.dll")) {
+    $cheatWhere13 = "the game's and the dedicated server's assembly_valheim.dll"
+    $why = Test-CheatRule13 (Join-Path $serverManaged13 "assembly_valheim.dll") $cheatMark13
+    if ($why -ne "") { $d13 += ("the game's cheat rule changed or moved - check it and make SearchRules.GameCheatMark and `$cheatMark13 in preflight.ps1 follow it: in the dedicated server's assembly_valheim.dll, {0}" -f $why) }
+} else { $cheatWhere13 = "the game's assembly_valheim.dll; no dedicated server installed" }
+if ($d13.Count -eq 0) { Write-Output ("  ok    Find leaves out an object a player placed or the game marks as spawned by a cheat (mark {0}, as the game's own CheatUtils.IsCheated(ZDO) in {1}): SearchRules.WorldMade(creator, mark) is checked before an object counts" -f $cheatMark13, $cheatWhere13) }
 else { foreach ($p in $d13) { Write-Output "  FAIL  13d: $p" }; $failures++ }
 
 # 16 (1.5.0): Wayfinder places a waypoint from a map click only on explored land. In

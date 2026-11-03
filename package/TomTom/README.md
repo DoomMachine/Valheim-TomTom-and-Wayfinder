@@ -5,7 +5,7 @@ coordinates or pick places on the world map, get temporary markers, and follow a
 turns green as you line up with the target. Reach a waypoint and the marker and arrow clear themselves,
 **Location Reached** is announced, and the next one in the list takes over.
 
-By **DoomMachine** · version 1.7.0 · a BepInEx 5 plugin.
+By **DoomMachine** · version 1.7.1 · a BepInEx 5 plugin.
 
 > Prefer not to be able to look locations up at all? **Wayfinder** is the same mod without coordinates —
 > waypoints come only from the world map or from where you stand, and no coordinates are ever shown.
@@ -129,12 +129,14 @@ Valheim update that adds or moves such chests or nests needs a plugin update.
   you join a game and the server does not answer every request in time, it stays "(possible)" unless a merchant's
   map icon settles it.)
   After a Valheim update, run Find again for the merchants: a saved "(possible)" spot may no longer be one.
-- **Loose Rocks** (the ones you pick up by hand) **exist only where the land has been generated**:
-  anywhere someone has been, as the host or on a server with this plugin; when you join any other server, only
-  the ones your game has seen since you joined (near where you have been). Rocks already picked are left out.
-  The Mysterious Rock a player builds and the stones it lays are never listed, nor is a rock or nest placed through
-  the build system or spawned with the console's `spawn` command (when a server's plugin answers, only if that server
-  runs 1.4.1 or later).
+- **Loose Rocks** (the ones you pick up by hand) **exist only where the land has been generated**: anywhere someone has
+  been, as the host or on a server with this plugin; when you join any other server, only the ones your game has seen
+  since you joined (near where you have been). Rocks already picked are left out. The Mysterious Rock a player builds
+  and the stones it lays are never listed, nor is a rock or nest placed through the build system, or one spawned with
+  the console's `spawn` command under Valheim 1.0.21, which the game marks as made by a cheat. One spawned that way
+  under Valheim 1.0.16 or 1.0.17 carries an older mark, which the game no longer counts, and is listed. When a server's
+  plugin answers, it leaves out what was placed or spawned this way only if it runs 1.4.1 or later, and one from 1.4.1
+  to 1.7.0 also leaves out the older mark.
 - **It works whether you host or join.** When you join a server that runs this plugin too, the server answers
   from its own knowledge, as it would for the host (see Servers). Joining any other server, TomTom asks it with
   the same request a Vegvisir makes, spaced out so as not to load the server, so a large search takes a few
@@ -186,7 +188,7 @@ Alt-click on the map does nothing there, set `MapModifierKey` to another key.
 
 Needs **BepInEx for Valheim**. Unpack this zip into a folder of its own under
 `BepInEx/plugins/` (e.g. `BepInEx/plugins/DoomMachine-TomTom/`), or hand the zip to a mod manager.
-It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.7.0]`. TomTom and Wayfinder exclude each
+It loads when `BepInEx/LogOutput.log` says `Loading [TomTom 1.7.1]`. TomTom and Wayfinder exclude each
 other: install one. For a server, see Servers.
 
 ## Uninstall
@@ -276,9 +278,9 @@ start a Find with a new range.)
    in through `winhttp.dll`; nothing else changes.
 6. Check `BepInEx\LogOutput.log` in the server's folder for these lines:
    ```
-   Loading [TomTom 1.7.0]
+   Loading [TomTom 1.7.1]
    Applied 2 of 2 patches.
-   TomTom 1.7.0 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
+   TomTom 1.7.1 by DoomMachine loaded on a dedicated server: it answers players' Find (WhoMayFind = Everyone).
    Ready to answer players' Find (WhoMayFind = Everyone).
    ```
    The last one comes when the world loads; `WhoMayFind` shows your setting. The server's own log file
@@ -314,12 +316,13 @@ something the server's plugin does not know yet (a Bee Nest needs 1.4.0 or later
 asks the server the way a Vegvisir does instead, without the server's chest and nest checks - so keep the server's
 plugin up to date. (Read from the code; not tested yet.)
 
-Tested so far: loading only. The 1.7.0 release zip loaded on a Windows dedicated server running Valheim 1.0.16, with
-BepInEx 5.4.23.3 (BepInEx's console window turned off, the server started without `-crossplay`): it logged the lines of
-step 6, wrote a settings file with only `[6 - Server]` and `[7 - Logging]`, and started its own `TomTom.log`. TomTom
-1.3.0 test builds had loaded under the same conditions (with a settings file of only `[6 - Server]`: `[7 - Logging]`
-and `TomTom.log` came with 1.6.0). Not tried yet: a Linux, crossplay or rented server, BepInEx's console window left
-on (as the pack ships it), and a player joining a server that runs the plugin.
+Tested so far: loading only. The 1.7.0 release zip loaded on a Windows dedicated server running Valheim 1.0.16, and
+again (2026-11-03) on one running Valheim 1.0.21, each time with BepInEx 5.4.23.3 (BepInEx's console window turned off,
+the server started without `-crossplay`): it logged the lines of step 6 (with 1.7.0 as the version), wrote a settings
+file with only `[6 - Server]` and `[7 - Logging]`, and started its own `TomTom.log`. TomTom 1.3.0 test builds had loaded
+under the same conditions (with a settings file of only `[6 - Server]`: `[7 - Logging]` and `TomTom.log` came with
+1.6.0). Not tried yet: a Linux, crossplay or rented server, BepInEx's console window left on (as the pack ships it), and
+a player joining a server that runs the plugin.
 
 ## Keys
 

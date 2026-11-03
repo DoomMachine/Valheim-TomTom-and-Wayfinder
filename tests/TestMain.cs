@@ -970,9 +970,10 @@ namespace Waypointer
             }
             Check("search: no Find lists a player's pet rock (Placeable_HardRock), the stones it lays, or a dropped Rock item", noPlayerRocks, "");
             Check("search: every Find shows a unique title, its own name except the rocks'", titlesOk, "");
-            Check("search: only what the world made is listed - not a piece a player placed (creator) nor a console spawn (cheated)",
-                SearchRules.WorldMade(0L, false) && !SearchRules.WorldMade(123L, false) && !SearchRules.WorldMade(-5L, false)
-                && !SearchRules.WorldMade(0L, true) && !SearchRules.WorldMade(7L, true), "");
+            Check("search: only what the world made is listed - not a piece a player placed (creator) nor an object with the game's cheat mark (2); the older mark (1) and any other value count",
+                SearchRules.GameCheatMark == 2
+                && SearchRules.WorldMade(0L, 0) && SearchRules.WorldMade(0L, 1) && !SearchRules.WorldMade(0L, 2) && SearchRules.WorldMade(0L, 3)
+                && !SearchRules.WorldMade(123L, 0) && !SearchRules.WorldMade(-5L, 0) && !SearchRules.WorldMade(7L, 2), "");
 
             // --- the route
             float[] xs = { 100, 10, 50, -20, 200 };

@@ -61,11 +61,11 @@ A Start Server host needs nothing more. On a dedicated server:
 
 The details - the files to copy, rented servers, the admin list, what to look for in the log - are in the **Servers**
 section of each package README ([TomTom](package/TomTom/README.md#servers),
-[Wayfinder](package/Wayfinder/README.md#servers)). So far the server side has been tried only as far as loading,
-on a Windows dedicated server running Valheim 1.0.16 (BepInEx's console off, no `-crossplay`): TomTom 1.3.0 test
-builds, and the 1.7.0 release zips of TomTom and Wayfinder. Linux and rented servers, crossplay, BepInEx's console
-window left on (as the pack ships it) and a player joining a server that runs the plugin are not tested yet (see
-[`docs/open-items.md`](docs/open-items.md)).
+[Wayfinder](package/Wayfinder/README.md#servers)). So far the server side has been tried only as far as loading, on a
+Windows dedicated server (BepInEx's console off, no `-crossplay`): TomTom 1.3.0 test builds and the 1.7.0 release zips
+of TomTom and Wayfinder on Valheim 1.0.16, and those zips again on Valheim 1.0.21. Linux and rented servers, crossplay,
+BepInEx's console window left on (as the pack ships it) and a player joining a server that runs the plugin are not
+tested yet (see [`docs/open-items.md`](docs/open-items.md)).
 
 ---
 
@@ -199,11 +199,17 @@ powershell -ExecutionPolicy Bypass -File preflight.ps1 -ValheimDir "D:\Games\Val
   `Minimap.DiscoverLocation`, which make saved pins
 - Wayfinder's search does not read `MinimapAccess.IsExplored` - and, conversely, TomTom's does, so the check
   can't pass vacuously (that Wayfinder's filter is the one handed to `SearchRules.FinishHits` is not checked yet)
-- the search's decisions are not wired as the tests assume: `LocationSearch.Finish` must hand the search's own
-  places and query to `SearchRules.FinishHits` exactly once, TomTom's with no filter; `SearchJob`'s scan must gate
-  the known-empty drop with `SearchRules.KnownEmptyApplies(OnServer, CheckChests, Query)` and give it the zone set
-  `SearchRules.NoteObject` fills; and it must check `SearchRules.WorldMade` (the object's creator and cheat flag,
-  read with the defaults 0 and false) before an object counts, skipping the object when it is false
+- the search's decisions are not wired as the tests assume: `LocationSearch.Finish` must hand the search's own places
+  and query to `SearchRules.FinishHits` exactly once, TomTom's with no filter; `SearchJob`'s scan must gate the
+  known-empty drop with `SearchRules.KnownEmptyApplies(OnServer, CheckChests, Query)` and give it the zone set
+  `SearchRules.NoteObject` fills; and it must check `SearchRules.WorldMade` (the object's creator and the game's cheat
+  mark, read with the defaults 0 and 0) before an object counts, skipping the object when it is false; the plugin may
+  read the mark only once, where it hands it to `WorldMade` (so a second test of the mark through `ZDOVars.s_cheated` or
+  its name, anywhere in the plugin, fails); `WorldMade` must test the mark against `SearchRules.GameCheatMark` (2) with
+  `!=`, and the game's own rule must still count that mark and no other: `CheatUtils.IsCheated(ZDO)` in the game's
+  `assembly_valheim.dll` and, when one is installed, the dedicated server's (after an update that changes it, this fails
+  until `GameCheatMark` and the mark in `preflight.ps1` follow it; which game code writes the mark, and a key to the
+  mark built at run time or written as its number, are not checked)
 - a waypoint could be made by a code path nobody checked: `WaypointManager.Add`, `AddFromPin`, `AddMany` and
   `AddRange` may be called only from the known places (the map click, the window's and the console's own-position
   and typed entries, Find), and a `Waypoint` may be constructed only in `WaypointManager`'s own `Add`, `AddMany`,
@@ -385,33 +391,35 @@ Run it after every Valheim update.
   happens when `PersistWaypoints` is turned on in a world that was entered with it off.
 - The local player is destroyed and recreated on every death while the map survives, so nothing is reset
   when the player is briefly missing; a change of world is detected by world UID instead.
-- **Find** takes its places from the game's own list of location instances on a server
-  (`ZoneSystem.GetLocationList`, which knows which candidate of a unique location is placed). On a client it
-  asks the server, one location type every 0.2 s, with the request a Vegvisir makes
-  (`RPC_DiscoverClosestLocation` with `discoverAll`, which checks no permission), then one request with a
-  single guaranteed answer (the closest `StartTemple`) that marks the end, since routed calls keep their order.
-  Vanilla would turn every answer into a `save: true` pin through `Minimap.DiscoverLocation`, so a prefix on
-  `Game.RPC_DiscoverLocationResponse` catches this mod's answers first, and no request is sent unless
-  `Harmony.GetPatchInfo` shows that prefix in place. Loose objects and chests are read from the ZDOs the game
-  holds, one 64 m zone at a time through `ZDOMan.FindSectorObjects`, stopping for the frame once about 1.5 ms of
-  work is done (checked after each zone and after each chest read). A chest's contents are a byte array
-  (`ZDO.GetByteArray(s_items)`, as `Container.Load` reads them); the chest check runs only on a server and only
-  for placed locations. A unique location is resolved over every candidate before the range cut. The route is
-  planned over the nearest few hundred places (four times `MaxSearchWaypoints`, at least 100): nearest-neighbour
-  from the nearest spot, then 2-opt with that first stop fixed. A **Bee Nest** grows only inside its place, and the
-  game places a location wholly inside one 64 m zone, so a nest found stands for the place in its zone
+- **Find** takes its places from the game's own list of location instances on a server (`ZoneSystem.GetLocationList`,
+  which knows which candidate of a unique location is placed). On a client it asks the server, one location type every
+  0.2 s, with the request a Vegvisir makes (`RPC_DiscoverClosestLocation` with `discoverAll`, which checks no
+  permission), then one request with a single guaranteed answer (the closest `StartTemple`) that marks the end, since
+  routed calls keep their order. Vanilla would turn every answer into a `save: true` pin through
+  `Minimap.DiscoverLocation`, so a prefix on `Game.RPC_DiscoverLocationResponse` catches this mod's answers first, and
+  no request is sent unless `Harmony.GetPatchInfo` shows that prefix in place. Loose objects and chests are read from
+  the ZDOs the game holds, one 64 m zone at a time through `ZDOMan.FindSectorObjects`, stopping for the frame once about
+  1.5 ms of work is done (checked after each zone and after each chest read). A chest's contents are a byte array
+  (`ZDO.GetByteArray(s_items)`, as `Container.Load` reads them); the chest check runs only on a server and only for
+  placed locations. A unique location is resolved over every candidate before the range cut. The route is planned over
+  the nearest few hundred places (four times `MaxSearchWaypoints`, at least 100): nearest-neighbour from the nearest
+  spot, then 2-opt with that first stop fixed. A **Bee Nest** grows only inside its place, and the game places a
+  location wholly inside one 64 m zone, so a nest found stands for the place in its zone
   (`SearchRules.DropPlacesWithObjectsInZone`, on the player's side after Wayfinder's filter: `SearchRules.FinishHits`
-  keeps that order), and a server asked to skip places known not to hold what is looked for (`SkipCheckedChests`)
-  leaves out a place whose zone it has generated with no nest left in it (`SearchRules.DropPlacesKnownEmpty`, from
-  the zones of every nest it read, in range or not). These decisions are Unity-free, so the tests check their
-  order and rules; preflight checks what the game code hands them. An object is left out when a player placed it
-  through the build system (`s_creator`) or spawned it with the console's `spawn` command (`s_cheated`)
-  (`SearchRules.WorldMade`). The `location` command marks only a place's own objects, not the rooms its generator
-  adds (a nest in an Abandoned Village or Draugr Village room counts), and the `vegetation` command marks nothing, so
-  what they make counts. The rock Find keeps its key, `Mysterious Rock`, which servers look a Find up by, and shows the game's own
-  name, Rock (`SearchQuery.Title`); the game's "Mysterious Rock" is the pet rock a player builds, never listed.
-  The Wooden Greatsword's Infested Mines keep their chests in treasure rooms the generator builds about 5000 m above
-  the entrance but inside the entrance's own 64 m zone, so the chest check's horizontal 64 m covers them.
+  keeps that order), and a server asked to skip places known not to hold what is looked for (`SkipCheckedChests`) leaves
+  out a place whose zone it has generated with no nest left in it (`SearchRules.DropPlacesKnownEmpty`, from the zones of
+  every nest it read, in range or not). These decisions are Unity-free, so the tests check their order and rules;
+  preflight checks what the game code hands them. An object is left out when a player placed it through the build system
+  (`s_creator`) or the game marks it as spawned by a cheat (`SearchRules.WorldMade`): in Valheim 1.0.21 the game's own
+  check (`CheatUtils.IsCheated(ZDO)`) counts only the mark it writes there, 2 in `s_cheated`
+  (`SearchRules.GameCheatMark`), and so does Find since 1.7.1; an object spawned with the console under Valheim 1.0.16
+  or 1.0.17 carries an older mark (1), which neither the game nor Find counts. The `location` command marks only a
+  place's own objects, not the rooms its generator adds (a nest in an Abandoned Village or Draugr Village room counts),
+  and the `vegetation` command marks nothing, so what they make counts. The rock Find keeps its key, `Mysterious Rock`,
+  which servers look a Find up by, and shows the game's own name, Rock (`SearchQuery.Title`); the game's "Mysterious
+  Rock" is the pet rock a player builds, never listed. The Wooden Greatsword's Infested Mines keep their chests in
+  treasure rooms the generator builds about 5000 m above the entrance but inside the entrance's own 64 m zone, so the
+  chest check's horizontal 64 m covers them.
 - **The 3D arrival test** (`Use3DDistance`) measures a waypoint that has a height of its own at that height. One
   without (a map click, two typed numbers, a pin placed on the map) and a place Find found - whose height is the world
   generator's estimate, before the terrain is built and levelled, and, before a place's own levelling, more than 10 m
@@ -496,15 +504,26 @@ Run it after every Valheim update.
 
 ## History
 
-**Unreleased** (on `main`, not in the 1.7.0 zips) — docs: the front page says what a server needs and gives the
-dedicated-server steps in short; both package READMEs' Servers sections give the version rule, the admin-ID form and
-what has been tested on a server - since then also the 1.7.0 release zips of both editions, loaded on a Windows
-dedicated server running Valheim 1.0.16; `docs/open-items.md` records 1.7.0's first play and its play on Valheim
-1.0.17. For Valheim 1.0.17, which changes nothing either plugin does: both package READMEs say Find's lists were checked
-again against 1.0.17 with no change and name 1.0.17 beside 1.0.16 for the keys the game cannot read, and preflight's
-catalogue note is keyed to 1.0.17. For Valheim 1.0.21, which likewise changes nothing either plugin does: the same
-texts name 1.0.21 as well, preflight's catalogue note is keyed to 1.0.21, and `docs/open-items.md` records the play on
-Valheim 1.0.20 and a choice about objects spawned with the console under older versions of the game.
+**1.7.1** — Find follows the game's new cheat mark.
+
+- changed: Find leaves out an object the game marks as spawned by a cheat only when it carries the mark the game's own
+  check counts in Valheim 1.0.21. The check of Valheim 1.0.21 found nothing either plugin needed to change; this follows
+  the game: rocks and wild Bee Nests spawned with the console under Valheim 1.0.16 or 1.0.17 carry an older mark, which
+  the game no longer counts as made by a cheat, and are listed again, while objects spawned that way under 1.0.21 stay
+  out. A server on a plugin from 1.4.1 to 1.7.0 answers with the older rule (it leaves out both marks), one older than
+  1.4.1 without the filter
+- preflight: check 13d reads the new rule (`ZDO.GetInt(s_cheated, 0)`, tested against `SearchRules.GameCheatMark`, 2)
+  and also checks the game's own rule, `CheatUtils.IsCheated(ZDO)`, in the game's `assembly_valheim.dll` and, when one
+  is installed, the dedicated server's: after a game update that changes it, the check fails until `GameCheatMark` and
+  the mark in `preflight.ps1` follow it; and the plugin may read the mark only once, where it hands it to `WorldMade`
+  (68 checks per edition, as before)
+- the test of the rule covers the marks 0, 1, 2 and 3 (399 tests, as before)
+- docs since 1.7.0: the front page says what a server needs and gives the dedicated-server steps in short; both package
+  READMEs' Servers sections give the version rule, the admin-ID form and what has been tested on a server - the 1.7.0
+  release zips of both editions, loaded on a Windows dedicated server running Valheim 1.0.16 and, on 2026-11-03, 1.0.21;
+  both package READMEs say Find's lists were checked again against Valheim 1.0.17 and 1.0.21 with no change, and name
+  both beside 1.0.16 for the keys the game cannot read; preflight's catalogue note is keyed to 1.0.21;
+  `docs/open-items.md` records 1.7.0's first play and its play on Valheim 1.0.17 and 1.0.20
 
 **1.7.0** — TomTom keeps coordinates out of the arrow and the messages unless you ask for them.
 

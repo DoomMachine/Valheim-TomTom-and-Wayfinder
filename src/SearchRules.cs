@@ -238,15 +238,24 @@ namespace Waypointer
         }
 
         /// <summary>
-        /// Whether a world object counts: it was not placed through the build system (Piece.SetCreator writes
-        /// ZDOVars.s_creator - the way mods make a pickable buildable) and not spawned with the console's spawn command
-        /// (it sets ZDOVars.s_cheated). World generation sets neither; nor does the vegetation command, nor the location
-        /// command for the rooms a place's generator adds (it flags only the place's own objects), so what they make
-        /// cannot be told from the world's. Player IDs can be negative, so the test is != 0.
+        /// The value Valheim (1.0.21) writes to ZDOVars.s_cheated for an object spawned with the console, and the only
+        /// one its own cheat check (CheatUtils.IsCheated(ZDO): the value == 2) counts.
         /// </summary>
-        public static bool WorldMade(long creator, bool cheated)
+        public const int GameCheatMark = 2;
+
+        /// <summary>
+        /// Whether a world object counts: it was not placed through the build system (Piece.SetCreator writes
+        /// ZDOVars.s_creator - the way mods make a pickable buildable), and the game does not mark it as spawned by a
+        /// cheat: <paramref name="cheatMark"/> is the object's ZDOVars.s_cheated, and only <see cref="GameCheatMark"/>
+        /// counts, as in the game's own check. Objects marked by older versions of the game (1.0.16 and 1.0.17 wrote 1)
+        /// count as world-made, as the game now treats them; any other value, 0 included, counts too. World generation
+        /// sets neither; nor does the vegetation command, nor the location command for the rooms a place's generator
+        /// adds (it marks only the place's own objects), so what they make cannot be told from the world's. Player IDs
+        /// can be negative, so the creator test is != 0.
+        /// </summary>
+        public static bool WorldMade(long creator, int cheatMark)
         {
-            return creator == 0L && !cheated;
+            return creator == 0L && cheatMark != GameCheatMark;
         }
 
         /// <summary>

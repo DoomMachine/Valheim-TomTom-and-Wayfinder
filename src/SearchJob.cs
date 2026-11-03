@@ -135,9 +135,9 @@ namespace Waypointer
                             ZDO zdo = zdos[i];
                             ObjectsRead++;
                             if (zdo == null || !zdo.IsValid() || zdo.GetPrefab() != hash) continue;
-                            // Leave out a rock or nest a player placed through the build system (s_creator) or spawned
-                            // with the console's spawn command (s_cheated).
-                            if (!SearchRules.WorldMade(zdo.GetLong(ZDOVars.s_creator, 0L), zdo.GetBool(ZDOVars.s_cheated, false))) continue;
+                            // Leave out a rock or nest a player placed through the build system (s_creator) or one the
+                            // game marks as spawned by a cheat (s_cheated holding the game's own mark, 2).
+                            if (!SearchRules.WorldMade(zdo.GetLong(ZDOVars.s_creator, 0L), zdo.GetInt(ZDOVars.s_cheated, 0))) continue;
                             Vector3 p = zdo.GetPosition();
                             if (IsPicked(zdo, target.Prefab)) continue;
                             if (!SearchRules.NoteObject(objectZones, p.x, p.z, Origin.x, Origin.z, Range)) continue;
